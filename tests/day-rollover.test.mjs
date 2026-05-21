@@ -1,11 +1,13 @@
 /**
- * buildYesterdaySnapshot — pure helper extracted from the day-rollover path
- * in js/app.js. Validates that the snapshot shape matches what archiveDay
- * expects, and that it normalizes missing/non-numeric fields safely.
+ * AUDIT.md M-5 — extract day-rollover decision logic from js/app.js and
+ * unit-test every branch. Day-rollover bugs (a 23:59 → 00:01 archive split,
+ * a modal-mid-edit nag that fires twice, etc.) are invisible in CI without
+ * direct coverage; the function used to live as 60 lines inside a 850-line
+ * coordinator module with zero tests.
  *
- * Slices just the helper out of storage.js (mirrors the pattern in
- * tests/destructive-confirm.test.mjs) so we don't trigger the file's
- * top-level setInterval / DOM listeners that would keep the process alive.
+ * `planDayRollover` is the pure piece — given current day, last known day,
+ * modal state, deferral bookkeeping, and the clock, it returns the action
+ * to take. _handleDayRollover (still in app.js) does the side effects.
  */
 import test from 'node:test';
 import assert from 'node:assert';
@@ -15,107 +17,96 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-function loadBuildYesterdaySnapshot() {
-  const src = readFileSync(join(root, 'js', 'storage.js'), 'utf8');
-  // Pull in the two tiny coercion helpers and the function under test.
-  const intM = src.match(/const\s+_int\s*=\s*[^\n]+/);
-  const arrM = src.match(/const\s+_arr\s*=\s*[^\n]+/);
-  assert.ok(intM && arrM, 'slice _int/_arr helpers');
-  const start = src.indexOf('function buildYesterdaySnapshot(');
-  const end = src.indexOf('function archiveDay(', start);
-  assert.ok(start >= 0 && end > start, 'slice buildYesterdaySnapshot');
-  const slice = `${intM[0]};\n${arrM[0]};\n${src.slice(start, end)}\nreturn buildYesterdaySnapshot;`;
-  return new Function(slice)();
+function loadPlanDayRollover(){
+  const src = readFileSync(join(root, 'js', 'app.js'), 'utf8');
+  const region = /\/\/ region planDayRollover-test-extract\s*([\s\S]*?)\/\/ endregion planDayRollover-test-extract/;
+  const m = src.match(region);
+  assert.ok(m, 'app.js must contain planDayRollover test region markers');
+  return new Function(`${m[1]}\nreturn planDayRollover;`)();
 }
 
-test('buildYesterdaySnapshot copies date and numeric counters', () => {
-  const f = loadBuildYesterdaySnapshot();
-  assert.equal(typeof f, 'function');
-  const out = f('2026-04-27', {
-    totalPomos: 6,
-    totalBreaks: 5,
-    totalFocusSec: 1500,
-    goals: [{ text: 'g1', done: true }],
-    tasks: [{ id: 1, name: 't' }],
-    timeLog: [{ time: '12:00', name: 't' }],
-    sessionHistory: [{ type: 'work', durSec: 1500 }],
-  });
-  assert.equal(out.date, '2026-04-27');
-  assert.equal(out.totalPomos, 6);
-  assert.equal(out.totalBreaks, 5);
-  assert.equal(out.totalFocusSec, 1500);
-  assert.equal(out.goals.length, 1);
-  assert.equal(out.tasks.length, 1);
-  assert.equal(out.timeLog.length, 1);
-  assert.equal(out.sessionHistory.length, 1);
+const planDayRollover = loadPlanDayRollover();
+const MAX_DEFER = 30 * 60 * 1000;
+
+test('same day: noop, clears any pending defer state', () => {
+  // Even if pendingSince + nagShown were set from a prior in-progress
+  // rollover, hitting same-day resets both — the decision is "we're in sync".
+  const plan = planDayRollover('2026-05-21', '2026-05-21', false, 12345, true, 99999, MAX_DEFER);
+  assert.equal(plan.action, 'noop');
+  assert.equal(plan.nextPendingSince, 0);
+  assert.equal(plan.nextNagShown, false);
 });
 
-test('buildYesterdaySnapshot coerces non-numeric counters to 0', () => {
-  const f = loadBuildYesterdaySnapshot();
-  const out = f('2026-04-27', {
-    totalPomos: 'oops',
-    totalBreaks: undefined,
-    totalFocusSec: null,
-  });
-  assert.equal(out.totalPomos, 0);
-  assert.equal(out.totalBreaks, 0);
-  assert.equal(out.totalFocusSec, 0);
+test('first boot (lastKnown null): noop, no defer set', () => {
+  const plan = planDayRollover('2026-05-21', null, false, 0, false, 1000, MAX_DEFER);
+  assert.equal(plan.action, 'noop');
+  assert.equal(plan.nextPendingSince, 0);
 });
 
-test('buildYesterdaySnapshot coerces non-array collections to []', () => {
-  const f = loadBuildYesterdaySnapshot();
-  const out = f('2026-04-27', {
-    goals: null,
-    tasks: undefined,
-    timeLog: 'not an array',
-    sessionHistory: { 0: 'fake' },
-  });
-  assert.deepEqual(out.goals, []);
-  assert.deepEqual(out.tasks, []);
-  assert.deepEqual(out.timeLog, []);
-  assert.deepEqual(out.sessionHistory, []);
+test('today missing (clock unavailable): noop, no defer set', () => {
+  // todayKey() can return null if the date helper fails to load — the
+  // safe move is to do nothing this tick.
+  const plan = planDayRollover(null, '2026-05-20', false, 0, false, 1000, MAX_DEFER);
+  assert.equal(plan.action, 'noop');
 });
 
-test('buildYesterdaySnapshot tolerates an empty/missing state', () => {
-  const f = loadBuildYesterdaySnapshot();
-  const a = f('2026-04-27', undefined);
-  assert.equal(a.date, '2026-04-27');
-  assert.equal(a.totalPomos, 0);
-  assert.deepEqual(a.tasks, []);
-  const b = f(null, {});
-  assert.equal(b.date, null);
+test('new day, no modal: rollover, cleared state', () => {
+  const plan = planDayRollover('2026-05-22', '2026-05-21', false, 0, false, 1000, MAX_DEFER);
+  assert.equal(plan.action, 'rollover');
+  assert.equal(plan.nextPendingSince, 0);
+  assert.equal(plan.nextNagShown, false);
 });
 
-// Static contract guards on _handleDayRollover. A previous version reset
-// pomosInCycle on rollover and let tick() finish on today, splitting the
-// in-flight session and bumping users out of mid-cycle. The fix calls
-// pauseTimer before archiving and removes the pomosInCycle=0 reset.
-test('_handleDayRollover preserves pomosInCycle across midnight', () => {
-  const src = readFileSync(join(root, 'js', 'app.js'), 'utf8');
-  const start = src.indexOf('function _handleDayRollover');
-  assert.ok(start > 0, '_handleDayRollover not found');
-  // Slice to the next top-level function so the slice grows automatically
-  // as the rollover handler picks up guards (modal-defer, etc.) instead of
-  // breaking on a fixed-width budget.
-  const after = src.indexOf('\nfunction ', start + 1);
-  const end = after > 0 ? after : start + 4000;
-  const body = src.slice(start, end);
-  assert.ok(!/pomosInCycle\s*=\s*0/.test(body), 'rollover must not reset pomosInCycle');
-  assert.match(body, /pauseTimer\(\)/, 'rollover must call pauseTimer when running');
-  assert.match(body, /totalPomos\s*=\s*0/, 'rollover must reset totalPomos');
-  assert.match(body, /totalBreaks\s*=\s*0/, 'rollover must reset totalBreaks');
+test('new day, modal open, first tick: defer; records pendingSince=now', () => {
+  const now = 1_000_000;
+  const plan = planDayRollover('2026-05-22', '2026-05-21', true, 0, false, now, MAX_DEFER);
+  assert.equal(plan.action, 'defer');
+  assert.equal(plan.nextPendingSince, now);
+  assert.equal(plan.nextNagShown, false);
 });
 
-// Audit gap #6: rollover should defer when the task modal is open so the
-// "Crossed midnight" toast doesn't slide over the user's typing and the
-// renderAll() sweep doesn't tear down the list while a row is the modal's
-// anchor. Capped at 30 min so an indefinitely-open modal eventually proceeds.
-test('_handleDayRollover defers when task modal is open (with a cap)', () => {
-  const src = readFileSync(join(root, 'js', 'app.js'), 'utf8');
-  const start = src.indexOf('function _handleDayRollover');
-  const after = src.indexOf('\nfunction ', start + 1);
-  const body = src.slice(start, after > 0 ? after : start + 4000);
-  assert.match(body, /_isTaskModalOpen\(\)/, 'rollover must check modal-open state');
-  assert.match(body, /_ROLLOVER_MODAL_MAX_DEFER_MS/, 'rollover must use a defer cap constant');
-  assert.match(body, /_pendingRolloverSince/, 'rollover must timestamp the first deferred attempt');
+test('new day, modal open, within defer window: defer; preserves pendingSince', () => {
+  const since = 1_000_000;
+  const now = since + 5 * 60 * 1000; // 5 minutes in
+  const plan = planDayRollover('2026-05-22', '2026-05-21', true, since, false, now, MAX_DEFER);
+  assert.equal(plan.action, 'defer');
+  assert.equal(plan.nextPendingSince, since);
+  assert.equal(plan.nextNagShown, false);
+});
+
+test('new day, modal open, past defer cap, nag not yet shown: nag once + record nagShown', () => {
+  const since = 1_000_000;
+  const now = since + MAX_DEFER + 1;
+  const plan = planDayRollover('2026-05-22', '2026-05-21', true, since, false, now, MAX_DEFER);
+  assert.equal(plan.action, 'nag');
+  assert.equal(plan.nextPendingSince, since);
+  assert.equal(plan.nextNagShown, true);
+});
+
+test('new day, modal open, past defer cap, nag already shown: defer silently — no second nag', () => {
+  const since = 1_000_000;
+  const now = since + MAX_DEFER + 60_000;
+  const plan = planDayRollover('2026-05-22', '2026-05-21', true, since, true, now, MAX_DEFER);
+  assert.equal(plan.action, 'defer');
+  assert.equal(plan.nextPendingSince, since);
+  assert.equal(plan.nextNagShown, true);
+});
+
+test('modal closes after defer: next tick proceeds with rollover, state cleared', () => {
+  // Sequence: previous tick deferred (modal was open, pendingSince=X).
+  // User closes modal; on the next interval tick, isModalOpen=false →
+  // rollover, and both pendingSince + nagShown reset to defaults.
+  const plan = planDayRollover('2026-05-22', '2026-05-21', false, 1_000_000, false, 2_000_000, MAX_DEFER);
+  assert.equal(plan.action, 'rollover');
+  assert.equal(plan.nextPendingSince, 0);
+  assert.equal(plan.nextNagShown, false);
+});
+
+test('defer cap boundary: now - since exactly equal to maxDeferMs triggers nag', () => {
+  // The branch uses `>=`, not `>`, so the boundary tick fires the nag.
+  // Worth pinning so a future refactor doesn't accidentally weaken to `>`.
+  const since = 1_000_000;
+  const now = since + MAX_DEFER;
+  const plan = planDayRollover('2026-05-22', '2026-05-21', true, since, false, now, MAX_DEFER);
+  assert.equal(plan.action, 'nag');
 });

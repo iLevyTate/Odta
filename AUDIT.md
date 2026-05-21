@@ -18,7 +18,7 @@ Most findings have been resolved by subsequent feature waves. Each section below
 | M-2 | Medium | ✅ Fixed | `pwa.js` inline stub trimmed to 5 essential fields; drift surface eliminated |
 | M-3 | Medium | ✅ Fixed | `setHeaderDate()` wrapper added |
 | M-4 | Medium | ✅ Fixed | Same migration as H-1 |
-| M-5 | Medium | 🟡 Open | `js/app.js` still lacks direct test coverage |
+| M-5 | Medium | ✅ Fixed | Day-rollover decision logic extracted to `planDayRollover`; covered by `tests/day-rollover.test.mjs` |
 | L-1 | Low | 🟡 Open | `pwa.js` install-state polling still has layered timeouts |
 | L-2 | Low | 🔵 Obsolete | The `escAttr`-in-inline antipattern can no longer exist (H-2 removed all inline handlers) |
 | L-3 | Low | 🟡 Open | Dynamic icon-only buttons still rely on `title` for screen readers |
@@ -143,6 +143,10 @@ Two problems: (a) O(n²) DOM rewrite as the browser re-parses the string each it
 
 ### M-5 — `js/app.js` is a 600-LOC kitchen sink with no direct test
 
+> ✅ **Fixed (day-rollover slice).** The highest-risk piece — day-rollover decision logic — was extracted into a pure function `planDayRollover` at `js/app.js:642`, fenced by `// region planDayRollover-test-extract` markers so it can load standalone via `new Function()`. `tests/day-rollover.test.mjs` pins every branch (10 cases): same-day, first-boot, missing clock, new-day no-modal, new-day modal-open first-tick / within-window / past-cap / past-cap-already-nagged, modal-closes-after-defer, and the boundary `>=` condition that determines when the nag fires. `_handleDayRollover` (the side-effect wrapper) now reads as: gather inputs → call `planDayRollover` → switch on `action` → dispatch.
+>
+> Share-target / file-handler IIFEs are still untested; their effect (parsing a single URL param into a task) is small and lower-risk than day-rollover. Worth a follow-up if it bites us.
+
 `js/app.js` contains: global error handler, persistent storage request, storage-pressure check, online/offline indicator, SW update banner + reload flow, archive load/render/clear/export-CSV, daily report generation in two formats, app init, share-target handling, file-handler ingestion, day rollover, system-info renderer, intel-load orchestration. No `tests/app*.test.mjs` exists.
 
 This is the single largest untested coordinator in the project. A regression here (e.g., day rollover not firing after wake-from-sleep) would be invisible to CI.
@@ -222,8 +226,8 @@ Modules ranked by **untested user-facing surface area** (lines × user-impact):
 
 **Original list (April 2026):** H-1 → M-1 → M-3 → M-5 → H-2 → M-4 → M-2 → L-*
 
-**Status as of v48 (May 2026):** H-1, H-2, M-1, M-2, M-3, M-4, L-2 are all closed (see annotations above). Open items, ordered by remaining risk:
+**Status as of v48 (May 2026):** H-1, H-2, M-1, M-2, M-3, M-4, M-5 (day-rollover slice), L-2 are all closed (see annotations above). Open items, ordered by remaining risk:
 
-1. **M-5** — extract day-rollover and share-target/file-handler IIFEs from `js/app.js`, add unit coverage. Highest remaining risk because day-rollover wakeup bugs are invisible to CI.
-2. **L-3** — accessibility sweep on dynamically-rendered icon-only buttons (`title` is not screen-reader reliable; pair with `aria-label`).
-3. **L-1** — replace `pwa.js` install-state dual `setTimeout` polling with a `MutationObserver` or single gated call. Working today, smell.
+1. **L-3** — accessibility sweep on dynamically-rendered icon-only buttons (`title` is not screen-reader reliable; pair with `aria-label`).
+2. **L-1** — replace `pwa.js` install-state dual `setTimeout` polling with a `MutationObserver` or single gated call. Working today, smell.
+3. **M-5 follow-up** — share-target / file-handler IIFEs in `js/app.js` still untested. Lower risk than day-rollover; revisit if a regression slips through.
