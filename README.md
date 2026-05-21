@@ -59,7 +59,7 @@ Prefer letters? `O-D-T-A-U-L-A-I` works too. It's an acronym, so both are fine:
 | **Trust** | Destructive AI "fix it for me" buttons | AI **proposes** updates — you preview, apply, undo |
 
 > [!IMPORTANT]
-> **Local-first isn't a marketing word here.** Open the app offline. Read the source. Search the repo for `fetch(`. The only outbound calls are the one-time model download from the Hugging Face CDN (cached forever after) and the optional calendar feeds / P2P sync **you** turn on.
+> **Local-first isn't a marketing word here.** Open the app offline on the very first launch and it still works. Every runtime dependency — Transformers.js, the embedding model, chrono-node, PeerJS — is **vendored under `js/vendor/` and `assets/models/`**. The only outbound calls the app ever makes are the optional calendar feeds and P2P sync **you** turn on.
 
 ---
 
@@ -101,7 +101,7 @@ Prefer letters? `O-D-T-A-U-L-A-I` works too. It's an acronym, so both are fine:
 
 A compact sentence-embedding model — **`Xenova/bge-small-en-v1.5`**, 384 dimensions, about 33 MB — loads into your browser via **Transformers.js**. Every task title + description is encoded into a vector. Cosine similarity in that vector space lets the app reason about **meaning and context**, not just keywords.
 
-Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model auto-downloads on first idle after page load, then is cached by the browser — fully offline after that. There is **no generative LLM** in this app: no chat, no token streaming, no cloud calls, no API keys.
+Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model is served from `assets/models/` on the same origin and precached by the service worker — fully offline from a fresh install. There is **no generative LLM** in this app: no chat, no token streaming, no cloud calls, no API keys.
 
 What you actually get from it:
 
@@ -253,11 +253,11 @@ Full walkthroughs with Nginx configs, troubleshooting, custom icons, and manifes
 
 - store app state in `localStorage`,
 - store the embedding cache in `IndexedDB`,
-- fetch the embedding model once from the Hugging Face / jsDelivr CDN, then cache it,
+- load the embedding model + Transformers.js + chrono-node + PeerJS **from the same origin** — they're vendored at `js/vendor/` and `assets/models/`, never fetched from a CDN,
 - fetch calendar feeds you subscribe to (those servers see you),
 - open a WebRTC connection to a device you explicitly pair with (PeerJS signalling server sees the handshake, not the payload).
 
-To audit outbound traffic yourself, search the source for `fetch(`, dynamic `import(`, `XMLHttpRequest`, and `new WebSocket(` — the embedding stack also loads workers/modules from CDNs, and PeerJS uses WebSockets internally for signalling when sync is enabled.
+To audit outbound traffic yourself, search the source for `fetch(`, dynamic `import(`, `XMLHttpRequest`, and `new WebSocket(`. PeerJS uses WebSockets internally for signalling when sync is enabled.
 
 ---
 
@@ -300,14 +300,14 @@ OdTauLai/
 
 </details>
 
-**Runtime dependencies** are loaded from CDNs on demand, never bundled:
+**Runtime dependencies** are vendored under `js/vendor/` and `assets/models/`. The app makes zero CDN calls by default.
 
-| Library | Purpose | When it loads |
+| Library | Purpose | Vendored at |
 |---|---|---|
-| [`@huggingface/transformers`](https://huggingface.co/docs/transformers.js) | on-device embeddings | first time you use an AI feature |
-| [`Xenova/bge-small-en-v1.5`](https://huggingface.co/Xenova/bge-small-en-v1.5) | 384-dim sentence embedding model (~33 MB) | first AI feature use, then cached |
-| [`chrono-node`](https://github.com/wanasit/chrono) | natural-language dates | first time you quick-add with dates |
-| [`peerjs`](https://peerjs.com/) | WebRTC signalling client | only if you enable P2P sync |
+| [`@huggingface/transformers`](https://huggingface.co/docs/transformers.js) v3.3.1 | on-device embeddings | `js/vendor/transformers/` (incl. ORT WASM) |
+| [`Xenova/bge-small-en-v1.5`](https://huggingface.co/Xenova/bge-small-en-v1.5) | 384-dim sentence embedding model (~33 MB) | `assets/models/Xenova/bge-small-en-v1.5/` *(run `npm run fetch-models` once to populate)* |
+| [`chrono-node`](https://github.com/wanasit/chrono) v2.7.7 | natural-language dates | `js/vendor/chrono-node.min.mjs` |
+| [`peerjs`](https://peerjs.com/) v1.5.4 | WebRTC signalling client | `js/vendor/peerjs.min.js` |
 
 Everything else is hand-written.
 
@@ -379,7 +379,7 @@ Chat LLMs are too big for a phone, need a cloud, and hallucinate. A 33 MB embedd
 <details>
 <summary><b>How do I get the AI features to work?</b></summary>
 
-Open the **Tools** tab. The embedding model downloads on first use (one time, ~33 MB). After that, everything is instant. A status chip in the header shows load progress; click it to retry if something fails.
+Open the **Tools** tab. The embedding model is served from `assets/models/` (same-origin, no network) and loads on first use. If you cloned a build without the model weights, run `npm run fetch-models` once to populate them. A status chip in the header shows load progress; click it to retry if something fails.
 
 </details>
 
@@ -400,7 +400,14 @@ Yes — the beta P2P sync uses WebRTC. Your data goes peer-to-peer; only the han
 <details>
 <summary><b>How do I run this on a corporate network that blocks CDNs?</b></summary>
 
-Host `@huggingface/transformers`, the model files, `chrono-node`, and `peerjs` yourself; update the CDN URLs in `js/ai.js`, `js/nlparse.js`, and `js/sync.js`.
+It already works — every runtime dependency is vendored under `js/vendor/` and `assets/models/`. The app makes zero CDN calls by default. If you want to swap a vendored file for a mirror, every path is centralized in [`js/config.js`](js/config.js) (`window.ODTAULAI_CONFIG`).
+
+</details>
+
+<details>
+<summary><b>How do I get the embedding model into <code>assets/models/</code> on a fresh clone?</b></summary>
+
+Run `npm run fetch-models` once. The script in [`scripts/fetch-models.mjs`](scripts/fetch-models.mjs) downloads the ~33 MB of weights from Hugging Face into `assets/models/Xenova/bge-small-en-v1.5/`. Commit the result and anyone who clones the repo afterwards gets a fully offline build with no model download.
 
 </details>
 

@@ -140,18 +140,13 @@ function _isLegacyPeerId(id) {
 function _loadPeerJS() {
   return new Promise((res, rej) => {
     if (window.Peer) return res(window.Peer);
-    // Try local bundled copy first (works offline after install), CDN as last resort
-    const tryLoad = (src, onFail) => {
-      const s = document.createElement('script');
-      s.src = src;
-      s.onload  = () => res(window.Peer);
-      s.onerror = onFail;
-      document.head.appendChild(s);
-    };
-    tryLoad('./js/vendor/peerjs.min.js', () => {
-      tryLoad('https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
-        () => rej(new Error('Failed to load PeerJS from local and CDN')));
-    });
+    // PeerJS is vendored under js/vendor/ and precached by the SW. No CDN
+    // fallback — offline-first means the local file is the only source.
+    const s = document.createElement('script');
+    s.src = './js/vendor/peerjs.min.js';
+    s.onload  = () => res(window.Peer);
+    s.onerror = () => rej(new Error('Failed to load PeerJS from js/vendor/peerjs.min.js'));
+    document.head.appendChild(s);
   });
 }
 

@@ -1,8 +1,10 @@
 /**
  * Extends quick-add with chrono-node (dynamic import) for natural date phrases.
  * Depends on global parseQuickAdd from tasks.js.
+ *
+ * chrono-node is vendored under js/vendor/ — no CDN fetch, works offline.
  */
-const CHRONO_CDN = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_CDN) || 'https://cdn.jsdelivr.net/npm/chrono-node@2.7.7/+esm';
+const CHRONO_URL = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_URL) || './js/vendor/chrono-node.min.mjs';
 
 let _chronoMod = null;
 let _chronoLoad = null;
@@ -10,7 +12,7 @@ let _chronoLoad = null;
 async function loadChrono(){
   if(_chronoMod) return _chronoMod;
   if(_chronoLoad) return _chronoLoad;
-  _chronoLoad = import(CHRONO_CDN).then(m => { _chronoMod = m; return m; });
+  _chronoLoad = import(CHRONO_URL).then(m => { _chronoMod = m; return m; });
   return _chronoLoad;
 }
 
