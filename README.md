@@ -379,7 +379,7 @@ Chat LLMs are too big for a phone, need a cloud, and hallucinate. A 33 MB embedd
 <details>
 <summary><b>How do I get the AI features to work?</b></summary>
 
-Open the **Tools** tab. The embedding model is served from `assets/models/` (same-origin, no network) and loads on first use. If you cloned a build without the model weights, run `npm run fetch-models` once to populate them. A status chip in the header shows load progress; click it to retry if something fails.
+Open the **Tools** tab. The embedding model is served from `assets/models/` on the same origin. If the weights happen to be missing there (the deployer didn't run `npm run fetch-models`), the service worker transparently mirrors them from Hugging Face on first use and caches them forever — you'll see download progress in the header chip, then everything is instant and offline.
 
 </details>
 
@@ -407,7 +407,10 @@ It already works — every runtime dependency is vendored under `js/vendor/` and
 <details>
 <summary><b>How do I get the embedding model into <code>assets/models/</code> on a fresh clone?</b></summary>
 
-Run `npm run fetch-models` once. The script in [`scripts/fetch-models.mjs`](scripts/fetch-models.mjs) downloads the ~33 MB of weights from Hugging Face into `assets/models/Xenova/bge-small-en-v1.5/`. Commit the result and anyone who clones the repo afterwards gets a fully offline build with no model download.
+Two paths, both end up with offline AI:
+
+- **Deployer commits the weights (truly zero outbound calls).** Run `npm run fetch-models` once. The script in [`scripts/fetch-models.mjs`](scripts/fetch-models.mjs) downloads the ~33 MB of weights from Hugging Face into `assets/models/Xenova/bge-small-en-v1.5/`. Commit the result. Everyone who installs the PWA afterwards gets the full offline build precached on first visit.
+- **Skip the script.** The service worker (`sw.js`) detects missing model files and transparently mirrors them from Hugging Face on the user's first AI feature use, then caches each one under the same local URL. After that single ~33 MB hit the app is offline forever. The user needs internet exactly once.
 
 </details>
 

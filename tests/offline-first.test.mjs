@@ -70,11 +70,17 @@ test('no CDN hosts in runtime JS', () => {
   }
 });
 
-test('no CDN hosts in service worker', () => {
+test('service worker only references huggingface.co as the model mirror', () => {
+  // sw.js is allowed to reach Hugging Face as a one-time mirror for missing
+  // model weights (see _remoteModelUrl). No other CDN should appear there.
   const src = stripComments(readFileSync(join(root, 'sw.js'), 'utf8'));
   for (const host of CDN_HOSTS) {
+    if (host === 'huggingface.co') continue;
     assert.ok(!src.includes(host), `sw.js references ${host} — passthrough is no longer needed`);
   }
+  // And the HF reference must be scoped to the model mirror helper, not a
+  // generic passthrough — the constant name pins this.
+  assert.match(src, /MODEL_REMOTE_ORIGIN\s*=\s*['"]https:\/\/huggingface\.co['"]/, 'HF host must be the named mirror constant');
 });
 
 test('vendored libraries are present', () => {
@@ -121,4 +127,34 @@ test('config.js exposes the vendored URLs (not CDN URLs)', () => {
   assert.match(src, /TRANSFORMERS_URL:\s*['"]\.\/js\/vendor\/transformers\/transformers\.min\.mjs['"]/);
   assert.match(src, /CHRONO_URL:\s*['"]\.\/js\/vendor\/chrono-node\.min\.mjs['"]/);
   assert.match(src, /MODEL_BASE_PATH:\s*['"]\.\/assets\/models\/['"]/);
+});
+
+test('sw _remoteModelUrl translates same-origin model paths to HF URLs', async () => {
+  // Load sw.js into a sandbox that fakes the SW globals enough to execute
+  // the top-level constants + helper. This pins the URL-mapping contract:
+  // missing local model files must fall back to the matching HF resource,
+  // not an arbitrary path or a wrong repo.
+  const src = readFileSync(join(root, 'sw.js'), 'utf8');
+  // Snip the helper + its constants — we don't want to evaluate fetch/install handlers.
+  const headerEnd = src.indexOf('const ASSETS');
+  assert.ok(headerEnd > 0, 'expected ASSETS declaration to delimit the header block');
+  const head = src.slice(0, headerEnd)
+    // Strip importScripts (no SW global in node) — version.js is irrelevant here.
+    .replace(/importScripts\([^)]*\);?/g, '');
+  // The helper returns null if the path doesn't match; we evaluate it via Function
+  // to keep the test isolated from the rest of the SW.
+  const fn = new Function(`${head}\nreturn _remoteModelUrl;`)();
+  assert.strictEqual(
+    fn('/assets/models/Xenova/bge-small-en-v1.5/config.json'),
+    'https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/config.json',
+  );
+  assert.strictEqual(
+    fn('/assets/models/Xenova/bge-small-en-v1.5/onnx/model_quantized.onnx'),
+    'https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/onnx/model_quantized.onnx',
+  );
+  // Non-model paths must not be rewritten.
+  assert.strictEqual(fn('/index.html'), null);
+  assert.strictEqual(fn('/js/intel.js'), null);
+  // Malformed (missing file segment) returns null — better to 404 than mangle.
+  assert.strictEqual(fn('/assets/models/Xenova/bge-small-en-v1.5/'), null);
 });

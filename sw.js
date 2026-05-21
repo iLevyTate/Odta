@@ -10,12 +10,40 @@ try {
   // version.js unavailable (e.g. offline install) — keep the inline default.
 }
 
+// Where to fetch model weights from when they aren't present at same-origin.
+// This is the ONLY remote host the service worker ever contacts, and only
+// for paths under `./assets/models/Xenova/...`. Once a file lands in cache
+// it's served from there forever; subsequent requests are fully offline.
+// Deployers who want truly zero outbound calls can run `npm run fetch-models`
+// once and commit `assets/models/` — the fallback path then never triggers.
+const MODEL_REMOTE_ORIGIN = 'https://huggingface.co';
+const MODEL_REMOTE_PATH_SUFFIX = '/resolve/main';
+const MODEL_LOCAL_PREFIX = '/assets/models/';
+
+/**
+ * Translate a same-origin model path into its Hugging Face mirror URL.
+ * Path shape: `/assets/models/<org>/<model>/<...file>` →
+ * `https://huggingface.co/<org>/<model>/resolve/main/<...file>`.
+ */
+function _remoteModelUrl(pathname) {
+  const i = pathname.indexOf(MODEL_LOCAL_PREFIX);
+  if (i < 0) return null;
+  const parts = pathname.slice(i + MODEL_LOCAL_PREFIX.length).split('/');
+  if (parts.length < 3) return null; // need org/model/file at minimum
+  const [org, model, ...rest] = parts;
+  const file = rest.join('/');
+  if (!org || !model || !file) return null;
+  return `${MODEL_REMOTE_ORIGIN}/${org}/${model}${MODEL_REMOTE_PATH_SUFFIX}/${file}`;
+}
+
 // Static app shell + every vendored runtime dependency. The transformers
-// WASM binary is large (~22 MB) and the model weights under
-// `./assets/models/...` are larger still; individual fetch failures are
-// tolerated by the install handler below so a missing model doesn't break
-// the core app. To enable AI features fully offline, run
-// `npm run fetch-models` once to populate `./assets/models/`.
+// WASM binary is ~22 MB and the model weights under `./assets/models/...`
+// are larger still; individual fetch failures are tolerated by the install
+// handler below so a missing model doesn't break the core app.
+// Deployers can run `npm run fetch-models` once to commit the model files
+// at the origin and skip any remote fallback. End users get the same
+// outcome automatically: the fetch handler transparently mirrors missing
+// model files from Hugging Face on first request and caches forever.
 const ASSETS = [
   './',
   './index.html',
@@ -107,14 +135,58 @@ self.addEventListener('activate', e => {
   );
 });
 
+/**
+ * Model-weight fetch with automatic remote mirror.
+ * 1. Cache hit → return immediately (fully offline path).
+ * 2. Network fetch from same origin → if 200, cache + return.
+ * 3. If same-origin missing (404 / network error) → fetch from Hugging Face,
+ *    cache the response under the SAME local URL so future hits are offline.
+ *    `cors` mode is fine: HF resources serve `Access-Control-Allow-Origin: *`.
+ */
+function _fetchModelFile(request, url) {
+  return caches.open(CACHE_NAME).then(cache =>
+    cache.match(request).then(cached => {
+      if (cached) return cached;
+      return fetch(request).then(res => {
+        if (res && res.ok) {
+          cache.put(request, res.clone()).catch(() => {});
+          return res;
+        }
+        const remote = _remoteModelUrl(url.pathname);
+        if (!remote) return res;
+        return fetch(remote, { mode: 'cors', credentials: 'omit' }).then(rres => {
+          if (rres && rres.ok) {
+            // Cache under the LOCAL request — transformers.js asked for the
+            // same-origin URL and will keep doing so, so that's the key.
+            cache.put(request, rres.clone()).catch(() => {});
+          }
+          return rres;
+        });
+      }).catch(() => {
+        const remote = _remoteModelUrl(url.pathname);
+        if (!remote) throw new Error('offline + no remote mirror');
+        return fetch(remote, { mode: 'cors', credentials: 'omit' }).then(rres => {
+          if (rres && rres.ok) cache.put(request, rres.clone()).catch(() => {});
+          return rres;
+        });
+      });
+    })
+  );
+}
+
 self.addEventListener('fetch', e => {
   if(e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  // Everything is same-origin now (libraries + model weights are vendored).
-  // Cross-origin requests are left to the browser — the app never makes any
-  // by default; user-enabled features (calendar feeds, P2P sync) handle
-  // their own network. The previous Hugging Face / jsDelivr passthrough is
-  // no longer needed.
+  // Model weights: same-origin first, Hugging Face mirror on miss. This is
+  // the ONE place the SW reaches across origins, and only for /assets/models/.
+  if(url.origin === self.location.origin && url.pathname.indexOf(MODEL_LOCAL_PREFIX) >= 0){
+    e.respondWith(_fetchModelFile(e.request, url));
+    return;
+  }
+  // Everything else is same-origin only — vendored libs, app shell, icons.
+  // The previous huggingface/jsdelivr passthrough is gone; user-enabled
+  // features (calendar feeds, P2P sync) handle their own cross-origin
+  // network outside the SW.
   if(url.origin !== self.location.origin) return;
 
   const isNavigation = e.request.mode === 'navigate' || e.request.destination === 'document' ||
