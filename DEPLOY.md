@@ -165,24 +165,23 @@ Then update `manifest.json` colors to match your brand:
 
 ## Content-Security-Policy (CSP)
 
-OdTauLai ships a permissive meta CSP in `index.html` — practical, not maximalist. The shipped policy allows `'unsafe-inline'` (the app uses inline `onclick` handlers throughout), `'wasm-unsafe-eval'` (Transformers.js needs it), and broad `connect-src http: https:` (calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs). On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this is what gets served and everything works.
+OdTauLai ships a tight meta CSP in `index.html`. Every runtime library — Transformers.js, chrono-node, PeerJS, Sortable — is vendored under `js/vendor/` so `script-src` is `'self'` only. `connect-src http: https:` stays broad because `js/calfeeds.js` accepts user-configured CORS proxies, and the WebSocket entries cover PeerJS signalling.
 
-If your host wants to enforce a stricter CSP via HTTP headers (overriding the meta tag), the embedding model needs at least these allow-list entries:
+The shipped policy:
 
 ```
 default-src 'self';
-script-src  'self' https://cdn.jsdelivr.net;
-style-src   'self' 'unsafe-inline';
+script-src  'self' 'wasm-unsafe-eval';
+style-src   'self';
 img-src     'self' data: blob:;
-worker-src  'self' blob: https://cdn.jsdelivr.net;
-connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://cdn-lfs.huggingface.co https://*.huggingface.co;
+worker-src  'self' blob:;
+connect-src 'self' http: https:
+            wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;
 ```
 
-Note: this stricter alternative drops `'unsafe-inline'` from `script-src`, which will break the inline `onclick` handlers in `index.html`. Migrate them to `addEventListener` first if you need this. It also tightens `connect-src` to the inference endpoints only — calendar feeds via user proxies will be blocked.
-
 Why each entry:
-- `cdn.jsdelivr.net` — Transformers.js ESM module + its WASM/worker assets.
-- `huggingface.co` + `cdn-lfs.huggingface.co` — embedding model weights (`Xenova/bge-small-en-v1.5`).
+- `'wasm-unsafe-eval'` — Transformers.js compiles the vendored ORT WASM binary.
 - `worker-src blob:` — Transformers.js spawns a Web Worker from a blob URL for background inference.
+- `connect-src http: https:` — calendar feeds via user-configured CORS proxies (`js/calfeeds.js`). The service worker's model-mirror fallback to Hugging Face runs in the SW context (not subject to page CSP), so no extra entry is needed for that path.
 
-If you enable P2P sync (PeerJS), also add your signalling server (default `wss://*.peerjs.com`) to `connect-src`.
+If you want to tighten `connect-src` further, drop `http: https:` and add only the proxies and remote calendar hosts your users actually need. Calendar feeds via arbitrary user proxies will then be blocked.

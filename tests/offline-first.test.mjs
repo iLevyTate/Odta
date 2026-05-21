@@ -122,6 +122,34 @@ test('intel.js disables remote model fetches and uses local path', () => {
   assert.match(src, /env\.backends\.onnx\.wasm\.wasmPaths\s*=\s*TRANSFORMERS_WASM_DIR/, 'must set env.backends.onnx.wasm.wasmPaths');
 });
 
+test('index.html CSP does not allow third-party script sources', () => {
+  // With every lib vendored, script-src must be 'self' (+ wasm-unsafe-eval
+  // for the ORT WASM compilation). Re-adding cdn.jsdelivr.net or unpkg.com
+  // would let a future PR pull a runtime dep without anyone noticing.
+  const html = readFileSync(join(root, 'index.html'), 'utf8');
+  const csp = html.match(/Content-Security-Policy[^>]*content="([^"]+)"/);
+  assert.ok(csp, 'CSP meta tag missing');
+  const scriptSrc = csp[1].match(/script-src\s+([^;]+)/);
+  assert.ok(scriptSrc, 'script-src directive missing');
+  for (const host of CDN_HOSTS) {
+    assert.ok(!scriptSrc[1].includes(host), `script-src must not include ${host}`);
+  }
+});
+
+test('index.html has no preconnect/dns-prefetch hints to CDN hosts', () => {
+  // Preconnect hints leak our origins-of-interest and produce DNS lookups
+  // even when the user never triggers an AI feature. They were holdovers
+  // from the CDN era; everything is same-origin now.
+  const html = readFileSync(join(root, 'index.html'), 'utf8');
+  for (const host of CDN_HOSTS) {
+    assert.doesNotMatch(
+      html,
+      new RegExp(`<link[^>]+rel=["'](?:preconnect|dns-prefetch)["'][^>]+href=["']https?://${host.replace(/\./g, '\\.')}`),
+      `index.html should not preconnect ${host}`,
+    );
+  }
+});
+
 test('config.js exposes the vendored URLs (not CDN URLs)', () => {
   const src = readFileSync(join(root, 'js/config.js'), 'utf8');
   assert.match(src, /TRANSFORMERS_URL:\s*['"]\.\/js\/vendor\/transformers\/transformers\.min\.mjs['"]/);

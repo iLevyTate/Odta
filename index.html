@@ -39,10 +39,15 @@
          (el.style.X = ...) AFTER innerHTML, which is allowed by CSP;
          visibility uses the HTML5 `hidden` attribute and el.hidden =
          bool toggles instead of style.display.
+     script-src is now 'self' only — every runtime library (transformers.js,
+     chrono-node, peerjs, Sortable) is vendored under js/vendor/. The
+     service worker's model-mirror fallback runs in the SW context (not
+     subject to page CSP) so connect-src only needs to cover user-enabled
+     features.
      connect-src uses http:/https: broadly because calfeeds.js allows
      user-configured CORS proxy URLs.
      wss: entries are required for PeerJS WebRTC signalling. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
 
 <!-- Icons -->
 <link rel="manifest" href="manifest.json" id="pwa-manifest">
@@ -64,9 +69,6 @@
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
 <link rel="stylesheet" href="css/main.css">
-<!-- Preconnect hints — speeds up first-load of the on-device embedding model (jsDelivr for Transformers.js, huggingface.co for model weights) -->
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="preconnect" href="https://huggingface.co" crossorigin>
 
 </head>
 <body>
