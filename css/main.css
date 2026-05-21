@@ -3316,10 +3316,38 @@ body:has(.cmdk-overlay.open)  #actionToast{
   bottom:calc(152px + env(safe-area-inset-bottom,0px));
 }
 @media (max-width:640px){
-  .export-toast{left:50%;right:auto;transform:translateX(-50%) translateY(16px)}
-  .export-toast.show{transform:translateX(-50%) translateY(0)}
-  .action-toast{left:50%;right:auto;transform:translateX(-50%) translateY(16px)}
-  .action-toast.show{transform:translateX(-50%) translateY(0)}
+  /* On mobile the FAB owns the bottom-right (56px circle at right:20px) and
+     the save indicator owns the bottom-left dot column. Toasts anchor to the
+     bottom-LEFT, stacked above the save indicator, so they never collide with
+     the FAB and never land in the center thumb-zone. max-width is clamped so
+     a long label can't extend into the FAB column. */
+  .export-toast{
+    left:calc(10px + env(safe-area-inset-left,0px));right:auto;
+    bottom:calc(112px + env(safe-area-inset-bottom,0px));
+    transform:translateY(16px);
+    max-width:min(calc(100vw - 88px),360px);
+    text-align:left;
+  }
+  .export-toast.show{transform:translateY(0)}
+  .action-toast{
+    left:calc(10px + env(safe-area-inset-left,0px));right:auto;
+    bottom:calc(116px + env(safe-area-inset-bottom,0px));
+    transform:translateY(16px);
+    max-width:min(calc(100vw - 88px),360px);
+  }
+  .action-toast.show{transform:translateY(0)}
+  /* Re-declare the mini-timer-aware lifts inside the mobile block so the
+     mobile baseline (above) doesn't get clobbered by the desktop-defaulted
+     rule at the top level. FAB lifts to bottom:92px when mini-timer is
+     visible (see .quick-add-fab rule); toasts clear that whole column. */
+  body:has(.mini-timer.visible) .export-toast{bottom:calc(140px + env(safe-area-inset-bottom,0px))}
+  body:has(.mini-timer.visible) .action-toast{bottom:calc(180px + env(safe-area-inset-bottom,0px))}
+  /* When a modal/palette is open the desktop modal-open lifts (above) push
+     bottom higher than our mobile baseline; re-declare so they still win. */
+  body:has(.modal-overlay.open) #exportToast,
+  body:has(.cmdk-overlay.open)  #exportToast{bottom:calc(160px + env(safe-area-inset-bottom,0px))}
+  body:has(.modal-overlay.open) #actionToast,
+  body:has(.cmdk-overlay.open)  #actionToast{bottom:calc(200px + env(safe-area-inset-bottom,0px))}
 }
 .action-toast-lbl{color:var(--text-1);font-weight:500}
 .action-toast-btn{

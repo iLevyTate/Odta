@@ -4,8 +4,10 @@
  * the bottom centre — on desktop with the empty Tasks state the pill
  * landed directly over the welcome card / "+ Add your first task" button,
  * blocking taps on the central interaction column. Toasts now anchor
- * bottom-right on desktop, re-centre on mobile (≤640px) where corners
- * read as cramped, and lift above the mini-timer when it's visible.
+ * bottom-right on desktop and bottom-LEFT on mobile (≤640px) — the FAB
+ * owns the bottom-right on mobile, so a centred toast collided with it on
+ * narrow viewports. Both anchors lift above the mini-timer when it's
+ * visible.
  *
  * Modals (.modal-overlay, .cmdk-overlay, .what-next-overlay) are NOT
  * toasts and must remain centred — the negative-regression block below
@@ -56,23 +58,33 @@ test('mini-timer presence lifts both toasts above its corner', () => {
   assert.match(css, /body:has\(\.mini-timer\.visible\)\s*\.action-toast\s*\{[^}]*bottom:/, 'action-toast missing mini-timer lift rule');
 });
 
-test('mobile (max-width:640px) re-centres toasts horizontally', () => {
-  // The corner anchor reads as cramped on a phone where the body is already
-  // narrow. The mobile media query restores the centred bottom pill.
+test('mobile (max-width:640px) anchors toasts bottom-left (clear of FAB)', () => {
+  // The FAB sits at bottom-right on mobile (56px circle at right:20px). A
+  // centred toast (the previous design) extended into the FAB column on
+  // narrow viewports, blocking taps. Toasts now anchor bottom-LEFT, stacked
+  // above the save indicator dot.
   const idx = css.indexOf('@media (max-width:640px)');
   assert.ok(idx > 0, '@media (max-width:640px) block not found');
-  // Find a block that contains both toast selectors centred.
-  // Walk through every max-width:640 block and check at least one has the
-  // re-centring rules — simpler: regex the whole stylesheet.
   assert.match(
     css,
-    /@media \(max-width:640px\)\s*\{[^]*?\.export-toast\s*\{[^}]*left:\s*50%[^}]*\}[^]*?\}/,
-    'mobile breakpoint must re-centre .export-toast'
+    /@media \(max-width:640px\)\s*\{[^]*?\.export-toast\s*\{[^}]*left:\s*calc\([^}]*right:\s*auto[^}]*\}[^]*?\}/,
+    'mobile breakpoint must anchor .export-toast bottom-left (left: calc(...); right: auto)'
   );
   assert.match(
     css,
+    /@media \(max-width:640px\)\s*\{[^]*?\.action-toast\s*\{[^}]*left:\s*calc\([^}]*right:\s*auto[^}]*\}[^]*?\}/,
+    'mobile breakpoint must anchor .action-toast bottom-left (left: calc(...); right: auto)'
+  );
+  // Negative regression: must NOT re-introduce the bottom-middle anchor.
+  assert.doesNotMatch(
+    css,
+    /@media \(max-width:640px\)\s*\{[^]*?\.export-toast\s*\{[^}]*left:\s*50%[^}]*\}[^]*?\}/,
+    'mobile breakpoint must not centre .export-toast (regression)'
+  );
+  assert.doesNotMatch(
+    css,
     /@media \(max-width:640px\)\s*\{[^]*?\.action-toast\s*\{[^}]*left:\s*50%[^}]*\}[^]*?\}/,
-    'mobile breakpoint must re-centre .action-toast'
+    'mobile breakpoint must not centre .action-toast (regression)'
   );
 });
 
