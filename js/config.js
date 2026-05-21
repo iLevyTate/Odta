@@ -1,15 +1,27 @@
 /**
- * Centralized configuration — single source of truth for CDN URLs, model
+ * Centralized configuration — single source of truth for vendor URLs, model
  * identifiers, and localStorage/IndexedDB key names.
  *
  * Loaded before all other app modules (see index.html script order).
  * Modules reference `ODTAULAI_CONFIG.*` instead of maintaining their own
  * copies, eliminating version-drift and duplicated magic strings.
+ *
+ * All runtime dependencies are vendored locally (see js/vendor/ and
+ * assets/models/) so the app works fully offline from a fresh install.
+ * Model weights are not committed by default — run `npm run fetch-models`
+ * once on your machine to populate assets/models/, then commit them.
  */
 window.ODTAULAI_CONFIG = Object.freeze({
-  // ── CDN dependencies ─────────────────────────────────────────────────────
-  TRANSFORMERS_CDN: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.1',
-  CHRONO_CDN:       'https://cdn.jsdelivr.net/npm/chrono-node@2.7.7/+esm',
+  // ── Vendored library paths (relative to index.html) ──────────────────────
+  // Pinned versions match the tarballs under js/vendor/. To upgrade, replace
+  // the file under js/vendor/ and bump the version comment here.
+  TRANSFORMERS_URL: './js/vendor/transformers/transformers.min.mjs', // v3.3.1
+  CHRONO_URL:       './js/vendor/chrono-node.min.mjs',               // v2.7.7
+  /** Where transformers.js loads ORT WASM artefacts from. Must end with `/`. */
+  TRANSFORMERS_WASM_DIR: './js/vendor/transformers/',
+  /** Root for local model weights. Transformers.js resolves `EMBED_MODEL`
+   *  beneath this path: `${MODEL_BASE_PATH}${EMBED_MODEL}/...`. */
+  MODEL_BASE_PATH: './assets/models/',
 
   // ── Embedding model ──────────────────────────────────────────────────────
   // Single model for every device — bge-small runs on WebGPU (fp32/fp16) and

@@ -98,12 +98,7 @@
         self.addEventListener('fetch', e => {
           if (e.request.method !== 'GET') return;
           const u = new URL(e.request.url);
-          const h = u.hostname;
-          if (h.includes('huggingface.co') || h.includes('cdn-lfs.huggingface.co') ||
-              h === 'hf.co' || h.includes('cdn.jsdelivr.net')) {
-            e.respondWith(fetch(e.request));
-            return;
-          }
+          if (u.origin !== self.location.origin) return;
           e.respondWith(
             caches.match(e.request).then(cached => {
               if (cached) return cached;

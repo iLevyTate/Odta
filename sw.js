@@ -10,6 +10,12 @@ try {
   // version.js unavailable (e.g. offline install) — keep the inline default.
 }
 
+// Static app shell + every vendored runtime dependency. The transformers
+// WASM binary is large (~22 MB) and the model weights under
+// `./assets/models/...` are larger still; individual fetch failures are
+// tolerated by the install handler below so a missing model doesn't break
+// the core app. To enable AI features fully offline, run
+// `npm run fetch-models` once to populate `./assets/models/`.
 const ASSETS = [
   './',
   './index.html',
@@ -39,6 +45,19 @@ const ASSETS = [
   './js/app.js',
   './js/vendor/peerjs.min.js',
   './js/vendor/Sortable.min.js',
+  './js/vendor/chrono-node.min.mjs',
+  './js/vendor/transformers/transformers.min.mjs',
+  './js/vendor/transformers/ort-wasm-simd-threaded.jsep.mjs',
+  './js/vendor/transformers/ort-wasm-simd-threaded.jsep.wasm',
+  // Model weights for the WASM/WebGPU embedding pipeline. Precaching these
+  // makes the AI features available offline on first run — if the files are
+  // missing (i.e. `npm run fetch-models` hasn't been run yet) the individual
+  // entries fail silently and the rest of the app still installs.
+  './assets/models/Xenova/bge-small-en-v1.5/config.json',
+  './assets/models/Xenova/bge-small-en-v1.5/tokenizer.json',
+  './assets/models/Xenova/bge-small-en-v1.5/tokenizer_config.json',
+  './assets/models/Xenova/bge-small-en-v1.5/special_tokens_map.json',
+  './assets/models/Xenova/bge-small-en-v1.5/onnx/model_quantized.onnx',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
@@ -91,13 +110,11 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if(e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  const host = url.hostname;
-  // Let Transformers.js / Hugging Face / jsDelivr manage their own HTTP caches
-  if(host.includes('huggingface.co') || host.includes('cdn-lfs.huggingface.co') ||
-     host === 'hf.co' || host.includes('cdn.jsdelivr.net')){
-    e.respondWith(fetch(e.request));
-    return;
-  }
+  // Everything is same-origin now (libraries + model weights are vendored).
+  // Cross-origin requests are left to the browser — the app never makes any
+  // by default; user-enabled features (calendar feeds, P2P sync) handle
+  // their own network. The previous Hugging Face / jsDelivr passthrough is
+  // no longer needed.
   if(url.origin !== self.location.origin) return;
 
   const isNavigation = e.request.mode === 'navigate' || e.request.destination === 'document' ||

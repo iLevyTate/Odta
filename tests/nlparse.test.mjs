@@ -1,7 +1,9 @@
 /**
  * nlparse.js — async quick-add enrichment via chrono.
- * Verifies the CDN-fallback path and _isoDate coercion edges (the previously
- * untested surface flagged in the audit).
+ * Verifies the dynamic-import fallback path and _isoDate coercion edges
+ * (the previously untested surface flagged in the audit). chrono-node is
+ * vendored under js/vendor/ — the URL is configurable via ODTAULAI_CONFIG
+ * so tests / mirrors can swap in a different path.
  */
 import test from 'node:test';
 import assert from 'node:assert';
@@ -12,8 +14,8 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = readFileSync(join(root, 'js', 'nlparse.js'), 'utf8');
 
-test('nlparse: dynamic chrono import is wrapped in try/catch — CDN failure is non-fatal', () => {
-  // The audit flagged silent failure: chrono CDN is optional, and the function
+test('nlparse: dynamic chrono import is wrapped in try/catch — load failure is non-fatal', () => {
+  // The audit flagged silent failure: chrono load is optional, and the function
   // must fall back to base parseQuickAdd if the import throws.
   assert.match(src, /try\s*\{[\s\S]*loadChrono\(\)[\s\S]*\}\s*catch/, 'parseQuickAddAsync must catch chrono import errors');
   assert.match(src, /console\.warn\(['"]\[nlparse\] chrono failed/, 'failure must be logged, not silently dropped');
@@ -39,9 +41,16 @@ test('nlparse: loadChrono memoizes successful loads', () => {
   assert.match(src, /if\s*\(\s*_chronoLoad\s*\)\s*return\s+_chronoLoad/, 'memoize in-flight load');
 });
 
-test('nlparse: respects ODTAULAI_CONFIG.CHRONO_CDN override', () => {
-  // CSP needs to allowlist the CDN, and tests/configurations want to swap it.
-  assert.match(src, /window\.ODTAULAI_CONFIG[\s\S]*CHRONO_CDN/, 'CDN URL must come from config when present');
+test('nlparse: respects ODTAULAI_CONFIG.CHRONO_URL override', () => {
+  // Tests / forks / mirrors want to swap the vendored path (e.g. for a
+  // bundler rewrite). The runtime constant must come from config when set.
+  assert.match(src, /window\.ODTAULAI_CONFIG[\s\S]*CHRONO_URL/, 'chrono URL must come from config when present');
+});
+
+test('nlparse: chrono URL points at the vendored bundle, not a CDN', () => {
+  // Offline-first: no jsdelivr / unpkg fallbacks left in the source.
+  assert.match(src, /['"]\.\/js\/vendor\/chrono-node\.min\.mjs['"]/, 'default URL must be the vendored bundle');
+  assert.doesNotMatch(src, /cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com/, 'must not reference any CDN host');
 });
 
 test('nlparse: only invokes chrono when base.dueDate is unset', () => {

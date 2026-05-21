@@ -2,13 +2,20 @@
  * Ambient intelligence — single embedding model (Xenova/bge-small-en-v1.5),
  * 384-dim, ~33 MB quantized. Runs on WebGPU when available, WASM (CPU) as
  * fallback. No generative LLM in this app.
+ *
+ * Library and model weights are loaded from same-origin only (see config.js
+ * for paths). Transformers.js is told to never reach out to a remote model
+ * host — if a required file isn't under MODEL_BASE_PATH, load fails and the
+ * AI features stay disabled. This keeps the app fully offline by default.
  */
 const _C = window.ODTAULAI_CONFIG || {};
-const TRANSFORMERS_CDN = _C.TRANSFORMERS_CDN || 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.1';
-const EMBED_MODEL      = _C.EMBED_MODEL      || 'Xenova/bge-small-en-v1.5';
-const EMBED_DIM        = _C.EMBED_DIM        || 384;
+const TRANSFORMERS_URL      = _C.TRANSFORMERS_URL      || './js/vendor/transformers/transformers.min.mjs';
+const TRANSFORMERS_WASM_DIR = _C.TRANSFORMERS_WASM_DIR || './js/vendor/transformers/';
+const MODEL_BASE_PATH       = _C.MODEL_BASE_PATH       || './assets/models/';
+const EMBED_MODEL           = _C.EMBED_MODEL           || 'Xenova/bge-small-en-v1.5';
+const EMBED_DIM             = _C.EMBED_DIM             || 384;
 /** Version string for IndexedDB migration — must change when embed model or dim changes */
-const EMBED_MODEL_VER  = _C.EMBED_MODEL_VER  || 'bge-small-en-v1.5-unified-v3';
+const EMBED_MODEL_VER       = _C.EMBED_MODEL_VER       || 'bge-small-en-v1.5-unified-v3';
 
 let _extractor = null;
 let _intelReady = false;
@@ -33,15 +40,24 @@ async function intelLoad(onProgress){
     let pipeline;
     let env;
     try{
-      const mod = await import(TRANSFORMERS_CDN);
+      const mod = await import(TRANSFORMERS_URL);
       pipeline = mod.pipeline;
       env = mod.env;
     }catch(e){
       console.warn('[intel] transformers import failed', e);
       throw e;
     }
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
+    // Offline-first: load model files from same-origin only. Block any
+    // remote fetch transformers.js might otherwise attempt as a fallback.
+    env.allowLocalModels  = true;
+    env.allowRemoteModels = false;
+    env.localModelPath    = MODEL_BASE_PATH;
+    env.useBrowserCache   = true;
+    // Point the ONNX Runtime backend at the vendored WASM binary so the
+    // library doesn't try to fetch ort-wasm-* from a CDN on first use.
+    if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+      env.backends.onnx.wasm.wasmPaths = TRANSFORMERS_WASM_DIR;
+    }
 
     const cb = typeof onProgress === 'function' ? onProgress : () => {};
     const tryWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;

@@ -13,7 +13,8 @@
     "verify:handlers": "node scripts/verify-handlers.mjs",
     "verify:inline": "node scripts/find-inline.mjs",
     "bump:version": "node scripts/bump-version.mjs",
-    "build:icons": "node scripts/build-icons.mjs"
+    "build:icons": "node scripts/build-icons.mjs",
+    "fetch-models": "node scripts/fetch-models.mjs"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2"
