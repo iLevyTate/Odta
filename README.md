@@ -208,7 +208,7 @@ A derived impact score ranks every active task from signals you already have —
 ### The 10-second path
 
 ```bash
-git clone https://github.com/<you>/STUPInD.git OdTauLai
+git clone https://github.com/iLevyTate/OdTauLai.git
 cd OdTauLai
 python3 -m http.server 8080
 # open http://localhost:8080
@@ -275,6 +275,7 @@ OdTauLai/
 ├── sw.js                     service worker (shell precache)
 ├── css/main.css              themed design system with CSS variables
 ├── js/
+│   ├── config.js             CDN URLs, model id, storage keys (window.ODTAULAI_CONFIG)
 │   ├── version.js            release id (keep in sync with sw.js cache name)
 │   ├── utils.js              helpers, date, DOM
 │   ├── storage.js            localStorage + IndexedDB persistence
