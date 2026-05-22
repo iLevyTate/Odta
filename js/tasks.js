@@ -1,5 +1,6 @@
 // ========== GOALS ==========
-function addGoal(){const inp=gid('goalInput');if(!inp)return;const text=inp.value.trim();if(!text)return;goals.push({id:++goalIdCtr,text,done:false,doneAt:null,addedAt:timeNow(),lastModified:Date.now()});inp.value='';renderGoalList();saveState('user')}
+// The goals UI was removed; goals state still flows through storage/sync
+// so existing user data is preserved, but no UI surface adds new goals.
 function toggleGoal(id){const g=goals.find(x=>x.id===id);if(g){g.done=!g.done;g.doneAt=g.done?timeNow():null;g.lastModified=Date.now()}renderGoalList();saveState('user')}
 function removeGoal(id){
   if(typeof syncGoalDels==='object'&&syncGoalDels)syncGoalDels[id]=Date.now();
@@ -123,7 +124,6 @@ function refreshParetoTopSet(){
 }
 
 function isParetoTop(id){return _paretoTopSet.has(id)}
-function getImpactScore(id){return _paretoScoreMap.get(id)||0}
 
 // Create a recurring task from a one-click empty-state template. Mirrors the
 // shape of addTask() (push + index + save + render) without going through the
@@ -1401,43 +1401,6 @@ function toggleStar(id){
   saveState('user')
 }
 
-// Reorder (manual)
-function reorderTask(id,dir){
-  event&&event.stopPropagation();
-  const t=findTask(id);if(!t)return;
-  // Find siblings with same parentId, sorted by order
-  const siblings=tasks.filter(x=>x.parentId===t.parentId&&!x.archived&&matchesFilters(x)).sort((a,b)=>(a.order||0)-(b.order||0));
-  const idx=siblings.findIndex(x=>x.id===id);
-  const target=idx+dir;
-  if(target<0||target>=siblings.length)return;
-  // Swap order values
-  const a=siblings[idx],b=siblings[target];
-  const tmp=a.order;a.order=b.order;b.order=tmp;
-  renderTaskList();saveState('user')
-}
-
-// Drag-drop handler for list view
-function handleTaskDrop(srcId,targetId,position){
-  const src=findTask(srcId),target=findTask(targetId);
-  if(!src||!target)return;
-  // Don't allow dropping a task onto its own descendant (would create a cycle)
-  if(getTaskDescendantIds(srcId).includes(targetId))return;
-  // Move to same parent as target, ordered right above/below target
-  src.parentId=target.parentId;
-  const targetOrder=target.order||0;
-  src.order=position==='before'?targetOrder-0.5:targetOrder+0.5;
-  // Re-normalize order values in this sibling group
-  const siblings=tasks.filter(x=>x.parentId===src.parentId).sort((a,b)=>(a.order||0)-(b.order||0));
-  siblings.forEach((s,i)=>{s.order=i*10});
-  // Force manual sort when user drags
-  if(taskSortBy!=='manual'){taskSortBy='manual';const sel=gid('taskSortSel');if(sel)sel.value='manual'}
-  // Drop landing: animate the dragged card into its new slot.
-  const list=gid('taskList');
-  if(list&&typeof flipReorder==='function')flipReorder(list,()=>renderTaskList());
-  else renderTaskList();
-  saveState('user')
-}
-
 // Subtask completion progress
 function getSubtaskProgress(taskId){
   const descIds=getTaskDescendantIds(taskId);
@@ -1671,11 +1634,6 @@ function _cascadeOnDone(taskId){
   };
   visit(taskId);
   return affected;
-}
-function _cascadeOnReopen(taskId){
-  // Re-opening a parent doesn't reopen its children — that'd surprise users.
-  // No-op kept for symmetry / future opt-in.
-  return [];
 }
 function _maybeAutoCompleteParent(childId){
   if(!(typeof cfg !== 'undefined' && cfg && cfg.cascadeCompletion !== false)) return [];
@@ -2067,12 +2025,6 @@ function parseTaskSearchQuery(raw){
   return { text, ops };
 }
 if(typeof window !== 'undefined') window.parseTaskSearchQuery = parseTaskSearchQuery;
-
-function _opsActive(ops){
-  if(!ops) return false;
-  for(const k of Object.keys(ops)) if(ops[k] && ops[k].length) return true;
-  return false;
-}
 
 // Build a single removable chip — used by renderActiveFilters for every
 // filter source so the bar reads as one consistent row of pills.
