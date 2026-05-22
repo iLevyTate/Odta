@@ -6,10 +6,11 @@
  * Modules reference `ODTAULAI_CONFIG.*` instead of maintaining their own
  * copies, eliminating version-drift and duplicated magic strings.
  *
- * All runtime dependencies are vendored locally (see js/vendor/ and
- * assets/models/) so the app works fully offline from a fresh install.
- * Model weights are not committed by default — run `npm run fetch-models`
- * once on your machine to populate assets/models/, then commit them.
+ * JS dependencies are vendored locally (see js/vendor/). Model weights
+ * under assets/models/ are committed only if `npm run fetch-models` has
+ * been run; otherwise transformers.js falls back to fetching them from
+ * Hugging Face on first AI feature use (one-time, then cached). For
+ * fully-offline installs from minute zero, commit the model files.
  */
 window.ODTAULAI_CONFIG = Object.freeze({
   // ── Vendored library paths (relative to index.html) ──────────────────────

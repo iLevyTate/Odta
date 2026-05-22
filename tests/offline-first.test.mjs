@@ -1,18 +1,22 @@
 /**
- * Offline-first contract guard.
+ * Local-first contract guard.
  *
- * Every runtime dependency (transformers.js, chrono-node, the embedding
- * model) is vendored under js/vendor/ or assets/models/ so the app works
- * fully offline from a fresh install. This test pins that contract:
+ * JS dependencies (transformers.js, chrono-node, PeerJS, ORT WASM) are
+ * vendored under js/vendor/ so the app shell works fully offline. The
+ * embedding model weights live at assets/models/ when `npm run
+ * fetch-models` has been run; if they're absent, transformers.js falls
+ * back to Hugging Face for that one load and the result is then cached.
+ *
+ * This test pins:
  *
  *   1. Runtime JS under js/ must not embed jsdelivr / unpkg / huggingface
- *      hosts. (config.js / intel.js / nlparse.js previously pointed at
- *      these and silently re-introducing one would break offline use.)
+ *      hosts as literal URLs. (transformers.js owns its own HF URL
+ *      construction internally; we don't audit it.)
  *   2. The vendored library + ORT WASM files exist in the repo.
  *   3. sw.js precaches the vendored files so they survive an offline reload.
- *   4. Transformers.js is told `allowRemoteModels = false` and is given a
- *      local model path. Without this, a missing weight quietly falls back
- *      to a Hugging Face fetch and the "offline-by-default" promise is gone.
+ *   4. Transformers.js is given a local model path with allowLocalModels
+ *      = true so on-disk weights win when present, and allowRemoteModels
+ *      = true so a fresh install without committed weights still works.
  *
  * Comment text inside source files is allowed to mention the upstream
  * hosts for historical / documentation purposes — the regex strips
@@ -105,14 +109,16 @@ test('service worker precaches every vendored file', () => {
   }
 });
 
-test('intel.js disables remote model fetches and uses local path', () => {
+test('intel.js prefers local model files with remote as fallback', () => {
   const src = readFileSync(join(root, 'js/intel.js'), 'utf8');
-  // Local models on, remote models off — both required for offline-first.
+  // Local models on so committed weights under MODEL_BASE_PATH win;
+  // remote models on so a fresh install without committed weights still
+  // works (transformers.js fetches from HF once and the result is cached).
   assert.match(src, /env\.allowLocalModels\s*=\s*true/, 'must set env.allowLocalModels = true');
-  assert.match(src, /env\.allowRemoteModels\s*=\s*false/, 'must set env.allowRemoteModels = false');
+  assert.match(src, /env\.allowRemoteModels\s*=\s*true/, 'must set env.allowRemoteModels = true');
   assert.match(src, /env\.localModelPath\s*=\s*MODEL_BASE_PATH/, 'must point env.localModelPath at MODEL_BASE_PATH');
-  // ORT WASM directory has to be pinned too or transformers fetches it from
-  // a CDN by default and the offline guarantee evaporates.
+  // ORT WASM directory has to be pinned or transformers fetches it from
+  // a CDN by default — that part of the offline guarantee still stands.
   assert.match(src, /env\.backends\.onnx\.wasm\.wasmPaths\s*=\s*TRANSFORMERS_WASM_DIR/, 'must set env.backends.onnx.wasm.wasmPaths');
 });
 

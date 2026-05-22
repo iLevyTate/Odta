@@ -59,7 +59,7 @@ Prefer letters? `O-D-T-A-U-L-A-I` works too. It's an acronym, so both are fine:
 | **Trust** | Destructive AI "fix it for me" buttons | AI **proposes** updates — you preview, apply, undo |
 
 > [!IMPORTANT]
-> **Local-first isn't a marketing word here.** Open the app offline on the very first launch and it still works. Every runtime dependency — Transformers.js, the embedding model, chrono-node, PeerJS — is **vendored under `js/vendor/` and `assets/models/`**. The only outbound calls the app ever makes are the optional calendar feeds and P2P sync **you** turn on.
+> **Local-first isn't a marketing word here.** The app shell, all JS libraries (Transformers.js, chrono-node, PeerJS) and the ONNX runtime are **vendored under `js/vendor/`** — open the app offline on the very first launch and tasks, timer, search, and storage all work without a network round-trip. The embedding model weights belong at `assets/models/` and are vendor-ready: commit them via `npm run fetch-models` for fully-offline AI from minute zero, or let transformers.js fetch them from Hugging Face on first AI feature use (~33 MB, cached by the browser + service worker after). The only other outbound calls the app makes are the optional calendar feeds and P2P sync **you** turn on.
 
 ---
 
@@ -253,7 +253,8 @@ Full walkthroughs with Nginx configs, troubleshooting, custom icons, and manifes
 
 - store app state in `localStorage`,
 - store the embedding cache in `IndexedDB`,
-- load the embedding model + Transformers.js + chrono-node + PeerJS **from the same origin** — they're vendored at `js/vendor/` and `assets/models/`, never fetched from a CDN,
+- load Transformers.js, chrono-node, and PeerJS **from the same origin** — they're vendored at `js/vendor/`, never fetched from a CDN,
+- load the embedding model from `assets/models/` if you've committed it (`npm run fetch-models`); otherwise fetch it once from Hugging Face on the first AI feature use, then serve subsequent loads from the browser cache + service worker,
 - fetch calendar feeds you subscribe to (those servers see you),
 - open a WebRTC connection to a device you explicitly pair with (PeerJS signalling server sees the handshake, not the payload).
 
@@ -301,7 +302,7 @@ OdTauLai/
 
 </details>
 
-**Runtime dependencies** are vendored under `js/vendor/` and `assets/models/`. The app makes zero CDN calls by default.
+**JS dependencies** are vendored under `js/vendor/` — zero CDN calls for the app shell. **Model weights** belong at `assets/models/`; commit them via `npm run fetch-models` for a fully-vendored build, or let transformers.js fetch them once from Hugging Face on first AI feature use (cached afterwards).
 
 | Library | Purpose | Vendored at |
 |---|---|---|
@@ -401,7 +402,7 @@ Yes — the beta P2P sync uses WebRTC. Your data goes peer-to-peer; only the han
 <details>
 <summary><b>How do I run this on a corporate network that blocks CDNs?</b></summary>
 
-It already works — every runtime dependency is vendored under `js/vendor/` and `assets/models/`. The app makes zero CDN calls by default. If you want to swap a vendored file for a mirror, every path is centralized in [`js/config.js`](js/config.js) (`window.ODTAULAI_CONFIG`).
+All JS dependencies are vendored under `js/vendor/`, so the app shell and every feature except the AI pipeline work with zero outbound calls. The embedding model weights are the one piece that may need to come from Hugging Face on first load — to avoid that, run `npm run fetch-models` on a machine that *can* reach `huggingface.co`, commit the resulting files under `assets/models/Xenova/bge-small-en-v1.5/`, and the AI features become fully offline too. Every URL the app touches is centralized in [`js/config.js`](js/config.js) (`window.ODTAULAI_CONFIG`); point `MODEL_BASE_PATH` at your own mirror if you'd rather host the weights yourself.
 
 </details>
 

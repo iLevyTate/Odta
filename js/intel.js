@@ -3,10 +3,13 @@
  * 384-dim, ~33 MB quantized. Runs on WebGPU when available, WASM (CPU) as
  * fallback. No generative LLM in this app.
  *
- * Library and model weights are loaded from same-origin only (see config.js
- * for paths). Transformers.js is told to never reach out to a remote model
- * host — if a required file isn't under MODEL_BASE_PATH, load fails and the
- * AI features stay disabled. This keeps the app fully offline by default.
+ * Library code is vendored same-origin (see config.js). Model weights load
+ * from MODEL_BASE_PATH first; if the files aren't there (a fresh clone
+ * without `npm run fetch-models`), transformers.js falls back to the
+ * Hugging Face hub for that one load — the browser caches the result, the
+ * service worker pins it on next sweep, and subsequent loads stay offline.
+ * Commit the files under assets/models/ to remove the HF round-trip
+ * entirely.
  */
 const _C = window.ODTAULAI_CONFIG || {};
 const TRANSFORMERS_URL      = _C.TRANSFORMERS_URL      || './js/vendor/transformers/transformers.min.mjs';
@@ -47,10 +50,12 @@ async function intelLoad(onProgress){
       console.warn('[intel] transformers import failed', e);
       throw e;
     }
-    // Offline-first: load model files from same-origin only. Block any
-    // remote fetch transformers.js might otherwise attempt as a fallback.
+    // Local-first: transformers.js tries MODEL_BASE_PATH first and only
+    // reaches out to the Hugging Face hub if the same-origin files 404.
+    // For fully-offline installs, commit the weights via `npm run
+    // fetch-models`; the remote fallback then stays dormant.
     env.allowLocalModels  = true;
-    env.allowRemoteModels = false;
+    env.allowRemoteModels = true;
     env.localModelPath    = MODEL_BASE_PATH;
     env.useBrowserCache   = true;
     // Point the ONNX Runtime backend at the vendored WASM binary so the
