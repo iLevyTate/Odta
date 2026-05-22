@@ -297,6 +297,4 @@ const embedStore = {
 
 window.embedStore = embedStore;
 window.hashTaskText = hashTaskText;
-window.INTEL_META_SCHWARTZ_KEY = META_SCHWARTZ_KEY;
-window.INTEL_META_CAT_CENTROIDS = META_CAT_CENTROIDS_KEY;
 window.EMBED_SCHEMA_VER = EMBED_SCHEMA_VER;
