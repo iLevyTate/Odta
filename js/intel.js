@@ -141,7 +141,6 @@ window.getIntelDevice = getIntelDevice;
 window.isIntelReady = isIntelReady;
 window.getEmbedDim = getEmbedDim;
 window.getActiveEmbedModelId = getActiveEmbedModelId;
-window.INTEL_EMBED_DIM = EMBED_DIM;
 window.INTEL_EMBED_MODEL = EMBED_MODEL;
 window.INTEL_EMBED_MODEL_VER = EMBED_MODEL_VER;
 
