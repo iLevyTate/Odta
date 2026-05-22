@@ -788,16 +788,51 @@
       <p id="bulkImportHint" class="bulk-import-hint"></p>
       <label class="bulk-import-label" for="bulkImportTextarea">One task per line</label>
       <textarea id="bulkImportTextarea" class="mfield-textarea bulk-import-textarea" rows="12" spellcheck="false"></textarea>
-      <!-- Auto-organize: route each pasted line to the right list + fill in
-           category/priority via on-device embeddings.
-           Hidden until the embedding model is ready so the toggle never lies. -->
-      <label class="bulk-import-auto" id="bulkImportAutoWrap" hidden>
-        <input type="checkbox" id="bulkImportAuto">
-        <span class="bulk-import-auto-text">
-          <strong>Auto-organize</strong>
-          <span id="bulkImportAutoHint" class="bulk-import-auto-hint"></span>
-        </span>
-      </label>
+      <!-- Routing — controls how each pasted line is assigned to a list +
+           category. Modes:
+             - "ai":    embedding model picks per task (auto-organize)
+             - "batch": user picks one list + category for the whole batch
+             - "per":   preview rows below, list + category editable per task
+           AI suggestions pre-fill the per-task rows when intel is ready.
+           The whole fieldset is hidden when there are zero lines (nothing
+           to route) so the modal doesn't shout at users until they paste. -->
+      <fieldset class="bulk-route" id="bulkRouteFieldset" hidden>
+        <legend class="bulk-route-legend">Routing</legend>
+        <div class="bulk-route-modes" role="radiogroup" aria-label="How to route imported tasks">
+          <label class="bulk-route-mode">
+            <input type="radio" name="bulkRouteMode" value="ai" id="bulkRouteModeAi" checked>
+            <span class="bulk-route-mode-body">
+              <strong>Auto-organize</strong>
+              <span class="bulk-route-hint" id="bulkRouteAiHint">AI picks list + category per task</span>
+            </span>
+          </label>
+          <label class="bulk-route-mode">
+            <input type="radio" name="bulkRouteMode" value="batch" id="bulkRouteModeBatch">
+            <span class="bulk-route-mode-body">
+              <strong>Same for all</strong>
+              <span class="bulk-route-hint">Pick one list + category for every task</span>
+            </span>
+          </label>
+          <label class="bulk-route-mode">
+            <input type="radio" name="bulkRouteMode" value="per" id="bulkRouteModePer">
+            <span class="bulk-route-mode-body">
+              <strong>Per task</strong>
+              <span class="bulk-route-hint">Preview each task and pick its list + category</span>
+            </span>
+          </label>
+        </div>
+        <div id="bulkRouteBatchPanel" class="bulk-route-panel" hidden>
+          <label class="bulk-route-field">
+            <span class="bulk-route-field-lbl">List</span>
+            <select id="bulkRouteBatchList" class="bulk-route-select" aria-label="Target list for every imported task"></select>
+          </label>
+          <label class="bulk-route-field">
+            <span class="bulk-route-field-lbl">Category</span>
+            <select id="bulkRouteBatchCat" class="bulk-route-select" aria-label="Category for every imported task"></select>
+          </label>
+        </div>
+        <ul id="bulkRoutePerRows" class="bulk-route-rows" hidden role="list" aria-label="Per-task routing"></ul>
+      </fieldset>
       <div id="bulkImportProgress" class="bulk-import-progress" hidden role="status" aria-live="polite"></div>
     </div>
     <div class="modal-foot">

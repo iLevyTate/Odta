@@ -471,8 +471,8 @@ function openBulkImportModal(items, skippedLong){
   }
   if(hint) hint.innerHTML = hintHtml;
   _updateBulkImportButtonState();
-  _syncBulkImportAutoToggle();
-  ta.oninput = _updateBulkImportButtonState;
+  _syncBulkRoutingControls();
+  ta.oninput = () => { _updateBulkImportButtonState(); _onBulkRoutingTextareaChanged(); };
   ov.classList.add('open');
   // Pre-warm the chrono CDN module while the user is reviewing — without this
   // the first parseQuickAddAsync call inside confirmBulkImport blocks on the
@@ -524,28 +524,237 @@ function closeBulkImportModal(){
 }
 
 /**
- * Show the Auto-organize toggle iff embeddings are ready. Hidden entirely
- * when the model isn't loaded — toggling would do nothing useful.
+ * Wire up the routing fieldset every time the modal opens. Three modes:
+ *   - "ai":    embeddings pick list + category per task (current behaviour).
+ *   - "batch": one list + category, applied to every imported task.
+ *   - "per":   preview rows below the textarea; each row carries its own
+ *              list + category dropdown, pre-filled with AI suggestions
+ *              when intel is ready.
+ *
+ * If embeddings aren't loaded, "ai" + "per" modes are disabled (they need
+ * predictListId / predictMetadata to be useful) and the radio is forced
+ * to "batch" so the toggle never lies about what's possible.
  */
-function _syncBulkImportAutoToggle(){
-  const wrap = gid('bulkImportAutoWrap');
-  const hint = gid('bulkImportAutoHint');
-  const cb = gid('bulkImportAuto');
-  if(!wrap || !cb) return;
+function _syncBulkRoutingControls(){
+  const fs = gid('bulkRouteFieldset');
+  if(!fs) return;
+  const ta = gid('bulkImportTextarea');
+  const lineCount = ta ? ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length : 0;
+  fs.hidden = lineCount === 0;
+  if(fs.hidden) return;
+
+  _populateBulkRoutingDropdowns();
+
   const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
-  if(!intelOk){
-    wrap.hidden = true;
-    cb.checked = false;
-    return;
+  const aiRadio    = gid('bulkRouteModeAi');
+  const batchRadio = gid('bulkRouteModeBatch');
+  const perRadio   = gid('bulkRouteModePer');
+  const aiHint     = gid('bulkRouteAiHint');
+  if(aiRadio)  aiRadio.disabled  = !intelOk;
+  if(perRadio) perRadio.disabled = !intelOk;
+  if(aiHint){
+    aiHint.textContent = intelOk
+      ? 'AI picks list + category per task'
+      : 'AI picks list + category per task (load the embedding model to enable)';
   }
-  wrap.hidden = false;
-  if(!cb.dataset.userToggled){
-    cb.checked = true;
+  // If the previously-selected mode is now disabled, fall back to batch.
+  const selected = _bulkRoutingMode();
+  if((selected === 'ai' || selected === 'per') && !intelOk){
+    if(batchRadio) batchRadio.checked = true;
   }
-  if(hint){
-    hint.textContent = 'Route each task to the right list and fill in life area / priority via on-device embeddings (instant).';
+
+  // Hook radios — re-render the visible panel on every change.
+  for(const r of fs.querySelectorAll('input[name="bulkRouteMode"]')){
+    r.onchange = () => _applyBulkRoutingMode();
   }
-  cb.onchange = () => { cb.dataset.userToggled = '1'; };
+  _applyBulkRoutingMode();
+}
+
+function _populateBulkRoutingDropdowns(){
+  const batchList = gid('bulkRouteBatchList');
+  const batchCat  = gid('bulkRouteBatchCat');
+  if(batchList){
+    const cur = batchList.value;
+    batchList.innerHTML = '';
+    const opts = [['', '(Active list)']];
+    for(const l of (Array.isArray(lists) ? lists : [])){
+      if(l && l.id != null) opts.push([String(l.id), l.name || '(unnamed)']);
+    }
+    for(const [v, label] of opts){
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      batchList.appendChild(o);
+    }
+    if(cur && opts.some(o => o[0] === cur)) batchList.value = cur;
+  }
+  if(batchCat){
+    const cur = batchCat.value;
+    batchCat.innerHTML = '';
+    const opts = [['', '— None —']];
+    const cats = (typeof getActiveCategories === 'function') ? (getActiveCategories() || []) : [];
+    for(const c of cats){
+      if(c && c.id) opts.push([c.id, c.label || c.id]);
+    }
+    for(const [v, label] of opts){
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      batchCat.appendChild(o);
+    }
+    if(cur && opts.some(o => o[0] === cur)) batchCat.value = cur;
+  }
+}
+
+function _bulkRoutingMode(){
+  const fs = gid('bulkRouteFieldset');
+  if(!fs) return 'ai';
+  const checked = fs.querySelector('input[name="bulkRouteMode"]:checked');
+  return checked ? checked.value : 'ai';
+}
+
+/** Show the panel matching the selected mode; render per-task rows on demand. */
+function _applyBulkRoutingMode(){
+  const mode = _bulkRoutingMode();
+  const batchPanel = gid('bulkRouteBatchPanel');
+  const perRows    = gid('bulkRoutePerRows');
+  if(batchPanel) batchPanel.hidden = mode !== 'batch';
+  if(perRows){
+    perRows.hidden = mode !== 'per';
+    if(mode === 'per') _renderBulkPerTaskRows();
+  }
+}
+
+/**
+ * Re-render per-task rows when the textarea content changes. Only fires a
+ * full re-render when the line count actually shifts (lines added/removed)
+ * — otherwise we'd wipe a user's manual dropdown edits on every keystroke.
+ * Text edits that don't change line count leave the per-row name labels
+ * slightly stale; that's a deliberate trade-off for keeping user choices.
+ */
+function _onBulkRoutingTextareaChanged(){
+  const ta = gid('bulkImportTextarea');
+  const ul = gid('bulkRoutePerRows');
+  _syncBulkRoutingControls();
+  if(_bulkRoutingMode() !== 'per' || !ta || !ul) return;
+  const lineCount = ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length;
+  const rowCount  = ul.querySelectorAll('li.bulk-route-row').length;
+  if(lineCount !== rowCount) _renderBulkPerTaskRows();
+}
+
+/**
+ * Render one editable row per parsed line. List + category selects are
+ * pre-populated with AI suggestions (best-effort, async) when intel is
+ * ready — the row is rendered immediately with empty selects so a slow
+ * embedding pass never blocks the visible preview.
+ */
+function _renderBulkPerTaskRows(){
+  const ul = gid('bulkRoutePerRows');
+  const ta = gid('bulkImportTextarea');
+  if(!ul || !ta) return;
+  const lines = ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Build options once — DOM cloning is faster than rebuilding selects in a loop.
+  const listOpts = [['', '(Active list)']];
+  for(const l of (Array.isArray(lists) ? lists : [])){
+    if(l && l.id != null) listOpts.push([String(l.id), l.name || '(unnamed)']);
+  }
+  const cats = (typeof getActiveCategories === 'function') ? (getActiveCategories() || []) : [];
+  const catOpts = [['', '— None —']];
+  for(const c of cats){
+    if(c && c.id) catOpts.push([c.id, c.label || c.id]);
+  }
+  ul.innerHTML = '';
+  const rows = [];
+  for(let i = 0; i < lines.length; i++){
+    const li = document.createElement('li');
+    li.className = 'bulk-route-row';
+    li.dataset.idx = String(i);
+
+    const name = document.createElement('span');
+    name.className = 'bulk-route-row-name';
+    name.textContent = lines[i];
+    name.title = lines[i];
+
+    const listSel = document.createElement('select');
+    listSel.className = 'bulk-route-select';
+    listSel.setAttribute('aria-label', 'List for task ' + (i + 1));
+    listSel.dataset.role = 'list';
+    for(const [v, label] of listOpts){
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      listSel.appendChild(o);
+    }
+    const catSel = document.createElement('select');
+    catSel.className = 'bulk-route-select';
+    catSel.setAttribute('aria-label', 'Category for task ' + (i + 1));
+    catSel.dataset.role = 'category';
+    for(const [v, label] of catOpts){
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      catSel.appendChild(o);
+    }
+
+    li.appendChild(name);
+    li.appendChild(listSel);
+    li.appendChild(catSel);
+    ul.appendChild(li);
+    rows.push({ name: lines[i], listSel, catSel });
+  }
+
+  // Async AI suggestion pre-fill. Each suggestion only writes if the user
+  // hasn't already touched the select for that row — manual edits always
+  // win. Failures are swallowed (best-effort UX, not a correctness path).
+  const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
+  if(!intelOk) return;
+  rows.forEach((row, i) => {
+    row.listSel.addEventListener('change', () => { row.listSel.dataset.userTouched = '1'; });
+    row.catSel.addEventListener('change',  () => { row.catSel.dataset.userTouched  = '1'; });
+    (async () => {
+      try{
+        if(typeof predictListId === 'function'){
+          const lid = await predictListId(row.name, { minScore: 0.30, minMargin: 0 });
+          if(lid != null && !row.listSel.dataset.userTouched){
+            const want = String(lid);
+            if([...row.listSel.options].some(o => o.value === want)) row.listSel.value = want;
+          }
+        }
+        if(typeof predictMetadata === 'function'){
+          const meta = await predictMetadata(row.name, 5);
+          if(meta && meta.category && !row.catSel.dataset.userTouched){
+            if([...row.catSel.options].some(o => o.value === meta.category)) row.catSel.value = meta.category;
+          }
+        }
+      }catch(_){ /* per-row prediction is best-effort */ }
+    })();
+  });
+}
+
+/**
+ * Resolve the routing choice for a given task index. Returns the listId +
+ * category to merge into the task props (or `null` to leave the field
+ * unset / fall through to the AI-enrichment default).
+ */
+function _bulkRoutingFor(idx){
+  const mode = _bulkRoutingMode();
+  if(mode === 'batch'){
+    const list = gid('bulkRouteBatchList');
+    const cat  = gid('bulkRouteBatchCat');
+    return {
+      listId:   (list && list.value) ? Number(list.value) : null,
+      category: (cat && cat.value)   ? cat.value          : null,
+    };
+  }
+  if(mode === 'per'){
+    const ul = gid('bulkRoutePerRows');
+    const row = ul && ul.querySelector('li.bulk-route-row[data-idx="' + idx + '"]');
+    if(!row) return { listId: null, category: null };
+    const list = row.querySelector('select[data-role="list"]');
+    const cat  = row.querySelector('select[data-role="category"]');
+    return {
+      listId:   (list && list.value) ? Number(list.value) : null,
+      category: (cat && cat.value)   ? cat.value          : null,
+    };
+  }
+  // "ai" — fall through to _bulkEnrichOne predictions, no override.
+  return { listId: null, category: null };
 }
 
 /**
@@ -596,8 +805,13 @@ async function confirmBulkImport(){
   const lines = ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if(!lines.length) return;
   ensureDefaultList();
-  const auto = gid('bulkImportAuto');
-  const autoOn = !!(auto && auto.checked);
+  // "ai"    → run _bulkEnrichOne per task, no manual override
+  // "batch" → use user-picked list + category for every task
+  // "per"   → use the per-row dropdowns (already seeded with AI suggestions)
+  // We still run enrichment in "batch"/"per" so non-routing fields
+  // (priority, effort, energy, tags, due date) still benefit from kNN.
+  const mode = _bulkRoutingMode();
+  const autoOn = mode === 'ai';
   // Disable the confirm button while enrichment runs so the user can't
   // double-fire and so they SEE that work is happening.
   const btn = gid('bulkImportConfirm');
@@ -635,8 +849,13 @@ async function confirmBulkImport(){
         return { name: p.name || line, props: p.props || {} };
       });
     }
-    // Enrichment pass — only when the user opted in. Quick-add tokens (props)
-    // win over predicted metadata so explicit "@urgent" beats a model guess.
+    // Enrichment pass — runs when intel is available AND the user picked
+    // "ai" mode. In "batch"/"per" modes we skip enrichment because the
+    // user is explicitly taking control of routing; running enrichment
+    // anyway would silently set priority/effort/tags from kNN, which
+    // feels like a bait-and-switch for "I'll handle it" users.
+    // Quick-add tokens (props) win over predicted metadata so explicit
+    // "@urgent" beats a model guess.
     // Each _bulkEnrichOne runs on-device embeddings on the main thread, so
     // we yield to the event loop between items. Without this, a batch of
     // ~10 items locks the UI for several seconds while the WASM model runs
@@ -658,6 +877,17 @@ async function confirmBulkImport(){
       _setBulkProgress(null);
     }
     if(aborted()) return;
+    // Routing override pass — in "batch"/"per" mode apply the user's
+    // explicit list + category choices. These win over anything the
+    // enrichment pass or quick-add tokens might have set, since they
+    // represent the user's deliberate decision in the preview.
+    if(mode === 'batch' || mode === 'per'){
+      for(let i = 0; i < built.length; i++){
+        const route = _bulkRoutingFor(i);
+        if(route.listId   != null) built[i].props.listId   = route.listId;
+        if(route.category != null) built[i].props.category = route.category;
+      }
+    }
     // Persist phase — single render + save at the end.
     for(const b of built){
       const _bt = Object.assign({
@@ -686,7 +916,9 @@ async function confirmBulkImport(){
   if(typeof scheduleIntelDupRefresh === 'function') scheduleIntelDupRefresh();
 }
 
-window._syncBulkImportAutoToggle = _syncBulkImportAutoToggle;
+window._syncBulkRoutingControls = _syncBulkRoutingControls;
+window._bulkRoutingMode = _bulkRoutingMode;
+window._bulkRoutingFor = _bulkRoutingFor;
 
 window.closeBulkImportModal = closeBulkImportModal;
 window.confirmBulkImport = confirmBulkImport;

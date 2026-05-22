@@ -150,7 +150,7 @@ A derived impact score ranks every active task from signals you already have —
 
 - **Natural-language quick add** (via `chrono-node`):
   `Buy milk tomorrow @urgent #shopping !star ~daily`
-- **Bulk paste import** — paste multi-line text into the task input, a preview modal opens with one task per line; edit before committing. Skips lines >200 chars.
+- **Bulk paste import** — paste multi-line text into the task input, a preview modal opens with one task per line; edit before committing. Skips lines >200 chars. Routing modes: **Auto-organize** (AI picks list + category per task), **Same for all** (one list + category for the whole batch), or **Per task** (preview each row with editable list + category dropdowns, pre-filled by AI suggestions you can override).
 - **Smart-add enhancement** — hit the `✦` button next to the input to prefill life area, priority, tags, and list from embeddings before you submit.
 - **Drag-and-drop reorder**, subtask drop, list drop.
 - **Mobile swipe gestures** — swipe right to complete, swipe left to archive, with haptic feedback.
