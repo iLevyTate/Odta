@@ -502,8 +502,24 @@ function _updateBulkImportButtonState(){
   if(title) title.textContent = n ? 'Import ' + n + ' task' + (n !== 1 ? 's' : '') : 'Import tasks';
 }
 
-function closeBulkImportModal(){
+/** True if the per-task preview has any row the user manually edited. */
+function _bulkImportHasUserEdits(){
+  const ul = gid('bulkRoutePerRows');
+  if(!ul) return false;
+  return !!ul.querySelector('select[data-user-touched="1"]');
+}
+
+async function closeBulkImportModal(){
   const ov = gid('bulkImportModal');
+  // If the user spent time picking list/category per task, confirm before
+  // dropping that work on the floor. The check runs only when the modal is
+  // actually open (otherwise we're being called from the cleanup paths
+  // inside confirmBulkImport, which already persisted everything).
+  if(ov && ov.classList.contains('open') && _bulkImportHasUserEdits() && typeof showAppConfirm === 'function'){
+    const n = gid('bulkRoutePerRows').querySelectorAll('select[data-user-touched="1"]').length;
+    const ok = await showAppConfirm('Discard ' + n + ' routing edit' + (n === 1 ? '' : 's') + '? They will not be saved.');
+    if(!ok) return;
+  }
   if(ov) ov.classList.remove('open');
   const ta = gid('bulkImportTextarea');
   if(ta) ta.oninput = null;
@@ -547,11 +563,11 @@ function _syncBulkRoutingControls(){
 
   const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
   const aiRadio    = gid('bulkRouteModeAi');
-  const batchRadio = gid('bulkRouteModeBatch');
-  const perRadio   = gid('bulkRouteModePer');
   const aiHint     = gid('bulkRouteAiHint');
+  // AI mode requires embeddings — disable when intel can't predict. Per-task
+  // mode stays available without intel: the dropdowns still work, you just
+  // don't get pre-filled suggestions. "Same for all" is always available.
   if(aiRadio)  aiRadio.disabled  = !intelOk;
-  if(perRadio) perRadio.disabled = !intelOk;
   if(aiHint){
     aiHint.textContent = intelOk
       ? 'AI picks list + category per task'
@@ -559,7 +575,8 @@ function _syncBulkRoutingControls(){
   }
   // If the previously-selected mode is now disabled, fall back to batch.
   const selected = _bulkRoutingMode();
-  if((selected === 'ai' || selected === 'per') && !intelOk){
+  if(selected === 'ai' && !intelOk){
+    const batchRadio = gid('bulkRouteModeBatch');
     if(batchRadio) batchRadio.checked = true;
   }
 
@@ -570,13 +587,18 @@ function _syncBulkRoutingControls(){
   _applyBulkRoutingMode();
 }
 
+/** Sentinel select value for "let AI pick this field at commit time". */
+const BULK_AI_PICK = '__AI__';
+
 function _populateBulkRoutingDropdowns(){
+  const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
   const batchList = gid('bulkRouteBatchList');
   const batchCat  = gid('bulkRouteBatchCat');
   if(batchList){
     const cur = batchList.value;
     batchList.innerHTML = '';
     const opts = [['', '(Active list)']];
+    if(intelOk) opts.push([BULK_AI_PICK, '✦ AI pick (per task)']);
     for(const l of (Array.isArray(lists) ? lists : [])){
       if(l && l.id != null) opts.push([String(l.id), l.name || '(unnamed)']);
     }
@@ -591,6 +613,7 @@ function _populateBulkRoutingDropdowns(){
     const cur = batchCat.value;
     batchCat.innerHTML = '';
     const opts = [['', '— None —']];
+    if(intelOk) opts.push([BULK_AI_PICK, '✦ AI pick (per task)']);
     const cats = (typeof getActiveCategories === 'function') ? (getActiveCategories() || []) : [];
     for(const c of cats){
       if(c && c.id) opts.push([c.id, c.label || c.id]);
@@ -661,6 +684,17 @@ function _renderBulkPerTaskRows(){
   for(const c of cats){
     if(c && c.id) catOpts.push([c.id, c.label || c.id]);
   }
+  const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
+  // Insert the "AI pick" sentinel right after the default option so a user
+  // who sees their per-row prediction can still flip to "let AI decide for
+  // this one" — useful e.g. if they paste 50 tasks and only want manual
+  // control for the few that didn't get a good pre-fill.
+  const listOptsForRow = intelOk
+    ? [listOpts[0], [BULK_AI_PICK, '✦ AI pick'], ...listOpts.slice(1)]
+    : listOpts;
+  const catOptsForRow = intelOk
+    ? [catOpts[0],  [BULK_AI_PICK, '✦ AI pick'], ...catOpts.slice(1)]
+    : catOpts;
   ul.innerHTML = '';
   const rows = [];
   for(let i = 0; i < lines.length; i++){
@@ -677,7 +711,7 @@ function _renderBulkPerTaskRows(){
     listSel.className = 'bulk-route-select';
     listSel.setAttribute('aria-label', 'List for task ' + (i + 1));
     listSel.dataset.role = 'list';
-    for(const [v, label] of listOpts){
+    for(const [v, label] of listOptsForRow){
       const o = document.createElement('option');
       o.value = v; o.textContent = label;
       listSel.appendChild(o);
@@ -686,7 +720,7 @@ function _renderBulkPerTaskRows(){
     catSel.className = 'bulk-route-select';
     catSel.setAttribute('aria-label', 'Category for task ' + (i + 1));
     catSel.dataset.role = 'category';
-    for(const [v, label] of catOpts){
+    for(const [v, label] of catOptsForRow){
       const o = document.createElement('option');
       o.value = v; o.textContent = label;
       catSel.appendChild(o);
@@ -702,7 +736,9 @@ function _renderBulkPerTaskRows(){
   // Async AI suggestion pre-fill. Each suggestion only writes if the user
   // hasn't already touched the select for that row — manual edits always
   // win. Failures are swallowed (best-effort UX, not a correctness path).
-  const intelOk = (typeof isIntelReady === 'function') && isIntelReady();
+  // `intelOk` is hoisted from earlier in this function — when false, the
+  // dropdowns still render (manual routing works without AI) but we skip
+  // the prediction pass entirely.
   if(!intelOk) return;
   rows.forEach((row, i) => {
     row.listSel.addEventListener('change', () => { row.listSel.dataset.userTouched = '1'; });
@@ -728,33 +764,42 @@ function _renderBulkPerTaskRows(){
 }
 
 /**
- * Resolve the routing choice for a given task index. Returns the listId +
- * category to merge into the task props (or `null` to leave the field
- * unset / fall through to the AI-enrichment default).
+ * Resolve the routing choice for a given task index. Returns a structured
+ * override per field:
+ *
+ *   { type: 'none' }            — leave field unset (use defaults / enrichment)
+ *   { type: 'set', value }      — apply this explicit value
+ *   { type: 'ai' }              — call the predictor at commit time for this task
+ *
+ * "ai" lets a user mix model + manual within a single batch — e.g. force
+ * every task into the Work list but let AI pick categories.
  */
 function _bulkRoutingFor(idx){
   const mode = _bulkRoutingMode();
+  const fromSelect = (sel, coerce) => {
+    if(!sel) return { type: 'none' };
+    const v = sel.value;
+    if(!v) return { type: 'none' };
+    if(v === BULK_AI_PICK) return { type: 'ai' };
+    return { type: 'set', value: coerce ? coerce(v) : v };
+  };
   if(mode === 'batch'){
-    const list = gid('bulkRouteBatchList');
-    const cat  = gid('bulkRouteBatchCat');
     return {
-      listId:   (list && list.value) ? Number(list.value) : null,
-      category: (cat && cat.value)   ? cat.value          : null,
+      list:     fromSelect(gid('bulkRouteBatchList'), v => Number(v)),
+      category: fromSelect(gid('bulkRouteBatchCat')),
     };
   }
   if(mode === 'per'){
     const ul = gid('bulkRoutePerRows');
     const row = ul && ul.querySelector('li.bulk-route-row[data-idx="' + idx + '"]');
-    if(!row) return { listId: null, category: null };
-    const list = row.querySelector('select[data-role="list"]');
-    const cat  = row.querySelector('select[data-role="category"]');
+    if(!row) return { list: { type: 'none' }, category: { type: 'none' } };
     return {
-      listId:   (list && list.value) ? Number(list.value) : null,
-      category: (cat && cat.value)   ? cat.value          : null,
+      list:     fromSelect(row.querySelector('select[data-role="list"]'),     v => Number(v)),
+      category: fromSelect(row.querySelector('select[data-role="category"]')),
     };
   }
-  // "ai" — fall through to _bulkEnrichOne predictions, no override.
-  return { listId: null, category: null };
+  // "ai" mode — fall through to _bulkEnrichOne predictions, no override.
+  return { list: { type: 'none' }, category: { type: 'none' } };
 }
 
 /**
@@ -878,15 +923,41 @@ async function confirmBulkImport(){
     }
     if(aborted()) return;
     // Routing override pass — in "batch"/"per" mode apply the user's
-    // explicit list + category choices. These win over anything the
-    // enrichment pass or quick-add tokens might have set, since they
-    // represent the user's deliberate decision in the preview.
+    // explicit list + category choices. Each field can be:
+    //   none → don't touch what enrichment / quick-add set
+    //   set  → apply the chosen value (wins over anything else)
+    //   ai   → call the predictor for this specific task and field
+    // The "ai" branch lets users mix model + manual within one batch
+    // (e.g. AI categories, manual list).
     if(mode === 'batch' || mode === 'per'){
-      for(let i = 0; i < built.length; i++){
+      const total = built.length;
+      const needsAi = (r) => r.list.type === 'ai' || r.category.type === 'ai';
+      for(let i = 0; i < total; i++){
+        if(aborted()) return;
         const route = _bulkRoutingFor(i);
-        if(route.listId   != null) built[i].props.listId   = route.listId;
-        if(route.category != null) built[i].props.category = route.category;
+        if(needsAi(route)){
+          _setBulkProgress('Predicting routing ' + (i + 1) + ' / ' + total + '…');
+          await new Promise(r => setTimeout(r, 0));
+          if(aborted()) return;
+        }
+        if(route.list.type === 'set'){
+          built[i].props.listId = route.list.value;
+        } else if(route.list.type === 'ai' && typeof predictListId === 'function'){
+          try {
+            const lid = await predictListId(built[i].name, { minScore: 0.30, minMargin: 0 });
+            if(lid != null) built[i].props.listId = lid;
+          } catch(_){ /* best-effort */ }
+        }
+        if(route.category.type === 'set'){
+          built[i].props.category = route.category.value;
+        } else if(route.category.type === 'ai' && typeof predictMetadata === 'function'){
+          try {
+            const meta = await predictMetadata(built[i].name, 5);
+            if(meta && meta.category) built[i].props.category = meta.category;
+          } catch(_){ /* best-effort */ }
+        }
       }
+      _setBulkProgress(null);
     }
     // Persist phase — single render + save at the end.
     for(const b of built){

@@ -74,13 +74,19 @@ test('_bulkRoutingMode reads the checked radio (defaults to "ai")', () => {
   );
 });
 
-test('_bulkRoutingFor returns null for "ai" mode and reads chosen values otherwise', () => {
+test('_bulkRoutingFor returns structured overrides for each field', () => {
   assert.match(tasks, /function _bulkRoutingFor\(idx\)\s*\{/, '_bulkRoutingFor must be defined');
-  // "ai" mode short-circuits to no override.
+  // Each field is { type: 'none' | 'set' | 'ai', value? } so callers can
+  // tell "leave alone" from "use this exact value" from "predict at commit".
+  assert.match(tasks, /type:\s*['"]none['"]/, 'override shape must include the "none" type');
+  assert.match(tasks, /type:\s*['"]set['"]/,  'override shape must include the "set" type');
+  assert.match(tasks, /type:\s*['"]ai['"]/,   'override shape must include the "ai" type (mixed AI/manual)');
+  // The "ai" mode falls through to the existing enrichment path with no
+  // explicit override on either field.
   assert.match(
     tasks,
-    /_bulkRoutingFor[\s\S]*?return\s*\{\s*listId:\s*null,\s*category:\s*null\s*\}\s*;\s*\}\s*$/m,
-    '_bulkRoutingFor must fall through to {listId:null, category:null} in "ai" mode'
+    /['"]ai['"]\s*mode[\s\S]*?\{\s*list:\s*\{\s*type:\s*['"]none['"]\s*\}/,
+    '_bulkRoutingFor must return list:{type:"none"} in ai mode'
   );
   // "batch" mode reads the two dropdowns by id.
   assert.match(tasks, /gid\('bulkRouteBatchList'\)/, 'must read #bulkRouteBatchList in batch mode');
@@ -91,6 +97,29 @@ test('_bulkRoutingFor returns null for "ai" mode and reads chosen values otherwi
     /querySelector\(\s*['"]li\.bulk-route-row\[data-idx="['"]?\s*\+\s*idx/,
     'per-task mode must look up the row by its data-idx attribute'
   );
+});
+
+test('"AI pick" sentinel is offered when intel is loaded', () => {
+  // The sentinel lets a user mix AI + manual: e.g. force every task into
+  // the Work list but let AI pick categories. Without this option, batch
+  // mode is "all-or-nothing" against the model.
+  assert.match(tasks, /const BULK_AI_PICK\s*=\s*['"]__AI__['"]/, 'BULK_AI_PICK sentinel must be defined');
+  // The dropdown population checks intelOk before pushing the AI option —
+  // hiding it when AI isn't reachable so the menu never lies.
+  assert.match(
+    tasks,
+    /if\(intelOk\)\s*opts\.push\(\s*\[BULK_AI_PICK/,
+    'batch dropdowns must only show the AI option when intel is ready'
+  );
+});
+
+test('confirmBulkImport runs predictListId / predictMetadata for AI-sentinel rows', () => {
+  // The override pass must handle the "ai" branch on each field — calling
+  // the predictor per task — otherwise the sentinel does nothing.
+  assert.match(tasks, /route\.list\.type\s*===\s*['"]ai['"]/,     'must check list.type === "ai"');
+  assert.match(tasks, /route\.category\.type\s*===\s*['"]ai['"]/,'must check category.type === "ai"');
+  assert.match(tasks, /predictListId\(built\[i\]\.name/,         'must call predictListId for AI-list rows');
+  assert.match(tasks, /predictMetadata\(built\[i\]\.name/,       'must call predictMetadata for AI-category rows');
 });
 
 test('confirmBulkImport applies routing overrides AFTER enrichment', () => {
@@ -126,5 +155,17 @@ test('AI mode is disabled in the UI when embeddings are not loaded', () => {
   // Without this, the "Auto-organize" radio would be selectable but
   // confirmBulkImport would silently fall back to no-op enrichment.
   assert.match(tasks, /aiRadio\.disabled\s*=\s*!intelOk/, 'must disable AI radio when intel is not ready');
-  assert.match(tasks, /perRadio\.disabled\s*=\s*!intelOk/, 'must disable Per-task radio when intel is not ready');
+  // Per-task mode is intentionally NOT gated on intel — the dropdowns work
+  // without AI (the user gets blank starting state and routes manually).
+  // Re-disabling Per-task would block legitimate manual workflows.
+  assert.doesNotMatch(tasks, /perRadio\.disabled\s*=\s*!intelOk/, 'Per-task radio must remain available without AI');
+});
+
+test('closing the modal with unsaved per-row edits asks before discarding', () => {
+  // Prevents accidental loss of work when a user spent time picking lists
+  // per task and then clicks the backdrop. The check only fires when there
+  // are user-touched selects; the auto-prefill from AI alone is not a "user edit".
+  assert.match(tasks, /function _bulkImportHasUserEdits\(\)/, 'must export an edit-detection helper');
+  assert.match(tasks, /querySelector\(['"]select\[data-user-touched="1"\]['"]\)/, 'must scan for user-touched selects');
+  assert.match(tasks, /showAppConfirm\([^)]*Discard /, 'must surface the discard prompt via showAppConfirm');
 });
