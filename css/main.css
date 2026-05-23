@@ -639,6 +639,10 @@
   .quick-add-fab:hover,.quick-add-fab:focus-visible{outline:0;transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.4),0 3px 8px rgba(0,0,0,.3)}
   .quick-add-fab:active{transform:translateY(0)}
   .quick-add-fab-icon{font-size:32px;font-weight:400;line-height:1;display:inline-block;padding-bottom:3px}
+  /* Scroll-direction auto-hide: slides the FAB off-screen while the user is
+     scrolling down through the task list, revealing the rows it would
+     otherwise cover. Restored as soon as the user scrolls up or stops. */
+  .quick-add-fab.scroll-hidden{transform:translateY(140%);opacity:0;pointer-events:none}
   /* Press-state ripple feel without an extra element. */
   .quick-add-fab.flash{animation:fabFlash .35s ease}
   @keyframes fabFlash{0%{transform:scale(1)}50%{transform:scale(.92)}100%{transform:scale(1)}}
@@ -1088,8 +1092,15 @@
     background:linear-gradient(135deg,var(--accent-bg) 0%,var(--bg-1) 60%);
     border:1px solid var(--border-subtle);border-radius:var(--r-md,10px);
     font-size:13px;color:var(--text-1);
+    /* Reserve the rendered height so the first paint already matches the
+       populated tile — otherwise renderDailyMomentum unhides a previously
+       display:none element and the entire task list jumps down ~60px. */
+    min-height:60px;box-sizing:border-box;
   }
-  .daily-momentum[hidden]{display:none}
+  /* When the tile is hidden (no tasks / archive view) keep its slot in the
+     layout — visibility:hidden instead of display:none — so toggling never
+     reflows neighboring content. */
+  .daily-momentum[hidden]{display:block;visibility:hidden}
   .dm-cell{
     display:flex;align-items:center;gap:8px;cursor:pointer;
     padding:4px 8px;border-radius:8px;transition:background .15s;
@@ -1112,7 +1123,7 @@
   .dm-spark-bar--zero{background:var(--border-subtle)}
   .dm-divider{width:1px;align-self:stretch;background:var(--border-subtle);margin:2px 0}
   @media (max-width:640px){
-    .daily-momentum{gap:10px;padding:8px 10px;font-size:12px}
+    .daily-momentum{gap:10px;padding:8px 10px;font-size:12px;min-height:50px}
     .dm-cell-value{font-size:16px}
     .dm-divider{display:none}
   }
@@ -3351,6 +3362,26 @@ body:has(.mini-timer.visible) .export-toast{bottom:calc(76px + env(safe-area-ins
    silently swallows clicks on whatever task row sits behind it. */
 .action-toast.show{opacity:1;transform:translateY(0)}
 .action-toast .action-toast-btn{pointer-events:auto}
+/* Dismiss × — always pointer-events:auto so users can clear the toast even
+   when the surrounding pill is non-interactive (action-toast host stays
+   pointer-events:none so taps pass through to content underneath). */
+.toast-dismiss{
+  appearance:none;-webkit-appearance:none;
+  pointer-events:auto;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:24px;margin-left:6px;padding:0;
+  background:transparent;border:0;border-radius:50%;
+  color:var(--text-3);font-size:18px;line-height:1;cursor:pointer;
+  transition:background .12s,color .12s;
+}
+.toast-dismiss:hover{background:var(--bg-3);color:var(--text-1)}
+.toast-dismiss:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Lay out the label + dismiss × inline-row now that the toast has a child
+   button (was bare text via textContent before). flex keeps the existing
+   bottom-right anchor and padding/border untouched. */
+.export-toast{display:flex;align-items:center;gap:8px}
+.export-toast-lbl{flex:1;min-width:0;text-align:inherit}
+.export-toast .toast-dismiss{pointer-events:auto;margin-left:2px}
 body:has(.mini-timer.visible) .action-toast{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
 /* When a modal or command palette is open, lift the bottom-anchored auto-
    dismiss toasts above the modal's sticky footer so feedback isn't hidden
