@@ -12,17 +12,28 @@
  * Hugging Face on first AI feature use (one-time, then cached). For
  * fully-offline installs from minute zero, commit the model files.
  */
+// Resolve vendored paths against the document base URL once, here.
+// Dynamic `import()` from a *classic* script resolves a relative specifier
+// against the script's URL (per the HTML spec), so writing
+// `import('./js/vendor/…')` from `js/intel.js` produces `…/js/js/vendor/…`
+// — a real bug seen in the wild. The same applies to URLs passed into
+// transformers.js (env.localModelPath, wasmPaths) since the library does
+// its own URL resolution. Pre-resolving against `document.baseURI` gives
+// every consumer the same absolute URL regardless of where they live.
+const _BASE = (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '');
+const _abs  = (rel) => { try { return new URL(rel, _BASE).href; } catch (_) { return rel; } };
+
 window.ODTAULAI_CONFIG = Object.freeze({
-  // ── Vendored library paths (relative to index.html) ──────────────────────
+  // ── Vendored library paths (absolute, resolved against document base) ────
   // Pinned versions match the tarballs under js/vendor/. To upgrade, replace
   // the file under js/vendor/ and bump the version comment here.
-  TRANSFORMERS_URL: './js/vendor/transformers/transformers.min.mjs', // v3.3.1
-  CHRONO_URL:       './js/vendor/chrono-node.min.mjs',               // v2.7.7
+  TRANSFORMERS_URL: _abs('js/vendor/transformers/transformers.min.mjs'), // v3.3.1
+  CHRONO_URL:       _abs('js/vendor/chrono-node.min.mjs'),               // v2.7.7
   /** Where transformers.js loads ORT WASM artefacts from. Must end with `/`. */
-  TRANSFORMERS_WASM_DIR: './js/vendor/transformers/',
+  TRANSFORMERS_WASM_DIR: _abs('js/vendor/transformers/'),
   /** Root for local model weights. Transformers.js resolves `EMBED_MODEL`
    *  beneath this path: `${MODEL_BASE_PATH}${EMBED_MODEL}/...`. */
-  MODEL_BASE_PATH: './assets/models/',
+  MODEL_BASE_PATH: _abs('assets/models/'),
 
   // ── Embedding model ──────────────────────────────────────────────────────
   // Single model for every device — bge-small runs on WebGPU (fp32/fp16) and

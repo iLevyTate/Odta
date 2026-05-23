@@ -124,7 +124,13 @@ test('intel.js prefers local model files with remote as fallback', () => {
 
 test('config.js exposes the vendored URLs (not CDN URLs)', () => {
   const src = readFileSync(join(root, 'js/config.js'), 'utf8');
-  assert.match(src, /TRANSFORMERS_URL:\s*['"]\.\/js\/vendor\/transformers\/transformers\.min\.mjs['"]/);
-  assert.match(src, /CHRONO_URL:\s*['"]\.\/js\/vendor\/chrono-node\.min\.mjs['"]/);
-  assert.match(src, /MODEL_BASE_PATH:\s*['"]\.\/assets\/models\/['"]/);
+  // Paths are resolved against document.baseURI at module load to avoid
+  // dynamic-import-from-classic-script doubling the `js/` segment (see
+  // config.js comment). The relative input must still point at the vendor
+  // tree, not a CDN — the `no CDN hosts in runtime JS` test above covers
+  // the negative case for every host.
+  assert.match(src, /TRANSFORMERS_URL:\s*_abs\(\s*['"]js\/vendor\/transformers\/transformers\.min\.mjs['"]\s*\)/);
+  assert.match(src, /CHRONO_URL:\s*_abs\(\s*['"]js\/vendor\/chrono-node\.min\.mjs['"]\s*\)/);
+  assert.match(src, /MODEL_BASE_PATH:\s*_abs\(\s*['"]assets\/models\/['"]\s*\)/);
+  assert.match(src, /TRANSFORMERS_WASM_DIR:\s*_abs\(\s*['"]js\/vendor\/transformers\/['"]\s*\)/);
 });

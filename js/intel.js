@@ -12,9 +12,16 @@
  * entirely.
  */
 const _C = window.ODTAULAI_CONFIG || {};
-const TRANSFORMERS_URL      = _C.TRANSFORMERS_URL      || './js/vendor/transformers/transformers.min.mjs';
-const TRANSFORMERS_WASM_DIR = _C.TRANSFORMERS_WASM_DIR || './js/vendor/transformers/';
-const MODEL_BASE_PATH       = _C.MODEL_BASE_PATH       || './assets/models/';
+// Fallbacks resolve against document.baseURI for the same reason config.js
+// does: dynamic import() in classic scripts resolves relative specifiers
+// against the script URL, not the document, so `./js/…` doubles into
+// `js/js/…` when called from `js/intel.js`. Config.js normally provides
+// pre-resolved absolutes; this is only the no-config defensive path.
+const _IBASE = (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '');
+const _iabs  = (rel) => { try { return new URL(rel, _IBASE).href; } catch (_) { return rel; } };
+const TRANSFORMERS_URL      = _C.TRANSFORMERS_URL      || _iabs('js/vendor/transformers/transformers.min.mjs');
+const TRANSFORMERS_WASM_DIR = _C.TRANSFORMERS_WASM_DIR || _iabs('js/vendor/transformers/');
+const MODEL_BASE_PATH       = _C.MODEL_BASE_PATH       || _iabs('assets/models/');
 const EMBED_MODEL           = _C.EMBED_MODEL           || 'Xenova/bge-small-en-v1.5';
 const EMBED_DIM             = _C.EMBED_DIM             || 384;
 /** Version string for IndexedDB migration — must change when embed model or dim changes */
