@@ -4,7 +4,13 @@
  *
  * chrono-node is vendored under js/vendor/ — no CDN fetch, works offline.
  */
-const CHRONO_URL = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_URL) || './js/vendor/chrono-node.min.mjs';
+// Fallback resolves against document.baseURI: dynamic import() in classic
+// scripts uses the *script* URL as the base, so a plain `./js/…` from
+// js/nlparse.js doubles into `js/js/…`. Config.js normally provides a
+// pre-resolved absolute; this is only the no-config defensive path.
+const _NBASE = (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '');
+const CHRONO_URL = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_URL)
+  || (function(){ try { return new URL('js/vendor/chrono-node.min.mjs', _NBASE).href; } catch (_) { return './js/vendor/chrono-node.min.mjs'; } })();
 
 let _chronoMod = null;
 let _chronoLoad = null;
