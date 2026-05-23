@@ -2122,6 +2122,47 @@ function quickAddFabClick(){
 }
 window.quickAddFabClick = quickAddFabClick;
 
+// Auto-hide the floating quick-add FAB while the user is scrolling DOWN
+// through tasks (it was sitting over the last visible rows), and bring it
+// back when they scroll UP or stop. Only the bottom-anchored visual is
+// suppressed — the keyboard shortcut + Cmd+K path stays available. The
+// listener is passive so it can't stall scroll, and it bails out early on
+// desktop where the FAB is `display:none` anyway.
+(function setupFabScrollHide(){
+  if(typeof window === 'undefined' || typeof document === 'undefined') return;
+  let lastY = window.scrollY || 0;
+  let ticking = false;
+  let restoreTm = 0;
+  const TRIGGER_PX = 12; // ignore tiny rubber-band jitters
+  const apply = () => {
+    ticking = false;
+    const fab = document.getElementById('quickAddFab');
+    if(!fab) return;
+    // Don't fight the CSS — desktop hides the FAB entirely, and the
+    // keyboard-open inset already removes it.
+    const cs = window.getComputedStyle(fab);
+    if(cs.display === 'none'){ fab.classList.remove('scroll-hidden'); return; }
+    const y = window.scrollY || 0;
+    const dy = y - lastY;
+    // Near the top — always show. Avoids a stuck-hidden FAB if the user
+    // flicks down then taps Tasks to jump back up.
+    if(y < 80){ fab.classList.remove('scroll-hidden'); lastY = y; return; }
+    if(Math.abs(dy) < TRIGGER_PX){ lastY = y; return; }
+    if(dy > 0) fab.classList.add('scroll-hidden');
+    else       fab.classList.remove('scroll-hidden');
+    lastY = y;
+    // After the user stops scrolling, bring the FAB back so a still page
+    // never leaves it hidden.
+    clearTimeout(restoreTm);
+    restoreTm = setTimeout(() => { fab.classList.remove('scroll-hidden'); }, 900);
+  };
+  window.addEventListener('scroll', () => {
+    if(ticking) return;
+    ticking = true;
+    requestAnimationFrame(apply);
+  }, { passive: true });
+})();
+
 // ========== STATS ==========
 function renderStats(){
   gid('statPomos').textContent=totalPomos;

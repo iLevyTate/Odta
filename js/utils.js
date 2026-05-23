@@ -36,7 +36,20 @@ function showExportToast(msg){
     t.setAttribute('role','status');
     document.body.appendChild(t);
   }
-  t.textContent=msg;
+  // Rebuild via DOM nodes (not textContent) so the dismiss × survives and
+  // the caller-supplied message is still treated as text.
+  t.replaceChildren();
+  const lbl=document.createElement('span');
+  lbl.className='export-toast-lbl';
+  lbl.textContent=msg;
+  t.appendChild(lbl);
+  const x=document.createElement('button');
+  x.type='button';
+  x.className='toast-dismiss';
+  x.setAttribute('aria-label','Dismiss');
+  x.textContent='×';
+  x.onclick=()=>{ t.classList.remove('show'); clearTimeout(t._tm); };
+  t.appendChild(x);
   t.classList.add('show');
   clearTimeout(t._tm);
   t._tm=setTimeout(()=>t.classList.remove('show'),2800);
@@ -236,6 +249,19 @@ function showActionToast(label, actionLabel, actionFn, ms){
     };
     hdr.appendChild(btn);
   }
+  // Dismiss × — always present so the toast never has to be waited out
+  // when it lands over content the user wants to interact with.
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'toast-dismiss';
+  dismiss.setAttribute('aria-label', 'Dismiss');
+  dismiss.textContent = '×';
+  dismiss.onclick = () => {
+    host.classList.remove('show');
+    clearTimeout(host._tm);
+    clearInterval(host._prog);
+  };
+  hdr.appendChild(dismiss);
   host.appendChild(hdr);
 
   // Ctrl+Z hint (only if undo button exists)
