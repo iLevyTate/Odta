@@ -1323,10 +1323,15 @@ function intelRetryLoad(){
     }
     renderAIPanel();
     if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
-  }).catch(() => {
+  }).catch(err => {
+    // Surface the real reason on retry too — otherwise the user clicks
+    // Retry, sees the same generic "Could not load model", and has no
+    // information about whether the underlying cause changed.
+    console.error('[intel] retry failed', err);
     if(w) w.hidden = true;
     if(btn) btn.hidden = false;
-    _setIntelStatus('error', 'Could not load model');
+    const short = String((err && err.message) || err || '').slice(0, 120);
+    _setIntelStatus('error', short || 'Could not load model');
     syncSemanticSearchUi();
   });
 }

@@ -80,11 +80,49 @@
     });
   }catch(_){ /* BroadcastChannel unavailable — fail silent */ }
 
+  // SW self-heal: when a newer worker reaches `installed` while an older one
+  // is still in control, prompt the new one to skipWaiting and reload exactly
+  // once on controllerchange. Without this, users keep seeing the previous
+  // version's cached asset list (e.g. v48 without model precaches) until they
+  // close every OdTauLai tab — and most users never do, so they hit the same
+  // "Could not load model" until they manually unregister the SW.
+  let _swReloading = false;
+  if ('serviceWorker' in navigator && !isFileProtocol) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(_swReloading) return;
+      _swReloading = true;
+      window.location.reload();
+    });
+  }
+  function _activateWaitingWorker(reg){
+    try{
+      if(reg && reg.waiting && navigator.serviceWorker.controller){
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+    }catch(_){}
+  }
+  function _wireUpdateFound(reg){
+    if(!reg) return;
+    try{
+      reg.addEventListener('updatefound', () => {
+        const installing = reg.installing;
+        if(!installing) return;
+        installing.addEventListener('statechange', () => {
+          if(installing.state === 'installed' && navigator.serviceWorker.controller){
+            try{ installing.postMessage({ type: 'SKIP_WAITING' }); }catch(_){}
+          }
+        });
+      });
+    }catch(_){}
+  }
+
   // Register external service worker when served via http(s) — preferred path.
   // Falls back to inline blob SW only if sw.js isn't reachable.
   if ('serviceWorker' in navigator && !isFileProtocol) {
-    navigator.serviceWorker.register('sw.js', {scope: './'}).then(()=>{
+    navigator.serviceWorker.register('sw.js', {scope: './'}).then((reg)=>{
       window._swRegistered = true;
+      _activateWaitingWorker(reg);
+      _wireUpdateFound(reg);
     }).catch((err)=>{
       console.warn('External sw.js failed, falling back to inline SW:', err);
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
@@ -117,8 +155,10 @@
         const swBlob = new Blob([swCode], {type: 'application/javascript'});
         // Keep blob URL alive for the session — revoking can break the registered SW.
         const swUrl = URL.createObjectURL(swBlob);
-        navigator.serviceWorker.register(swUrl).then(()=>{
+        navigator.serviceWorker.register(swUrl).then((reg)=>{
           window._swRegistered = true;
+          _activateWaitingWorker(reg);
+          _wireUpdateFound(reg);
         }).catch(()=>{ window._swRegistered = false; });
       } catch(e) { window._swRegistered = false; }
     });
