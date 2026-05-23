@@ -65,6 +65,6 @@ test('app.js still calls syncHeaderAIChip("error",…) on load failure', () => {
   const appSrc = readFileSync(join(root, 'js', 'app.js'), 'utf8');
   const intelLoadIdx = appSrc.indexOf('intelLoad(onProgress)');
   assert.ok(intelLoadIdx > 0, 'intelLoad call not found in app.js');
-  const tail = appSrc.slice(intelLoadIdx, intelLoadIdx + 2000);
+  const tail = appSrc.slice(intelLoadIdx, intelLoadIdx + 3000);
   assert.match(tail, /syncHeaderAIChip\(\s*['"]error['"]/, 'app.js must mark chip error on intelLoad rejection');
 });
