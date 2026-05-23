@@ -18,7 +18,7 @@ const pwaSrc     = readFileSync(resolve(root, 'js/pwa.js'), 'utf-8');
 // Extract swCache from version.js
 const versionMatch = versionSrc.match(/swCache\s*:\s*['"]([^'"]+)['"]/);
 if (!versionMatch) {
-  console.error('❌ Could not find swCache in js/version.js');
+  console.error('Could not find swCache in js/version.js');
   process.exit(1);
 }
 const versionCache = versionMatch[1];
@@ -28,7 +28,7 @@ const versionCache = versionMatch[1];
 // so match either binding form.
 const swMatch = swSrc.match(/(?:const|let|var)\s+CACHE_NAME\s*=\s*['"]([^'"]+)['"]/);
 if (!swMatch) {
-  console.error('❌ Could not find CACHE_NAME in sw.js');
+  console.error('Could not find CACHE_NAME in sw.js');
   process.exit(1);
 }
 const swCache = swMatch[1];
@@ -38,7 +38,7 @@ const swCache = swMatch[1];
 // (e.g. version.js failed to load). Pattern matches: ` : 'odtaulai-vNN'`.
 const pwaMatch = pwaSrc.match(/:\s*['"](odtaulai-v[^'"]+)['"]/);
 if (!pwaMatch) {
-  console.error('❌ Could not find inline-SW cache fallback in js/pwa.js');
+  console.error('Could not find inline-SW cache fallback in js/pwa.js');
   process.exit(1);
 }
 const pwaCache = pwaMatch[1];
@@ -48,11 +48,11 @@ if (versionCache !== swCache)  drifts.push(['sw.js CACHE_NAME', swCache]);
 if (versionCache !== pwaCache) drifts.push(['js/pwa.js inline fallback', pwaCache]);
 
 if (drifts.length) {
-  console.error('❌ Version drift detected!');
+  console.error('Version drift detected!');
   console.error(`   js/version.js  swCache: '${versionCache}'`);
   drifts.forEach(([where, val]) => console.error(`   ${where.padEnd(30)} '${val}'`));
   console.error('\n   Run: node scripts/bump-version.mjs <new-version>');
   process.exit(1);
 }
 
-console.log(`✅ Version sync OK: '${versionCache}'`);
+console.log(`Version sync OK: '${versionCache}'`);

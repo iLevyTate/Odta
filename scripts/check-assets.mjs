@@ -18,7 +18,7 @@ const swSrc   = readFileSync(resolve(root, 'sw.js'), 'utf-8');
 // Parse ASSETS array from sw.js — extract all quoted strings between [ and ];
 const assetsMatch = swSrc.match(/const\s+ASSETS\s*=\s*\[([\s\S]*?)\]/);
 if (!assetsMatch) {
-  console.error('❌ Could not parse ASSETS array from sw.js');
+  console.error('Could not parse ASSETS array from sw.js');
   process.exit(1);
 }
 const swAssets = new Set(
@@ -41,7 +41,7 @@ let ok = true;
 for (const asset of htmlAssets) {
   const normalized = asset.replace(/^\.\//, '');
   if (!swAssets.has(normalized) && !swAssets.has('./' + normalized)) {
-    console.error(`❌ index.html references '${asset}' but sw.js ASSETS is missing it`);
+    console.error(`index.html references '${asset}' but sw.js ASSETS is missing it`);
     ok = false;
   }
 }
@@ -52,7 +52,7 @@ for (const asset of swAssets) {
   if (!/\.(js|css)$/.test(normalized)) continue;
   if (/vendor\//.test(normalized)) continue; // vendor scripts are dynamically imported
   if (!htmlAssets.has(normalized) && !htmlAssets.has('./' + normalized)) {
-    console.error(`❌ sw.js ASSETS lists '${asset}' but index.html doesn't reference it`);
+    console.error(`sw.js ASSETS lists '${asset}' but index.html doesn't reference it`);
     ok = false;
   }
 }
@@ -62,4 +62,4 @@ if (!ok) {
   process.exit(1);
 }
 
-console.log(`✅ Asset sync OK: ${htmlAssets.size} HTML refs, ${swAssets.size} SW entries`);
+console.log(`Asset sync OK: ${htmlAssets.size} HTML refs, ${swAssets.size} SW entries`);
