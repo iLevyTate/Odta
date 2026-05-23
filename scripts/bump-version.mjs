@@ -21,7 +21,7 @@ if (!version || version === '-h' || version === '--help') {
   process.exit(version ? 0 : 1);
 }
 if (!/^v\d+(?:\.\d+)*$/.test(version)) {
-  console.error(`❌ Invalid version '${version}' — expected something like v33 or v33.1`);
+  console.error(`Invalid version '${version}' — expected something like v33 or v33.1`);
   process.exit(1);
 }
 
@@ -69,7 +69,7 @@ pwaSrc = pwaSrc.replace(
 );
 writeFileSync(pwaPath, pwaSrc, 'utf-8');
 
-console.log(`✅ Bumped to ${version}`);
+console.log(`Bumped to ${version}`);
 console.log(`   js/version.js  → version:'${version}', swCache:'${cacheName}', buildDate:'${buildDate}'`);
 console.log(`   sw.js           → CACHE_NAME:'${cacheName}'`);
 console.log(`   js/pwa.js       → inline fallback:'${cacheName}'`);

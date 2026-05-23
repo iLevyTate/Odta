@@ -22,11 +22,11 @@ const ON_ATTR_RE = /\s(on[a-z]+)\s*=\s*["'][^"']*["']/gi;
 const matches = [...html.matchAll(ON_ATTR_RE)];
 
 if(matches.length === 0){
-  console.log('✅ No inline event handlers in index.html — CSP script-src can stay strict.');
+  console.log('No inline event handlers in index.html — CSP script-src can stay strict.');
   process.exit(0);
 }
 
-console.error(`❌ Found ${matches.length} inline on*= handler(s) in index.html:`);
+console.error(`Found ${matches.length} inline on*= handler(s) in index.html:`);
 for(const m of matches){
   const before = html.slice(0, m.index);
   const line = before.split('\n').length;
