@@ -71,11 +71,11 @@
 </head>
 <body>
 <noscript>
-  <div style="max-width:560px;margin:48px auto;padding:24px;background:#0d1a2d;border:1px solid #1a2d44;border-radius:14px;color:#c8d6e5;font:14px/1.55 system-ui,sans-serif">
-    <h1 style="margin:0 0 12px;font-size:20px;color:#fff">OdTauLai needs JavaScript</h1>
-    <p style="margin:0 0 12px;color:#a0b1c5">This is a local-first PWA that runs entirely in your browser — task data, Pomodoro state, and the optional on-device AI all live on this device. Nothing leaves the page.</p>
-    <p style="margin:0 0 12px;color:#a0b1c5">Without JavaScript enabled, none of that can run. There is no server-rendered fallback, no account, no remote data to fetch. Re-enabling JS for this origin is the only path.</p>
-    <p style="margin:0;color:#5a8ab5;font-size:12px">Source: <a href="https://github.com/iLevyTate/odtaulai" style="color:#48b5e0">github.com/iLevyTate/odtaulai</a></p>
+  <div class="noscript-panel">
+    <h1 class="noscript-h1">OdTauLai needs JavaScript</h1>
+    <p class="noscript-p">This is a local-first PWA that runs entirely in your browser — task data, Pomodoro state, and the optional on-device AI all live on this device. Nothing leaves the page.</p>
+    <p class="noscript-p">Without JavaScript enabled, none of that can run. There is no server-rendered fallback, no account, no remote data to fetch. Re-enabling JS for this origin is the only path.</p>
+    <p class="noscript-src">Source: <a class="noscript-link" href="https://github.com/iLevyTate/odtaulai">github.com/iLevyTate/odtaulai</a></p>
   </div>
 </noscript>
 <a class="skip-link" href="#mainTabpanels">Skip to main content</a>
@@ -204,7 +204,12 @@
     <!-- Live parse preview: chips reflect quick-add tokens parsed from current
          input text so users can SEE what will commit before pressing Enter.
          Hidden when nothing is parseable. -->
-    <div id="qaParseChips" class="qa-parse-chips" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+    <!-- Visual chip strip showing what the quick-add parser would extract.
+         aria-live is intentionally OFF here — without that, every keystroke
+         re-announced the whole chip set, drowning screen-reader users during
+         normal typing (#21 in UX audit). The srAnnouncer at the top of the
+         document is used for one-shot commit announcements instead. -->
+    <div id="qaParseChips" class="qa-parse-chips" aria-hidden="true" hidden></div>
     <!-- qa-hint defaults to hidden so the form starts uncluttered; users opt
          in via the inline disclosure below. syncQaHintVisibility() flips both
          based on cfg.qaHintHidden at runtime. -->
@@ -719,15 +724,19 @@
 <div class="save-indicator" id="saveInd">● Saved</div>
 
 
-<!-- Floating Mini Timer -->
-<div class="mini-timer" id="miniTimer" data-action="showTab" data-arg="focus" role="button" tabindex="0" aria-label="Open focus timer">
-  <div class="mt-phase-dot" id="mtDot"></div>
-  <div class="mt-info">
-    <div class="mt-label" id="mtLabel">FOCUS</div>
-    <div class="mt-time" id="mtTime">25:00</div>
-  </div>
-  <button class="mt-btn mt-play" id="mtToggle" aria-label="Play or pause focus timer" data-action="miniTimerToggle">▶</button>
-  <div class="mt-open" id="mtTaskHint" hidden>⇢ open</div>
+<!-- Floating Mini Timer. The outer container is non-interactive; two real
+     buttons (Open and Play/Pause) keep ARIA semantics clean — no
+     interactive-inside-interactive. -->
+<div class="mini-timer" id="miniTimer" role="group" aria-label="Focus timer mini-controls">
+  <button type="button" class="mt-open-btn" data-action="showTab" data-arg="focus" aria-label="Open focus timer">
+    <span class="mt-phase-dot" id="mtDot" aria-hidden="true"></span>
+    <span class="mt-info">
+      <span class="mt-label" id="mtLabel">FOCUS</span>
+      <span class="mt-time" id="mtTime">25:00</span>
+    </span>
+    <span class="mt-open" id="mtTaskHint" hidden aria-hidden="true">⇢ open</span>
+  </button>
+  <button type="button" class="mt-btn mt-play" id="mtToggle" aria-label="Play or pause focus timer" data-action="miniTimerToggle">▶</button>
 </div>
 
 <!-- Floating Quick-Add button (mobile / touch). Always-on quick capture so a
@@ -738,10 +747,10 @@
 </button>
 
 <!-- What next? overlay -->
-<div id="whatNextOverlay" class="what-next-overlay" hidden data-action="closeWhatNextOnBackdrop">
+<div id="whatNextOverlay" class="what-next-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="whatNextTitle" data-action="closeWhatNextOnBackdrop">
   <div class="what-next-panel">
     <div class="what-next-hdr">
-      <span>What next?</span>
+      <span id="whatNextTitle">What next?</span>
       <button type="button" class="what-next-x" data-action="closeWhatNext" aria-label="Close">✕</button>
     </div>
     <p class="what-next-sub">Ranked by priority, due date, energy fit, and blockers (no embeddings).</p>
@@ -868,6 +877,7 @@
       <button type="button" class="mfoot-btn mfoot-save" id="appPromptOk" data-action="submitAppPrompt">OK</button>
     </div>
   </div>
+</div>
 </main>
 
 <!-- Task Detail Modal -->
@@ -897,7 +907,7 @@
         <div class="mfield">
           <label class="mfield-lbl" for="mdDue">Due Date</label>
           <input type="date" class="mfield-in" id="mdDue">
-          <div class="quick-dates">
+          <div class="quick-dates" role="group" aria-label="Quick due date">
             <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[0]'>Today</button>
             <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[1]'>Tomorrow</button>
             <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[7]'>+1 Week</button>
@@ -907,7 +917,7 @@
         <div class="mfield">
           <label class="mfield-lbl" for="mdRemindAt">Remind me at</label>
           <input type="datetime-local" class="mfield-in" id="mdRemindAt">
-          <div class="quick-dates">
+          <div class="quick-dates" role="group" aria-label="Quick reminder time">
             <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,9]'>9am</button>
             <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,17]'>5pm</button>
             <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[1,9]'>Tmrw 9am</button>
@@ -921,7 +931,7 @@
         <div class="mfield">
           <label class="mfield-lbl" for="mdSnoozeUntil">Snooze (hide until)</label>
           <input type="date" class="mfield-in" id="mdSnoozeUntil" title="Hide this task from main views until this date. Distinct from due date — snoozing does not move the deadline.">
-          <div class="quick-dates">
+          <div class="quick-dates" role="group" aria-label="Quick snooze">
             <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[1]'>+1 day</button>
             <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[3]'>+3 days</button>
             <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[7]'>+1 week</button>

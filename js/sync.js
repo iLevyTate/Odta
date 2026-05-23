@@ -84,12 +84,15 @@ function _setSyncStatus(status, msg) {
   const el = document.getElementById('syncStatus');
   const dot = document.getElementById('syncDot');
   if (!el) return;
+  // Surface the connected peer's code so a user with 3+ devices can tell
+  // *which* one they're paired with (#11 in UX audit).
+  const peerCode = (status === 'connected' && _conn && _conn.peer) ? _idToCode(_conn.peer) : null;
   const labels = {
     off:       '○ Sync off',
     loading:   '◌ Loading…',
     waiting:   '◌ Waiting for peer…',
     connecting:'◌ Connecting…',
-    connected: '● Synced',
+    connected: peerCode ? ('● Synced with ' + peerCode) : '● Synced',
     error:     '✕ ' + (msg || 'Error'),
   };
   el.textContent = labels[status] || status;
@@ -665,7 +668,13 @@ function syncConnect(code) {
 }
 
 /** Mint a fresh peer id (escape hatch if pairing is stuck on a bad code). */
-function syncRegenerateCode() {
+async function syncRegenerateCode() {
+  // Regenerating destroys the existing pairing — any device that stored this
+  // code will be orphaned (#14 in UX audit). Confirm before nuking.
+  const msg = 'Regenerating your code unpairs every device that knows the current code. They\'ll need the new code to reconnect. Continue?';
+  if (typeof showAppConfirm === 'function'){
+    if (!(await showAppConfirm(msg))) return;
+  } else if (!confirm(msg)) return;
   try { localStorage.removeItem(SYNC_PEER_KEY); } catch(e) {}
   try { localStorage.removeItem(SYNC_ROOM_KEY); } catch(e) {}
   if (_conn) { try { _conn.close(); } catch(e) {} _conn = null; }
@@ -786,6 +795,24 @@ function syncOnCodeInput(el) {
   let raw = String(el.value || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
   // Collapse multiple dashes and trim leading/trailing
   raw = raw.replace(/-+/g, '-').replace(/^-|-$/g, '');
+  // Live-format STU-XXX-XXX: re-insert dashes as the user types so paste
+  // without dashes and bare-typed codes match the displayed format (#15
+  // in UX audit). Strip all dashes, then reinsert at positions 3 and 6
+  // of the body (after STU).
+  const compact = raw.replace(/-/g, '');
+  if (compact.startsWith('STU') && compact.length > 3) {
+    const body = compact.slice(3);
+    let formatted = 'STU';
+    if (body.length > 0) formatted += '-' + body.slice(0, 3);
+    if (body.length > 3) formatted += '-' + body.slice(3, 6);
+    raw = formatted;
+  } else if (!compact.startsWith('STU') && compact.length >= 3) {
+    // User pasted bare body — treat as STU-prefix code.
+    let formatted = 'STU';
+    if (compact.length > 0) formatted += '-' + compact.slice(0, 3);
+    if (compact.length > 3) formatted += '-' + compact.slice(3, 6);
+    raw = formatted;
+  }
   el.value = raw;
   const btn = document.getElementById('syncConnectBtn');
   const hint = document.getElementById('syncInputHint');

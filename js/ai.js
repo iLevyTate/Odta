@@ -7,6 +7,7 @@ const INTEL_CFG_KEY = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_
 
 let _cfg = null;
 let _pendingOps = [];
+let _pendingOverflowOps = null;   // Deferred ops beyond the 50-cap of the current review batch (#7 UX audit).
 let _pendingDestructive = 'none'; // 'none' | 'warn' | 'hard' — set by acceptProposedOps()
 let _pendingSource = null;        // tag for UI ('ask', 'harmonize', …)
 let _undoStack = [];
@@ -819,16 +820,30 @@ function intelRejectPending(){
  * @param {{ source?:string, destructiveLevel?:'none'|'warn'|'hard' }} [meta]
  */
 async function acceptProposedOps(ops, meta){
+  // Stash overflow so the user can actually continue from where the cap cut
+  // them off — "re-run to continue" used to be a lie because the source ops
+  // were lost (#7 in UX audit). The "Show next batch" button below replays
+  // the deferred slice through the same review flow.
+  let overflow = null;
   if(Array.isArray(ops) && ops.length > 50){
-    console.warn('[ask] Proposed op list truncated from', ops.length, 'to 50');
-    // User-visible signal so they don't silently lose 40% of their request.
-    // showExportToast is the existing toast surface (see ui.js); a quiet
-    // warn alone is invisible to anyone not watching the console.
-    if(typeof showExportToast === 'function'){
-      showExportToast('Applied first 50 of ' + ops.length + ' proposed changes — re-run to continue.');
+    console.warn('[ask] Proposed op list truncated from', ops.length, 'to first 50');
+    overflow = ops.slice(50);
+    if(typeof showActionToast === 'function'){
+      const remaining = overflow.length;
+      showActionToast(
+        'Reviewing first 50 of ' + ops.length + ' proposed changes',
+        'Show next ' + Math.min(50, remaining),
+        () => { acceptProposedOps(overflow, meta); },
+        8000
+      );
+    } else if(typeof showExportToast === 'function'){
+      showExportToast('Reviewing first 50 of ' + ops.length + ' proposed changes — ' + overflow.length + ' more queued.');
     }
   }
   const list = Array.isArray(ops) ? ops.slice(0, 50) : [];
+  // Park the deferred slice so an explicit follow-up trigger (or a future
+  // "Continue" button) can pick it up without re-running the LLM/proposal.
+  _pendingOverflowOps = overflow;
   const classifyIdx = [];
   list.forEach((op, i) => { if(op && op.name === 'CLASSIFY_TASK') classifyIdx.push(i); });
   await Promise.all(classifyIdx.map(async (i) => {
@@ -988,6 +1003,27 @@ async function intelApplyPending(){
     }, 50);
   }
 
+  // Surface per-op failure reasons. The previous version only counted them,
+  // leaving "2 failed" with no path to learn why short of opening DevTools
+  // (#6 in UX audit). showActionToast + a "Show why" button reveals the
+  // failure list in a follow-up toast.
+  if(failures.length){
+    if(typeof showActionToast === 'function'){
+      showActionToast(
+        `${failures.length} change${failures.length !== 1 ? 's' : ''} could not be applied`,
+        'Show why',
+        () => {
+          const detail = failures.slice(0, 10).join('\n') + (failures.length > 10 ? `\n…and ${failures.length - 10} more` : '');
+          if(typeof showAppConfirm === 'function') showAppConfirm(detail);
+          else if(typeof showExportToast === 'function') showExportToast(detail);
+          else alert(detail);
+        },
+        8000
+      );
+    } else if(typeof showExportToast === 'function'){
+      showExportToast(`${failures.length} failed — ${failures.slice(0, 2).join('; ')}${failures.length > 2 ? '…' : ''}`);
+    }
+  }
   _pendingOps = [];
   _pendingDestructive = 'none';
   _pendingSource = null;
@@ -1148,10 +1184,18 @@ function renderAIPanel(){
   const failed = !ready && _embedChipState === 'error';
   const dev = typeof getIntelDevice === 'function' ? getIntelDevice() : null;
   const statusKind = ready ? 'ok' : (failed ? 'error' : 'idle');
+  // Distinguish "actively loading" from "idle, has never started" so users
+  // who haven't clicked anything don't see "Loading model…" with 0%
+  // activity and assume the app is broken (#4 in UX audit).
+  const isLoading = _embedChipState === 'loading' || _embedChipState === 'working' || _embedChipState === 'syncing';
   const statusText = ready
     ? 'Ready · ' + (dev || 'CPU')
-    : (failed ? (_embedChipMsg ? String(_embedChipMsg).slice(0, 64) : 'Could not load model') : 'Loading model…');
-  const disabledSub = ready ? '' : (failed ? 'Model unavailable — tap Retry above' : 'Embedding model loading…');
+    : failed ? (_embedChipMsg ? String(_embedChipMsg).slice(0, 64) : 'Could not load model')
+    : isLoading ? 'Loading model…'
+    : '~33 MB · loads on first AI feature';
+  const disabledSub = ready ? '' : failed ? 'Model unavailable — tap Retry above'
+    : isLoading ? 'Embedding model loading…'
+    : 'Embedding model will load on first AI feature';
 
   const embedModel = (typeof window !== 'undefined' && window.INTEL_EMBED_MODEL) || 'Xenova/bge-base-en-v1.5';
   panel.innerHTML = `

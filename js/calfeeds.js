@@ -142,7 +142,16 @@ function parseICSDate(raw, isDateOnly, tzid){
       const d = new Date(Date.UTC(+Y, +M-1, +D, +hh, +mm) - offsetMin * 60000);
       return toLocalIsoTime(d);
     } catch(e) {
-      // TZID not recognised — fall through to floating time
+      // TZID unrecognised — record once per (feed, tzid) so the renderer can
+      // flag events that silently fell back to floating-local time (#21 in
+      // UX audit). Without this, events show at the wrong hour with no clue.
+      try {
+        const w = (window._calfeedsTzWarnings = window._calfeedsTzWarnings || new Map());
+        if(!w.has(tzid)){
+          w.set(tzid, true);
+          console.warn('[calfeeds] Unknown TZID, falling back to floating time:', tzid);
+        }
+      } catch(_){}
     }
   }
   // Floating time (no Z, no TZID) — treat as if already local
@@ -853,6 +862,18 @@ function showWorkerInstructions(){
   if(el) el.hidden = false;
 }
 
+// Toast wrapper — falls back to alert only when running headless (tests).
+// The rest of the app uses showExportToast / showActionToast; calendar flows
+// were the lone holdout on blocking native alert() (#16/#17 in UX audit).
+function _cfToast(msg){
+  if(typeof showExportToast === 'function'){ showExportToast(msg); return; }
+  try { alert(msg); } catch(_){ /* no-op */ }
+}
+function _cfActionToast(msg, label, fn){
+  if(typeof showActionToast === 'function'){ showActionToast(msg, label, fn, 6000); return; }
+  _cfToast(msg);
+}
+
 // Form submission handler
 async function submitAddCalFeed(){
   const label = document.getElementById('cfLabel').value.trim() || 'Calendar';
@@ -863,18 +884,18 @@ async function submitAddCalFeed(){
   if(pasteActive){
     const content = document.getElementById('cfPasteContent').value.trim();
     if(content.length > CAL_FETCH_MAX_BYTES){
-      alert('Calendar paste is too large (max ' + (CAL_FETCH_MAX_BYTES / 1_000_000) + ' MB).');
+      _cfToast('Calendar paste is too large (max ' + (CAL_FETCH_MAX_BYTES / 1_000_000) + ' MB).');
       return;
     }
     if(!content.includes('BEGIN:VCALENDAR')){
-      alert('That doesn\'t look like an .ics file. It should start with BEGIN:VCALENDAR.');
+      _cfToast('That doesn\'t look like an .ics file. It should start with BEGIN:VCALENDAR.');
       return;
     }
     feed = addCalFeed({ label, color, content });
   } else {
     const url = document.getElementById('cfUrl').value.trim();
     const proxy = document.getElementById('cfProxy').value.trim();
-    if(!url){ alert('URL is required'); return; }
+    if(!url){ _cfToast('URL is required'); return; }
     if(!proxy){
       const cmsg = 'No proxy set — direct fetch will likely fail due to browser CORS restrictions. Continue anyway?';
       if(typeof showAppConfirm === 'function'){
@@ -892,10 +913,12 @@ async function submitAddCalFeed(){
     const result = await syncCalFeed(feed.id);
     renderCalFeedsPanel();
     if(typeof renderTaskList === 'function') renderTaskList();
-    alert(`✓ Loaded ${result.count} events from ${label}`);
+    _cfToast(`✓ Loaded ${result.count} events from ${label}`);
   } catch(err) {
     renderCalFeedsPanel();
-    alert(`Feed added but sync failed: ${err.message}\n\nCheck the URL and proxy settings, then hit ↻ to retry.`);
+    _cfActionToast(`Feed "${label}" added but first sync failed: ${err.message}`, 'Retry', () => {
+      refreshCalFeed(feed.id);
+    });
   }
 }
 
@@ -906,7 +929,9 @@ async function refreshCalFeed(feedId){
     if(typeof renderTaskList === 'function') renderTaskList();
   } catch(err) {
     renderCalFeedsPanel();
-    alert('Sync failed: ' + err.message);
+    _cfActionToast('Calendar sync failed: ' + err.message, 'Retry', () => {
+      refreshCalFeed(feedId);
+    });
   }
 }
 

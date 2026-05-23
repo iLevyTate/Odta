@@ -385,7 +385,10 @@ function saveState(reason){
       const warnIc = (window.icon && window.icon('alertTriangle', {size:14})) || '';
       const msg = document.createElement('span');msg.className='quota-warning-msg';
       if(warnIc){const tmp=document.createElement('span');tmp.innerHTML=warnIc;while(tmp.firstChild)msg.appendChild(tmp.firstChild)}
-      const msgTxt=document.createElement('span');msgTxt.textContent='Local cache full \u2014 data is saved in IndexedDB. Consider exporting a backup.';msg.appendChild(msgTxt);
+      // Reassuring tone \u2014 IndexedDB already absorbed the write, the localStorage
+       // mirror just overflowed. Without this framing the banner reads like data
+       // loss when nothing has actually been lost (#30 in UX audit).
+      const msgTxt=document.createElement('span');msgTxt.textContent='Note: your data is safe \u2014 IndexedDB has it. The localStorage mirror is full; back up when convenient.';msg.appendChild(msgTxt);
       w.appendChild(msg);
       const dismissBtn=document.createElement('button');dismissBtn.type='button';dismissBtn.textContent='Dismiss';
       dismissBtn.onclick=function(){
