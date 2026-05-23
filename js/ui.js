@@ -370,7 +370,7 @@ function renderCmdK(){
     const active=itemIdx===cmdkActiveIdx;
     const cur=itemIdx++;
     const kbd=i.kbd?'<span class="cmdk-kbd">'+i.kbd+'</span>':(i.desc?'<span class="cmdk-desc">'+esc(i.desc)+'</span>':'');
-    return '<div class="cmdk-item'+(active?' active':'')+'" data-idx="'+cur+'" data-action="cmdkRun" data-arg="+cur+"><span class="cmdk-icon">'+i.icon+'</span><span>'+esc(i.label)+'</span>'+kbd+'</div>';
+    return '<div class="cmdk-item'+(active?' active':'')+'" data-idx="'+cur+'" data-action="cmdkRun" data-arg="'+cur+'"><span class="cmdk-icon">'+i.icon+'</span><span>'+esc(i.label)+'</span>'+kbd+'</div>';
   }).join('');
 }
 function cmdkRun(idx){

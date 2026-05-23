@@ -759,7 +759,7 @@ function renderCalFeedsPanel(){
     </div>
 
     <div id="workerInstructions" class="calfeed-worker-panel" hidden>
-      <button class="btn-ghost btn-sm calfeed-worker-close" data-action="hideWorkerInstructions">×</button>
+      <button class="btn-ghost btn-sm calfeed-worker-close" data-action="hideWorkerInstructions" aria-label="Close instructions" title="Close">×</button>
       <h4 class="mt-0">Deploy a personal CORS proxy (free, 15 min)</h4>
       <ol class="calfeed-worker-list">
         <li>Sign up at <a href="https://dash.cloudflare.com" target="_blank" rel="noopener noreferrer">dash.cloudflare.com</a> (free)</li>

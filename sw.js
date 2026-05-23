@@ -8,6 +8,9 @@ try {
   }
 } catch (e) {
   // version.js unavailable (e.g. offline install) — keep the inline default.
+  // Surface the fallback so CI smoke logs and `chrome://serviceworker-internals`
+  // show drift between the inline cache name and the canonical one in version.js.
+  console.warn('[sw] version.js importScripts failed; using inline CACHE_NAME', CACHE_NAME, e && e.message);
 }
 
 // Static app shell + every vendored runtime dependency. The transformers
