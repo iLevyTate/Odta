@@ -198,11 +198,17 @@ function advancePhase(){
   setPhaseTime(); renderAll();
   _scheduleAutoStart();
 }
+let _lastSkipAt = 0;
 function skipPhase(){
   const wasRunning=running;running=false;clearInterval(tickId);cancelScheduledAudio();
   const el=wasRunning?Math.floor((Date.now()-startedAt)/1000):0;
   remaining=Math.max(0,pausedRemaining-el);
   const worked=totalDuration-remaining;
+  // Rapid back-to-back skips during triage should not pile up audible chimes
+  // and system notifications — squelch both when the user is mashing skip
+  // within 4s (#14 in UX audit).
+  const _silentSkip = (Date.now() - _lastSkipAt) < 4000;
+  _lastSkipAt = Date.now();
   let _skippedTaskId=null;
   if(phase==='work'){
     if(worked>30)totalFocusSec+=worked;
@@ -225,12 +231,18 @@ function skipPhase(){
   }else{
     totalBreaks++;sessionHistory.push({type:phase});addLog(getPL(phase),worked||getPS(phase),phase);
   }
-  if(cfg.sound)(phase==='work'?playTransition:playBreakEnd)();
-  notify(getPL(phase)+' Skipped','Moving to next phase.');
+  if(cfg.sound && !_silentSkip)(phase==='work'?playTransition:playBreakEnd)();
+  if(!_silentSkip) notify(getPL(phase)+' Skipped','Moving to next phase.');
   finished=true;gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
   renderStats();renderCtrls();renderTaskList();updateTitle();saveState('user');
   if(_skippedTaskId && typeof refreshOpenTaskModalIfMatches === 'function'){
     refreshOpenTaskModalIfMatches(_skippedTaskId);
+  }
+  // Offer the session note on a non-trivial skip too — natural complete
+  // already prompts; the asymmetry surprises users who finished a real chunk
+  // of work but happened to hit Skip (#27 in UX audit).
+  if(phase==='work' && worked > 30 && _skippedTaskId && typeof showSessionNotePrompt === 'function'){
+    try{ showSessionNotePrompt(_skippedTaskId, worked, 'work-partial'); }catch(_){}
   }
   _scheduleAutoAdvance();
 }
@@ -255,6 +267,11 @@ async function resetAll(){
 // active task so it isn't lost.
 function resetPhase(){
   running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();fireCounts={};
+  // Cancel any auto-advance / auto-start that was queued from a prior phase
+  // complete — without this, a phase reset followed by user idle still flips
+  // the timer 1.5s later, ignoring the explicit reset (#15 in UX audit).
+  if(_pendingAdvanceTimer){ clearTimeout(_pendingAdvanceTimer); _pendingAdvanceTimer = null; }
+  if(_pendingStartTimer){ clearTimeout(_pendingStartTimer); _pendingStartTimer = null; }
   if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}
   setPhaseTime();renderTimerChrome();renderCtrls();_syncRingState();saveState('user');
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
@@ -351,6 +368,19 @@ function addQuickTimer(){
 
 function addQuickPreset(mins,secs,label){
   const total=mins*60+secs;
+  // Mirror addQuickTimer's cap behavior — preset clicks shouldn't be a
+  // back-door past QT_MAX (#18 in UX audit).
+  if(quickTimers.length >= QT_MAX){
+    const pruned = pruneFinishedQuickTimers();
+    if(quickTimers.length >= QT_MAX){
+      if(typeof showExportToast === 'function'){
+        showExportToast('Quick-timer cap reached (' + QT_MAX + '). Remove or finish one before adding another.');
+      }
+      return;
+    } else if(pruned > 0 && typeof showExportToast === 'function'){
+      showExportToast('Pruned ' + pruned + ' finished timer' + (pruned === 1 ? '' : 's') + ' to make room.');
+    }
+  }
   quickTimers.push({id:++qtIdCtr,label,totalSec:total,remaining:total,running:false,startedAt:0,pausedRem:total,sound:'bell',finished:false,_fireCounts:{}});
   renderQuickTimers();saveState('user')
 }
@@ -385,6 +415,9 @@ function resetQuickTimer(id){
   if(!qt)return;
   cancelQtAudio(qt);
   qt.running=false;qt.finished=false;qt.remaining=qt.totalSec;qt.pausedRem=qt.totalSec;qt.flashUntil=0;qt._fireCounts={};
+  // If this was the last thing keeping audio/keepalive alive, let it go —
+  // otherwise the silent oscillator + wake lock keep burning battery (#17).
+  maybeStopKeepalive();
   renderQuickTimers();saveState('user')
 }
 

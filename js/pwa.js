@@ -65,6 +65,27 @@
       const msg = document.createElement('span');
       msg.textContent = '⚠ Offline cache incomplete — ' + failed.length + ' of ' + (ev.data.total || '?') + ' assets failed to load. App will work online; offline mode may be partial.';
       banner.appendChild(msg);
+      // Disclose which assets failed so users (and us debugging) can see what
+      // broke. Keep it collapsed by default to not dominate the banner.
+      const details = document.createElement('details');
+      details.className = 'sw-precache-banner-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Show failed assets (' + failed.length + ')';
+      details.appendChild(summary);
+      const list = document.createElement('ul');
+      list.className = 'sw-precache-banner-list';
+      failed.slice(0, 50).forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = typeof item === 'string' ? item : (item && item.url) || String(item);
+        list.appendChild(li);
+      });
+      if(failed.length > 50){
+        const li = document.createElement('li');
+        li.textContent = '…and ' + (failed.length - 50) + ' more';
+        list.appendChild(li);
+      }
+      details.appendChild(list);
+      banner.appendChild(details);
       const refresh = document.createElement('button');
       refresh.type = 'button';
       refresh.className = 'sw-precache-banner-btn';
@@ -80,12 +101,13 @@
     });
   }catch(_){ /* BroadcastChannel unavailable — fail silent */ }
 
-  // SW self-heal: when a newer worker reaches `installed` while an older one
-  // is still in control, prompt the new one to skipWaiting and reload exactly
-  // once on controllerchange. Without this, users keep seeing the previous
-  // version's cached asset list (e.g. v48 without model precaches) until they
-  // close every OdTauLai tab — and most users never do, so they hit the same
-  // "Could not load model" until they manually unregister the SW.
+  // SW self-heal: reload once when a new worker takes control. The reload
+  // path is intentionally passive here — app.js owns the "Reload to update /
+  // Later" banner and posts SKIP_WAITING when the user clicks Reload. This
+  // listener just guarantees the reload happens on controllerchange exactly
+  // once. We do NOT auto-postMessage SKIP_WAITING from pwa.js, because doing
+  // so races the banner and effectively defeats the user-facing "Later"
+  // button (#23 in the UX audit).
   let _swReloading = false;
   if ('serviceWorker' in navigator && !isFileProtocol) {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -94,35 +116,12 @@
       window.location.reload();
     });
   }
-  function _activateWaitingWorker(reg){
-    try{
-      if(reg && reg.waiting && navigator.serviceWorker.controller){
-        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-      }
-    }catch(_){}
-  }
-  function _wireUpdateFound(reg){
-    if(!reg) return;
-    try{
-      reg.addEventListener('updatefound', () => {
-        const installing = reg.installing;
-        if(!installing) return;
-        installing.addEventListener('statechange', () => {
-          if(installing.state === 'installed' && navigator.serviceWorker.controller){
-            try{ installing.postMessage({ type: 'SKIP_WAITING' }); }catch(_){}
-          }
-        });
-      });
-    }catch(_){}
-  }
 
   // Register external service worker when served via http(s) — preferred path.
   // Falls back to inline blob SW only if sw.js isn't reachable.
   if ('serviceWorker' in navigator && !isFileProtocol) {
     navigator.serviceWorker.register('sw.js', {scope: './'}).then((reg)=>{
       window._swRegistered = true;
-      _activateWaitingWorker(reg);
-      _wireUpdateFound(reg);
     }).catch((err)=>{
       console.warn('External sw.js failed, falling back to inline SW:', err);
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
@@ -157,8 +156,6 @@
         const swUrl = URL.createObjectURL(swBlob);
         navigator.serviceWorker.register(swUrl).then((reg)=>{
           window._swRegistered = true;
-          _activateWaitingWorker(reg);
-          _wireUpdateFound(reg);
         }).catch(()=>{ window._swRegistered = false; });
       } catch(e) { window._swRegistered = false; }
     });
@@ -261,15 +258,23 @@
   window.installPWA = function(){
     if (window._deferredInstallPrompt) {
       window._deferredInstallPrompt.prompt();
-      window._deferredInstallPrompt.userChoice.then(() => {
-        // Whatever the user chose, the prompt is consumed and can't be
-        // re-triggered until the browser re-fires beforeinstallprompt.
-        // Hiding the button keeps the affordance honest.
+      window._deferredInstallPrompt.userChoice.then((choice) => {
+        // The prompt is consumed either way and can't be re-triggered until
+        // the browser re-fires beforeinstallprompt. If the user accepted,
+        // the install is happening — hide the button. If they dismissed,
+        // keep the button visible so they can find install help (it falls
+        // through to the platform help panel branch below). #22 in UX audit.
         window._deferredInstallPrompt = null;
         const btn = document.getElementById('installBtn');
-        if (btn) btn.hidden = true;
         const help = document.getElementById('installHelpPanel');
-        if (help) help.hidden = true;
+        if (choice && choice.outcome === 'accepted') {
+          if (btn) btn.hidden = true;
+          if (help) help.hidden = true;
+        } else {
+          // Reveal the help panel so the user has a fallback path; the
+          // button itself remains visible for re-discovery.
+          if (typeof _syncInstallButtonForPlatform === 'function') _syncInstallButtonForPlatform();
+        }
       });
       return;
     }

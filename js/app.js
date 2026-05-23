@@ -73,7 +73,7 @@ function updateOnlineStatus(){
     el.hidden = true;
   } else {
     el.hidden = false;
-    el.textContent = '● Offline — tasks work, sync paused';
+    el.textContent = '● Offline — tasks work; sync and calendar refresh paused until you reconnect';
   }
 }
 window.addEventListener('online', updateOnlineStatus);
@@ -106,8 +106,22 @@ if ('serviceWorker' in navigator && !window.location.protocol.startsWith('file')
       const sparkIc = (window.icon && window.icon('sparkles', {size:14})) || '';
       const msg = document.createElement('span');msg.className='update-banner-msg';
       if(sparkIc){const tmp=document.createElement('span');tmp.innerHTML=sparkIc;while(tmp.firstChild)msg.appendChild(tmp.firstChild)}
-      const txt=document.createElement('span');txt.textContent='New version available';msg.appendChild(txt);
+      // Mention the version the user is on now so the banner isn't "new version
+      // available" with zero context (#24 in UX audit). The changelog link
+      // points at the bundled CHANGELOG.md so users can see what's coming
+      // before clicking Reload.
+      const currentVer = (window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.version) || '';
+      const txt=document.createElement('span');
+      txt.textContent = currentVer ? ('New version available (you have ' + currentVer + ')') : 'New version available';
+      msg.appendChild(txt);
       banner.appendChild(msg);
+      const changelogLink=document.createElement('a');
+      changelogLink.href='./CHANGELOG.md';
+      changelogLink.target='_blank';
+      changelogLink.rel='noopener';
+      changelogLink.className='update-changelog';
+      changelogLink.textContent="What's new?";
+      banner.appendChild(changelogLink);
       const reloadBtn=document.createElement('button');reloadBtn.textContent='Reload to update';reloadBtn.onclick=function(){applyUpdate()};banner.appendChild(reloadBtn);
       const laterBtn=document.createElement('button');laterBtn.className='update-dismiss';laterBtn.textContent='Later';laterBtn.onclick=function(){dismissUpdate()};banner.appendChild(laterBtn);
       document.body.appendChild(banner);
@@ -811,8 +825,24 @@ function _bootIntelLoad(){
   const txt = document.getElementById('intelProgressTxt');
   const retry = document.getElementById('intelRetryBtn');
   if(w) w.hidden = false;
+  // Stall watchdog: if no progress event for 45s, surface a "still working"
+  // hint with a Retry. The model legitimately takes 30s+ on slow links so
+  // we don't auto-abort — we just stop pretending the chip's "…" is enough
+  // (#2 in UX audit).
+  let _lastProgressAt = Date.now();
+  let _stallNotified = false;
+  const _stallId = setInterval(() => {
+    if(Date.now() - _lastProgressAt > 45_000 && !_stallNotified){
+      _stallNotified = true;
+      if(txt) txt.textContent = 'Still working — slow network or captive portal?';
+      const retryBtn = document.getElementById('intelRetryBtn');
+      if(retryBtn) retryBtn.hidden = false;
+    }
+  }, 5000);
+  const _markProgress = () => { _lastProgressAt = Date.now(); _stallNotified = false; };
   const onProgress = (typeof _makeProgressAggregator === 'function')
     ? _makeProgressAggregator((v, ev) => {
+        _markProgress();
         if(bar) bar.style.width = v + '%';
         if(pct) pct.textContent = v + '%';
         const status = ev && ev.status ? String(ev.status) : '';
@@ -821,12 +851,14 @@ function _bootIntelLoad(){
         if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('loading', v + '%');
       })
     : (p => { /* fallback (shouldn't happen) */
+        _markProgress();
         const v = p && p.progress != null ? Math.round(p.progress) : 0;
         if(bar) bar.style.width = v + '%';
         if(pct) pct.textContent = v + '%';
         if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('loading', v + '%');
       });
   intelLoad(onProgress).then(async () => {
+    if(_stallId) clearInterval(_stallId);
     if(w) w.hidden = true;
     if(retry) retry.hidden = true;
     if(typeof embedStore !== 'undefined' && embedStore.migrateEmbedRuntimeIfNeeded){
@@ -862,6 +894,7 @@ function _bootIntelLoad(){
     if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
     if(typeof scheduleIntelDupRefresh === 'function') scheduleIntelDupRefresh();
   }).catch(err => {
+    if(_stallId) clearInterval(_stallId);
     // Previously this handler discarded `err`, so every distinct failure
     // (stuck SW, 404 on the .onnx, WASM init, CORS) collapsed into the same
     // "Load failed" string with no diagnostic. Surface the real message so

@@ -29,6 +29,19 @@ function renderGoalList(){
 }
 
 // ========== CLICKUP-STYLE TASKS ==========
+// Safe stopPropagation helper. Functions like removeTask/toggleStar are
+// invoked both from row-click handlers (where stopPropagation matters so the
+// row-click → openTaskDetail doesn't fire) AND from the command palette /
+// keyboard shortcuts (where there is no DOM event to stop). The legacy
+// `event && event.stopPropagation()` pattern relied on the browser-global
+// `event` which is unreliable across contexts. Each row handler now takes the
+// dispatcher-passed event as its last argument; this helper accepts an event
+// or undefined and stops propagation only when called from a real DOM click.
+function _stopEvt(ev){
+  if(ev && typeof ev.stopPropagation === 'function'){ ev.stopPropagation(); return; }
+  // Fallback for older call sites that still rely on the implicit global.
+  try{ if(typeof event !== 'undefined' && event && typeof event.stopPropagation === 'function') event.stopPropagation(); }catch(_){}
+}
 // Status definitions (colors match CSS)
 const STATUSES={
   open:{label:'Open',cls:'status-open'},
@@ -96,10 +109,15 @@ function computeImpactScore(t, ctx){
 // Per-render cache so sort + filter + badge all agree on the same top set.
 let _paretoTopSet = new Set();
 let _paretoScoreMap = new Map();
+// Disclosure metadata for the Impact smart view — exposes whether the 20-cap
+// kicked in so the UI can hint "Showing top 20 of N" instead of silently
+// chopping the list (#24 in UX audit).
+let _paretoMeta = { capped: false, theoretical: 0, shown: 0 };
 
 function refreshParetoTopSet(){
   _paretoTopSet = new Set();
   _paretoScoreMap = new Map();
+  _paretoMeta = { capped: false, theoretical: 0, shown: 0 };
   const today = todayISO();
   // Build blockersMap: id -> count of active tasks that list `id` in blockedBy
   const blockersMap = new Map();
@@ -118,10 +136,15 @@ function refreshParetoTopSet(){
   }
   if(pool.length === 0) return;
   pool.sort((a,b)=>(_paretoScoreMap.get(b.id)||0)-(_paretoScoreMap.get(a.id)||0));
-  // Top 20% (min 1, max 20 so the chip stays meaningful on huge lists)
-  const cut = Math.min(20, Math.max(1, Math.ceil(pool.length*0.2)));
+  // Top 20% with absolute floor 1, soft cap 20 — chip needs to stay meaningful
+  // on huge lists. We surface theoretical vs shown so the UI can tell the user
+  // when the cap is hiding rows.
+  const theoretical = Math.max(1, Math.ceil(pool.length*0.2));
+  const cut = Math.min(20, theoretical);
+  _paretoMeta = { capped: theoretical > cut, theoretical, shown: cut };
   for(let i=0; i<cut; i++) _paretoTopSet.add(pool[i].id);
 }
+if(typeof window !== 'undefined') window.getParetoMeta = () => Object.assign({}, _paretoMeta);
 
 function isParetoTop(id){return _paretoTopSet.has(id)}
 
@@ -191,21 +214,43 @@ function parseQuickAdd(raw){
   // Recurrence ~daily ~weekdays ~weekly ~monthly
   const rcMatch=text.match(/\s~(daily|weekdays|weekly|monthly)\b/i);
   if(rcMatch){props.recur=rcMatch[1].toLowerCase();text=text.replace(rcMatch[0],'')}
-  // Due date: today, tomorrow, mon-sun, next week
+  // Bare recurrence phrases (no ~ sigil). The empty-state copy and quick-add
+  // syntax hints promise these "just work" — wire them so the promise isn't
+  // a lie (#1 in the UX audit). These run BEFORE the bare day-name strip so
+  // "every weekday" doesn't get half-swallowed by the day branch.
+  if(!props.recur){
+    const bareRecur=[
+      [/\bevery\s+weekday(s)?\b/i,'weekdays'],
+      [/\bevery\s+day\b/i,'daily'],
+      [/\bevery\s+week\b/i,'weekly'],
+      [/\bevery\s+month\b/i,'monthly'],
+      [/(^|\s)weekdays\b/i,'weekdays'],
+      [/(^|\s)daily\b/i,'daily'],
+      [/(^|\s)weekly\b/i,'weekly'],
+      [/(^|\s)monthly\b/i,'monthly'],
+    ];
+    for(const [re,kind] of bareRecur){
+      const mm=text.match(re);
+      if(mm){props.recur=kind;text=text.replace(mm[0],mm[0].startsWith(' ')?' ':'');break}
+    }
+  }
+  // Due date: today, tomorrow, mon-sun, next week. Possessive forms like
+  // "tomorrow's review" and "monday's meeting" must NOT be parsed as dates —
+  // the (?!['’]) lookahead excludes them (#2 in UX audit).
   const days={sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6};
   const todayISOs=todayISO();
   const lower=' '+text.toLowerCase()+' ';
-  if(/\btoday\b/i.test(lower)){props.dueDate=todayISOs;text=text.replace(/\btoday\b/i,'')}
-  else if(/\btomorrow\b|\btmrw\b/i.test(lower)){
+  if(/\btoday\b(?!['’])/i.test(lower)){props.dueDate=todayISOs;text=text.replace(/\btoday\b(?!['’])/i,'')}
+  else if(/\btomorrow\b(?!['’])|\btmrw\b(?!['’])/i.test(lower)){
     const d=new Date();d.setDate(d.getDate()+1);
     props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    text=text.replace(/\btomorrow\b|\btmrw\b/i,'');
+    text=text.replace(/\btomorrow\b(?!['’])|\btmrw\b(?!['’])/i,'');
   }else if(/\bnext week\b/i.test(lower)){
     const d=new Date();d.setDate(d.getDate()+7);
     props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     text=text.replace(/\bnext week\b/i,'');
   }else{
-    const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b/i);
+    const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
     if(dayMatch){
       const target=days[dayMatch[1].toLowerCase().slice(0,3)];
       const d=new Date();const today=d.getDay();
@@ -1171,8 +1216,8 @@ function fmtDue(dateStr) {
 }
 
 // Subtask UI (nested)
-function addSubtaskPrompt(parentId){
-  event&&event.stopPropagation();
+function addSubtaskPrompt(parentId, ev){
+  _stopEvt(ev);
   if(subtaskPromptParent!=null&&subtaskPromptParent!==parentId) _subtaskFormDraftText='';
   subtaskPromptParent=parentId;
   _subtaskFormDraftParent=parentId;
@@ -1209,11 +1254,11 @@ function cancelSubtaskPrompt(){
   _subtaskFormDraftParent=null;
   renderTaskList();
 }
-function toggleCollapse(taskId){event&&event.stopPropagation();const t=findTask(taskId);if(!t)return;t.collapsed=!t.collapsed;renderTaskList();saveState('user')}
+function toggleCollapse(taskId, ev){_stopEvt(ev);const t=findTask(taskId);if(!t)return;t.collapsed=!t.collapsed;renderTaskList();saveState('user')}
 
 // Time tracking
-function toggleTask(id){
-  event&&event.stopPropagation();
+function toggleTask(id, ev){
+  _stopEvt(ev);
   if(activeTaskId===id){const t=findTask(id);if(t&&taskStartedAt){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}activeTaskId=null}
   else{if(activeTaskId&&taskStartedAt){const ot=findTask(activeTaskId);if(ot)ot.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000)}activeTaskId=id;taskStartedAt=Date.now();
     // Auto-set status to In Progress when starting time
@@ -1223,8 +1268,8 @@ function toggleTask(id){
   if(typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
 }
 
-async function removeTask(id){
-  event&&event.stopPropagation();
+async function removeTask(id, ev){
+  _stopEvt(ev);
   const task=findTask(id);if(!task)return;
   // If viewing archive, this is a permanent delete
   if(task.archived||smartView==='archived'){
@@ -1250,6 +1295,10 @@ async function removeTask(id){
     const descendants=getTaskDescendantIds(id);
     if(descendants.length>0&&!(await showAppConfirm('Archive "'+task.name+'" and '+descendants.length+' subtask'+(descendants.length!==1?'s':'')+'?')))return;
     const toArchive=[id,...descendants];
+    // Remember whether the archive stopped an active timer — undo needs to
+    // restore the link (#8 in UX audit). The accumulated burst is folded
+    // into totalSec before clearing, so it's preserved across the undo.
+    const _activeIdBeforeArchive = toArchive.includes(activeTaskId) ? activeTaskId : null;
     if(toArchive.includes(activeTaskId)){
       if(taskStartedAt){const t=findTask(activeTaskId);if(t)t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000)}
       activeTaskId=null;taskStartedAt=null;
@@ -1257,17 +1306,26 @@ async function removeTask(id){
     }
     toArchive.forEach(tid=>{const t=findTask(tid);if(t)t.archived=true});
     // Undo affordance for accidental misfires (the × button is small).
-    // Skip the toast when descendants forced a confirm dialog — the user
-    // already deliberated. Skip in archive view too (different context).
-    if(typeof showActionToast==='function' && descendants.length===0 && smartView!=='archived'){
+    // Even when descendants forced a confirm, surface undo — confirm fatigue
+    // plus accidental Enter is real (#9 in UX audit).
+    if(typeof showActionToast==='function' && smartView!=='archived'){
       const _undoIds=toArchive.slice();
       const _name=task.name;
-      showActionToast('Task archived', 'Undo', () => {
+      const _label = descendants.length > 0
+        ? `Archived "${task.name}" + ${descendants.length} subtask${descendants.length===1?'':'s'}`
+        : 'Task archived';
+      showActionToast(_label, 'Undo', () => {
         _undoIds.forEach(uid => {
           const t = findTask(uid);
           if(t) t.archived = false;
         });
+        if(_activeIdBeforeArchive != null && activeTaskId == null){
+          activeTaskId = _activeIdBeforeArchive;
+          taskStartedAt = Date.now();
+          if(typeof window!=='undefined' && typeof window._updateActiveTaskTickSchedule==='function') window._updateActiveTaskTickSchedule();
+        }
         renderTaskList();
+        renderBanner();
         saveState('user');
         if(typeof announce === 'function') announce('Restored: ' + _name);
       }, 5000);
@@ -1276,8 +1334,8 @@ async function removeTask(id){
   renderTaskList();renderBanner();saveState('user')
 }
 
-function restoreTask(id){
-  event&&event.stopPropagation();
+function restoreTask(id, ev){
+  _stopEvt(ev);
   const t=findTask(id);if(!t)return;
   t.archived=false;
   // Restore any descendants too
@@ -1289,8 +1347,8 @@ function restoreTask(id){
  * Snooze (defer) a task: hide it from main views until the given date.
  * Distinct from rescheduling — does NOT touch dueDate or remindAt.
  */
-function snoozeTask(id, untilISO){
-  if(typeof event!=='undefined' && event && event.stopPropagation) event.stopPropagation();
+function snoozeTask(id, untilISO, ev){
+  _stopEvt(ev);
   const t=findTask(id); if(!t) return;
   if(typeof untilISO !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(untilISO)) return;
   if(untilISO <= todayISO()) { t.hiddenUntil=null; }
@@ -1311,8 +1369,8 @@ function snoozeTaskForDays(id, days){
   snoozeTask(id, iso);
 }
 
-function unsnoozeTask(id){
-  if(typeof event!=='undefined' && event && event.stopPropagation) event.stopPropagation();
+function unsnoozeTask(id, ev){
+  _stopEvt(ev);
   const t=findTask(id); if(!t) return;
   t.hiddenUntil=null;
   t.lastModified=Date.now();
@@ -1390,8 +1448,8 @@ function toggleSmartViews(){
 window.toggleSmartViews = toggleSmartViews;
 
 // Star toggle
-function toggleStar(id){
-  event&&event.stopPropagation();
+function toggleStar(id, ev){
+  _stopEvt(ev);
   const t=findTask(id);if(!t)return;
   t.starred=!t.starred;
   // Star toggles can shift this card to/from the top of the list — animate.
@@ -1664,10 +1722,10 @@ function _restoreCascade(snapshots){
 }
 
 // Status/Priority quick-change
-function cycleStatus(id){
-  event&&event.stopPropagation();
+function cycleStatus(id, ev){
+  _stopEvt(ev);
   const t=findTask(id);if(!t)return;
-  const backup=JSON.parse(JSON.stringify(t));
+  const _wasActiveTimerTask = (activeTaskId === id);
   const idx=STATUS_ORDER.indexOf(t.status||'open');
   const next=STATUS_ORDER[(idx+1)%STATUS_ORDER.length];
   let cascade = [];
@@ -1676,6 +1734,7 @@ function cycleStatus(id){
     t.status=next;
     if(t.status==='done'){
       t.completedAt=stampCompletion();
+      if(activeTaskId===id){toggleTask(id)}
       // Mark all open children done too, then bubble up: if this completes
       // the last sibling, the parent auto-completes.
       cascade = cascade.concat(_cascadeOnDone(id), _maybeAutoCompleteParent(id));
@@ -1683,26 +1742,43 @@ function cycleStatus(id){
       t.completedAt=null;
     }
   }
+  // Snapshot AFTER mutations so totalSec reflects the timer-folded state.
+  const backup=JSON.parse(JSON.stringify(t));
   // Status cycle may move this card under a sticky group header — FLIP it.
   const list=gid('taskList');
   if(list&&typeof flipReorder==='function')flipReorder(list,()=>renderTaskList());
   else renderTaskList();
   saveState('user');
   if(typeof showActionToast==='function'){
-    const cascadeNote = cascade.length ? ' (+' + cascade.length + ' linked)' : '';
+    let cascadeNote = '';
+    if(cascade.length){
+      const names = cascade.map(c => { const x = findTask(c.id); return x && x.name ? x.name : null; }).filter(Boolean);
+      if(names.length === 1) cascadeNote = ' (+ "' + names[0] + '")';
+      else if(names.length === 2) cascadeNote = ' (+ "' + names[0] + '" and "' + names[1] + '")';
+      else if(names.length > 2) cascadeNote = ' (+ "' + names[0] + '", "' + names[1] + '" and ' + (names.length - 2) + ' more)';
+      else cascadeNote = ' (+' + cascade.length + ' linked)';
+    }
     showActionToast('Status: '+STATUSES[t.status].label + cascadeNote, 'Undo', ()=>{
       const u=findTask(id);
       if(u){Object.assign(u,backup);}
       _restoreCascade(cascade);
-      renderTaskList();saveState('user');
+      if(_wasActiveTimerTask && activeTaskId == null){
+        activeTaskId = id;
+        taskStartedAt = Date.now();
+        if(typeof window!=='undefined' && typeof window._updateActiveTaskTickSchedule==='function') window._updateActiveTaskTickSchedule();
+      }
+      renderTaskList();renderBanner();saveState('user');
     }, 4000);
   }
 }
 
-function toggleTaskDoneQuick(id){
-  event&&event.stopPropagation();
+function toggleTaskDoneQuick(id, ev){
+  _stopEvt(ev);
   const t=findTask(id);if(!t)return;
-  const backup=JSON.parse(JSON.stringify(t));
+  // Snapshot active-timer state BEFORE we mutate — completing a task that
+  // owns the active timer stops the timer, and undo needs to restore both
+  // the task fields AND the timer link (#6 in UX audit).
+  const _wasActiveTimerTask = (activeTaskId === id);
   let cascade = [];
   if(t.status==='done'){t.status='open';t.completedAt=null}
   else{
@@ -1730,14 +1806,36 @@ function toggleTaskDoneQuick(id){
       }
     },10);
   }
+  // Snapshot AFTER all mutations so the backup reflects totalSec that
+  // toggleTask just folded in. Undo rolls back to this — preserving the
+  // accrued seconds rather than losing them.
+  const backup = JSON.parse(JSON.stringify(t));
   renderTaskList();saveState('user');
   if(typeof showActionToast==='function'){
-    const cascadeNote = cascade.length ? ' (+' + cascade.length + ' linked)' : '';
+    // Include the first cascade task name so the user sees *what* got
+    // auto-completed alongside the click. With three or more, truncate to
+    // "first, second, and N more". Pure count was misleading (#7 UX audit).
+    let cascadeNote = '';
+    if(cascade.length){
+      const names = cascade.map(c => { const x = findTask(c.id); return x && x.name ? x.name : null; }).filter(Boolean);
+      if(names.length === 1) cascadeNote = ' (+ "' + names[0] + '")';
+      else if(names.length === 2) cascadeNote = ' (+ "' + names[0] + '" and "' + names[1] + '")';
+      else if(names.length > 2) cascadeNote = ' (+ "' + names[0] + '", "' + names[1] + '" and ' + (names.length - 2) + ' more)';
+      else cascadeNote = ' (+' + cascade.length + ' linked)';
+    }
     showActionToast((t.status==='done'?'Task done':'Task reopened') + cascadeNote, 'Undo', ()=>{
       const u=findTask(id);
       if(u){Object.assign(u,backup);}
       _restoreCascade(cascade);
-      renderTaskList();saveState('user');
+      // Reattach the active timer if the user was timing this task when they
+      // accidentally marked it done. taskStartedAt resets to now so the
+      // already-folded-in seconds are preserved instead of double-counted.
+      if(_wasActiveTimerTask && activeTaskId == null){
+        activeTaskId = id;
+        taskStartedAt = Date.now();
+        if(typeof window!=='undefined' && typeof window._updateActiveTaskTickSchedule==='function') window._updateActiveTaskTickSchedule();
+      }
+      renderTaskList();renderBanner();saveState('user');
     }, 4000);
   }
 }
@@ -1782,8 +1880,8 @@ async function addList(){
   if(typeof renderListsManager==='function') renderListsManager();
   if(typeof renderAIPanel==='function') renderAIPanel();
 }
-async function editList(id){
-  event&&event.stopPropagation();
+async function editList(id, ev){
+  _stopEvt(ev);
   const l=lists.find(x=>x.id===id);if(!l)return;
   const name=await showAppPrompt('List name:',l.name);
   if(name===null)return;
@@ -1798,9 +1896,13 @@ async function editList(id){
   if(typeof renderListsManager==='function') renderListsManager();
   if(typeof renderAIPanel==='function') renderAIPanel();
 }
-async function removeList(id){
-  event&&event.stopPropagation();
-  if(lists.length<=1){alert('You need at least one list.');return}
+async function removeList(id, ev){
+  _stopEvt(ev);
+  if(lists.length<=1){
+    if(typeof showExportToast==='function') showExportToast('You need at least one list.');
+    else alert('You need at least one list.');
+    return;
+  }
   const list=lists.find(l=>l.id===id);if(!list)return;
   const taskCount=tasks.filter(t=>t.listId===id).length;
   if(!(await showAppConfirm('Delete list "'+list.name+'"?'+(taskCount>0?' '+taskCount+' task(s) will be moved to the first remaining list.':''))))return;
@@ -1990,36 +2092,45 @@ function parseTaskSearchQuery(raw){
   if(typeof raw !== 'string') return { text: '', ops };
   // Match `key:value` (quoted optional) or shorthand prefixes.
   const opRe = /(\w+):("[^"]+"|'[^']+'|\S+)|#(\S+)|@(\S+)/g;
-  let leftover = raw;
+  // Build a list of [start, end] ranges to splice out of the source. The old
+  // implementation used String.replace(m[0], '') which always replaced the
+  // FIRST occurrence — if two operators shared a prefix (or a literal token
+  // matched another operator's value as substring) the wrong text got
+  // removed, corrupting both the leftover and the operator list (#21 in UX
+  // audit). Splicing by index avoids the issue entirely.
+  const cuts = [];
   let m;
   while((m = opRe.exec(raw)) !== null){
+    let consumed = false;
     if(m[3]){
-      // #tag shorthand
       ops.tag.push(m[3].toLowerCase());
-      leftover = leftover.replace(m[0], '');
-      continue;
-    }
-    if(m[4]){
-      // @priority shorthand
+      consumed = true;
+    } else if(m[4]){
       const v = m[4].toLowerCase();
-      if(['urgent','high','normal','low','none'].includes(v)) ops.priority.push(v);
-      leftover = leftover.replace(m[0], '');
-      continue;
+      if(['urgent','high','normal','low','none'].includes(v)){ ops.priority.push(v); consumed = true; }
+      else consumed = true; // strip @whatever even if it isn't a known priority
+    } else {
+      const key = m[1].toLowerCase();
+      let val = m[2];
+      if((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))){
+        val = val.slice(1, -1);
+      }
+      val = val.toLowerCase();
+      if(key === 'tag'){ ops.tag.push(val); consumed = true; }
+      else if(key === 'list'){ ops.list.push(val); consumed = true; }
+      else if(key === 'is'){ ops.is.push(val); consumed = true; }
+      else if(key === 'priority'){ ops.priority.push(val); consumed = true; }
+      else if(key === 'due'){ ops.due.push(val); consumed = true; }
+      else if(key === 'status'){ ops.status.push(val); consumed = true; }
+      // else: unknown operator → leave it in the leftover free-text query.
     }
-    const key = m[1].toLowerCase();
-    let val = m[2];
-    if((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))){
-      val = val.slice(1, -1);
-    }
-    val = val.toLowerCase();
-    if(key === 'tag'      ) ops.tag.push(val);
-    else if(key === 'list'    ) ops.list.push(val);
-    else if(key === 'is'      ) ops.is.push(val);
-    else if(key === 'priority') ops.priority.push(val);
-    else if(key === 'due'     ) ops.due.push(val);
-    else if(key === 'status'  ) ops.status.push(val);
-    else continue; // unknown operator — leave the chars in leftover
-    leftover = leftover.replace(m[0], '');
+    if(consumed) cuts.push([m.index, opRe.lastIndex]);
+  }
+  // Splice cuts out in reverse so earlier indices stay valid.
+  let leftover = raw;
+  for(let i = cuts.length - 1; i >= 0; i--){
+    const [s, e] = cuts[i];
+    leftover = leftover.slice(0, s) + leftover.slice(e);
   }
   const text = leftover.replace(/\s+/g, ' ').trim().toLowerCase();
   return { text, ops };
@@ -2309,9 +2420,13 @@ function matchesFilters(t){
   if(!showAllLists&&typeof cfg==='object'&&cfg&&cfg.focusListMode&&activeListId&&t.listId!==activeListId)return false;
   // Smart view filters
   const today=todayISO();
-  // hiddenUntil (snooze): hide from EVERY main view except 'snoozed' and 'archived'.
-  // Stays visible in completed/done if user already finished it.
-  if(t.hiddenUntil && t.hiddenUntil>today && smartView!=='snoozed' && smartView!=='completed' && smartView!=='archived') return false;
+  // hiddenUntil (snooze): hide from EVERY main view except 'snoozed' and
+  // 'archived', UNLESS the user explicitly searched is:snoozed — that should
+  // surface snoozed tasks regardless of the active smart view (#22 in UX
+  // audit). Same for is:hidden (alias) and is:any (kept for symmetry).
+  const opIsList = (taskFilters && taskFilters.ops && Array.isArray(taskFilters.ops.is)) ? taskFilters.ops.is : [];
+  const _snoozedOverride = opIsList.includes('snoozed') || opIsList.includes('hidden');
+  if(t.hiddenUntil && t.hiddenUntil>today && smartView!=='snoozed' && smartView!=='completed' && smartView!=='archived' && !_snoozedOverride) return false;
   if(smartView==='today'){if(t.dueDate!==today||t.status==='done')return false}
   else if(smartView==='week'){
     if(!t.dueDate||t.status==='done')return false;
@@ -2610,6 +2725,16 @@ function renderSmartViewCounts(){
   set('svcUnscheduled',visibleNow.filter(t=>!t.dueDate).length);
   set('svcStarred',visibleNow.filter(t=>t.starred).length);
   set('svcImpact',visibleNow.filter(t=>_paretoTopSet.has(t.id)&&inList(t)).length);
+  // Surface the cap on the Impact chip's tooltip so a power user with 200
+  // tasks knows the chip is showing top-20 out of a theoretical 40 (#24).
+  const impactChip = document.querySelector('.sv-chip[data-view="impact"]');
+  if(impactChip){
+    if(_paretoMeta && _paretoMeta.capped){
+      impactChip.title = `Top ~20% by leverage — capped at ${_paretoMeta.shown} of ${_paretoMeta.theoretical} candidates`;
+    } else {
+      impactChip.title = 'Top ~20% by leverage — derived from priority, due, effort, unblocks, values, star';
+    }
+  }
   set('svcHabits',visibleNow.filter(t=>t.recur&&inList(t)).length);
   set('svcInbox',visibleNow.filter(t=>!t.listId&&!t.category&&!t.dueDate&&!(Array.isArray(t.tags)&&t.tags.length)).length);
   set('svcWaiting',visibleNow.filter(t=>t.type==='waiting').length);

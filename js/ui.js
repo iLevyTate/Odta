@@ -478,6 +478,20 @@ document.addEventListener('keydown',(e)=>{
   }
 });
 
+// Global shortcut: Shift+D — toggle theme. Advertised on the theme button via
+// aria-keyshortcuts; wired here so the affordance isn't a lie.
+document.addEventListener('keydown',(e)=>{
+  if(!e.shiftKey) return;
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key !== 'D' && e.key !== 'd') return;
+  if(_blockingOverlaysForCmdK && _blockingOverlaysForCmdK()) return;
+  const active = document.activeElement;
+  const tag = active ? active.tagName.toLowerCase() : '';
+  if(tag==='input' || tag==='textarea' || tag==='select' || (active && active.isContentEditable)) return;
+  e.preventDefault();
+  if(typeof toggleTheme === 'function') toggleTheme();
+});
+
 // Global shortcut: "?" (Shift+/) when not in a field → show the keyboard
 // shortcuts cheatsheet. Discoverability: today shortcuts are scattered
 // across the codebase and there's no one place to learn them.
@@ -983,7 +997,7 @@ function renderTaskItem(t,depth){
   const chevron=kids
     ?'<button class="task-chevron'+(t.collapsed?' collapsed':'')+'" data-action="toggleCollapse" data-arg="'+t.id+'" title="'+(t.collapsed?'Expand':'Collapse')+'" aria-label="'+(t.collapsed?'Expand subtasks':'Collapse subtasks')+'" aria-expanded="'+(t.collapsed?'false':'true')+'">▸</button>'
     :'<span class="task-chevron-spacer"></span>';
-  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" title="Mark done" aria-label="Mark task done">'+(isDone?'✓':'')+'</button>';
+  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'" aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
 
   let signalChips='';
   if(t.dueDate&&!isDone){
@@ -1003,8 +1017,12 @@ function renderTaskItem(t,depth){
   }
 
   const status=STATUSES[t.status||'open'];
-  const showStatusOnHover=(t.status&&t.status!=='open')?'':'hidden-status';
-  const statusBadge='<span class="status-badge '+status.cls+' '+showStatusOnHover+'" data-action="cycleStatus" data-args="['+t.id+']" title="Click to cycle status">'+status.label+'</span>';
+  // Status badge is interactive (click/Enter cycles through statuses). It
+  // was previously a plain <span> with no tabindex/role and was display:none
+  // for the "open" state — keyboard users couldn't reach it AT ALL and even
+  // mouse users had to know to hover (#14 in UX audit). Now it's a <button>
+  // visible across all states and routed through the keyboard delegation.
+  const statusBadge='<button type="button" class="status-badge '+status.cls+'" data-action="cycleStatus" data-args="['+t.id+']" title="Cycle status (current: '+esc(status.label)+')" aria-label="Status: '+esc(status.label)+'. Activate to cycle to next status.">'+status.label+'</button>';
   const tagsVisible=(t.tags||[]).slice(0,3).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
   const descPrev=(t.description&&t.description.length>0)?'<span class="task-desc-inline">'+esc(t.description.slice(0,50))+(t.description.length>50?'…':'')+'</span>':'';
 
@@ -1263,16 +1281,32 @@ function openTaskDetail(id){
   // List selector
   const listSel=gid('mdList');listSel.innerHTML='';
   lists.forEach(l=>{const opt=document.createElement('option');opt.value=l.id;opt.textContent=l.name;if((t.listId||lists[0].id)===l.id)opt.selected=true;listSel.appendChild(opt)});
+  // ARIA chip helpers — without role/aria-checked or aria-pressed, screen
+  // readers can't tell selected state since visual selection is color-only
+  // (#13 in UX audit). Radio-group chips (single-select) use role=radio +
+  // aria-checked; toggle chips (Effort, Energy — clicking active deselects)
+  // use aria-pressed.
+  const _setRadioGroupSelection = (container, btn) => {
+    [...container.children].forEach(c => { c.classList.remove('active'); if(c.setAttribute) c.setAttribute('aria-checked', 'false'); });
+    btn.classList.add('active'); if(btn.setAttribute) btn.setAttribute('aria-checked', 'true');
+  };
+  const _setPressedGroupSelection = (container, btn, isActive) => {
+    [...container.children].forEach(c => { c.classList.remove('active'); if(c.setAttribute) c.setAttribute('aria-pressed', 'false'); });
+    if(isActive){ btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); }
+  };
   // Status chips
   const sChips=gid('mdStatusChips');sChips.innerHTML='';
+  sChips.setAttribute('role','radiogroup');
   STATUS_ORDER.forEach(st=>{
-    const b=document.createElement('button');b.className='mfield-chip-btn'+((t.status||'open')===st?' active':'');
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.status||'open')===st?' active':'');
+    b.setAttribute('role','radio');
+    b.setAttribute('aria-checked', (t.status||'open')===st ? 'true' : 'false');
     b.textContent=STATUSES[st].label;
     b.onclick=function(){
       if(st==='done'&&t.recur&&typeof completeHabitCycle==='function'){
         completeHabitCycle(t);
         gid('mdCheckbox').classList.remove('checked');gid('mdCheckbox').textContent='';
-        [...sChips.children].forEach((c,i)=>c.classList.toggle('active',STATUS_ORDER[i]==='open'));
+        [...sChips.children].forEach((c,i)=>{ const active=(STATUS_ORDER[i]==='open'); c.classList.toggle('active',active); c.setAttribute('aria-checked', active?'true':'false'); });
         renderMdHabitLog(t);
         renderMdSessions(t);
         gid('mdTracked').textContent=fmtHMS(getRolledUpTime(t.id))+' · '+getRolledUpSessions(t.id)+' sessions';
@@ -1281,7 +1315,7 @@ function openTaskDetail(id){
         if(st==='done' && !t.completedAt && typeof stampCompletion === 'function') t.completedAt = stampCompletion();
         if(st!=='done') t.completedAt = null;
         gid('mdCheckbox').classList.toggle('checked',st==='done');gid('mdCheckbox').textContent=st==='done'?'✓':'';
-        [...sChips.children].forEach(c=>c.classList.remove('active'));b.classList.add('active');
+        _setRadioGroupSelection(sChips, b);
       }
       _commitChipChange(t);
     };
@@ -1289,43 +1323,62 @@ function openTaskDetail(id){
   });
   // Priority chips
   const pChips=gid('mdPriorityChips');pChips.innerHTML='';
+  pChips.setAttribute('role','radiogroup');
   ['urgent','high','normal','low','none'].forEach(pr=>{
-    const b=document.createElement('button');b.className='mfield-chip-btn'+((t.priority||'none')===pr?' active':'');
-    b.style.color=pr!=='none'?({urgent:'#c0392b',high:'#e67e22',normal:'#3d8bcc',low:'#7f8c8d'}[pr]):'';
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.priority||'none')===pr?' active':'');
+    b.setAttribute('role','radio');
+    b.setAttribute('aria-checked', (t.priority||'none')===pr ? 'true' : 'false');
+    // Use a CSS-token-driven color so "low" hits AA contrast in both themes —
+    // hard-coded #7f8c8d was ~3.6:1 on the dark modal bg (#22 in UX audit).
+    b.style.color=pr!=='none'?({urgent:'var(--prio-urgent, #ff6b6b)',high:'var(--prio-high, #ffb86c)',normal:'var(--prio-normal, #6aa8ff)',low:'var(--prio-low, #b3c2d6)'}[pr]):'';
     b.textContent=PRIORITIES[pr].label;
-    b.onclick=function(){t.priority=pr;[...pChips.children].forEach(c=>c.classList.remove('active'));b.classList.add('active');_commitChipChange(t)};
+    b.onclick=function(){t.priority=pr;_setRadioGroupSelection(pChips, b);_commitChipChange(t)};
     pChips.appendChild(b)
   });
-  // Effort chips
+  // Effort chips (toggle — clicking the active chip deselects)
   const eChips=gid('mdEffortChips');eChips.innerHTML='';
+  eChips.setAttribute('role','group');
   [['xs','XS'],['s','S'],['m','M'],['l','L'],['xl','XL']].forEach(([key,lbl])=>{
-    const b=document.createElement('button');b.className='mfield-chip-btn'+((t.effort||null)===key?' active':'');
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.effort||null)===key?' active':'');
+    b.setAttribute('aria-pressed', (t.effort||null)===key ? 'true' : 'false');
     b.textContent=lbl;b.title={xs:'Extra small (~15min)',s:'Small (~1hr)',m:'Medium (~half day)',l:'Large (~full day)',xl:'Extra large (multi-day)'}[key];
-    b.onclick=function(){t.effort=t.effort===key?null:key;[...eChips.children].forEach(c=>c.classList.remove('active'));if(t.effort===key||!t.effort){}else b.classList.add('active');renderEffortChips(t,eChips);_commitChipChange(t)};
+    b.onclick=function(){
+      t.effort=t.effort===key?null:key;
+      _setPressedGroupSelection(eChips, b, t.effort===key);
+      renderEffortChips(t,eChips);_commitChipChange(t)
+    };
     eChips.appendChild(b)
   });
-  // Energy chips
+  // Energy chips (toggle)
   const enChips=gid('mdEnergyChips');enChips.innerHTML='';
+  enChips.setAttribute('role','group');
   [['high','High energy'],['low','Low energy']].forEach(([key,lbl])=>{
-    const b=document.createElement('button');b.className='mfield-chip-btn'+((t.energyLevel||null)===key?' active':'');
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.energyLevel||null)===key?' active':'');
+    b.setAttribute('aria-pressed', (t.energyLevel||null)===key ? 'true' : 'false');
     b.textContent=lbl;
-    b.onclick=function(){t.energyLevel=t.energyLevel===key?null:key;[...enChips.children].forEach(c=>c.classList.remove('active'));if(t.energyLevel)b.classList.add('active');_commitChipChange(t)};
+    b.onclick=function(){
+      t.energyLevel=t.energyLevel===key?null:key;
+      _setPressedGroupSelection(enChips, b, !!t.energyLevel);
+      _commitChipChange(t)
+    };
     enChips.appendChild(b)
   });
   // Recurrence — calendar-relative (daily/weekly/...) plus C-5 after-completion variants
   const rc=gid('mdRecur');if(rc){rc.replaceChildren();
+    rc.setAttribute('role','radiogroup');
     [
       ['none','No repeat'],
       ['daily','Daily'],['weekdays','Weekdays'],['weekly','Weekly'],['monthly','Monthly'],
       ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
     ].forEach(([key,lbl])=>{
-      const b=document.createElement('button');b.className='recur-opt'+((t.recur||'none')===key?' active':'');
+      const b=document.createElement('button');b.type='button';b.className='recur-opt'+((t.recur||'none')===key?' active':'');
+      b.setAttribute('role','radio');
+      b.setAttribute('aria-checked', (t.recur||'none')===key ? 'true' : 'false');
       b.textContent=lbl;
       if(key && key.startsWith('after')) b.title='Schedule next due ' + key.replace(/^after(\d+)d$/, '$1 day(s)') + ' AFTER completion (won\'t pile up if you finish late)';
       b.onclick=function(){
         t.recur=key==='none'?null:key;
-        [...rc.children].forEach(c=>c.classList.remove('active'));
-        b.classList.add('active');
+        _setRadioGroupSelection(rc, b);
         // First-time recurrence on a task with no due date defaults to today
         // so it actually shows up in Today / Habits views immediately.
         if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
@@ -1336,12 +1389,14 @@ function openTaskDetail(id){
   }
   // Tags
   renderTagsEditor(id);
-  // Category chips
+  // Category chips (toggle)
   const catChips=gid('mdCategoryChips');catChips.innerHTML='';
+  catChips.setAttribute('role','group');
   const catList=(typeof getActiveCategories==='function')?getActiveCategories():[];
   catList.forEach(row=>{
     const key=row.id,lbl=row.label||row.id;
-    const b=document.createElement('button');b.className='mfield-chip-btn'+((t.category||null)===key?' active':'');
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.category||null)===key?' active':'');
+    b.setAttribute('aria-pressed', (t.category||null)===key ? 'true' : 'false');
     b.textContent=lbl;
     const cdef=(typeof getCategoryDef==='function')?getCategoryDef(key):null;
     if(cdef&&cdef.color){
@@ -1352,7 +1407,11 @@ function openTaskDetail(id){
       const tip=((cdef.label||key)+(cdef.focus?': '+(cdef.focus):'')+((cdef.examples&&cdef.examples.length)?' · e.g. '+cdef.examples.slice(0,3).join(', '):'')).slice(0,280);
       if(tip) b.setAttribute('title', tip);
     }
-    b.onclick=function(){t.category=t.category===key?null:key;[...catChips.children].forEach(c=>c.classList.remove('active'));if(t.category)b.classList.add('active');_commitChipChange(t)};
+    b.onclick=function(){
+      t.category=t.category===key?null:key;
+      _setPressedGroupSelection(catChips, b, !!t.category);
+      _commitChipChange(t);
+    };
     catChips.appendChild(b)
   });
   const vn=gid('mdValuesNote');if(vn)vn.textContent=t.valuesNote||'';
@@ -1494,7 +1553,9 @@ function renderTagsEditor(id){
   (t.tags||[]).forEach((tag,i)=>{
     const chip=document.createElement('span');chip.className='tag-edit-chip';
     chip.textContent=tag;
-    const rm=document.createElement('span');rm.className='tag-rm';rm.textContent='×';rm.onclick=function(){removeTag(id,i)};chip.appendChild(rm);
+    // Plain <span> with onclick was keyboard-unreachable (#16 UX audit).
+    // A real <button> picks up the global focus styles + Enter/Space activation.
+    const rm=document.createElement('button');rm.type='button';rm.className='tag-rm';rm.textContent='×';rm.setAttribute('aria-label','Remove tag '+(tag||''));rm.onclick=function(){removeTag(id,i)};chip.appendChild(rm);
     ed.appendChild(chip)
   });
   const inp=document.createElement('input');inp.className='tag-input';inp.placeholder='+ tag';
@@ -1649,8 +1710,12 @@ function saveTaskDetail(){
   }
   t.name=gid('mdName').value.trim()||t.name;
   const _newDue = gid('mdDue').value || null;
-  const _dueChanged = _newDue && _newDue !== t.dueDate;
+  const _dueChanged = _newDue !== t.dueDate;
   t.dueDate = _newDue;
+  // Re-arm the implicit 09:00 reminder whenever the due date changes — without
+  // this, rescheduling a task that had already fired its reminder leaves it
+  // permanently muted (#19 in UX audit).
+  if(_dueChanged) t.reminderFired = false;
   if(gid('mdSnoozeUntil')) t.hiddenUntil=gid('mdSnoozeUntil').value||null;
   t.startDate=gid('mdStartDate').value||null;
   t.estimateMin=parseInt(gid('mdEstimate').value)||0;
@@ -1757,12 +1822,20 @@ window._updateActiveTaskTickSchedule=_updateActiveTaskTickSchedule;
 
 // ========== APP DIALOGS (replace native confirm/prompt) ==========
 let _appConfirmResolve=null;
+let _appConfirmReturnFocus=null;
+function _restoreFocus(el){
+  if(!el || typeof el.focus !== 'function') return;
+  try{ if(document.contains(el)) el.focus(); }catch(_){}
+}
 function closeAppConfirm(ok){
   const ov=gid('appConfirmModal');
   if(ov) ov.classList.remove('open');
   const fn=_appConfirmResolve;
+  const ret=_appConfirmReturnFocus;
   _appConfirmResolve=null;
+  _appConfirmReturnFocus=null;
   if(fn) fn(!!ok);
+  _restoreFocus(ret);
 }
 function showAppConfirm(message){
   return new Promise(resolve=>{
@@ -1770,6 +1843,7 @@ function showAppConfirm(message){
     if(!ov||!m){ resolve(confirm(message)); return; }
     m.textContent=message;
     _appConfirmResolve=resolve;
+    _appConfirmReturnFocus=document.activeElement;
     ov.classList.add('open');
     setTimeout(()=>{const b=gid('appConfirmOk');if(b)b.focus()},30);
   });
@@ -1832,12 +1906,13 @@ function showImportConfirm(summary){
     w.textContent = '⚠ This replaces all current tasks, lists, and settings. Cannot be undone.';
     m.appendChild(w);
     _appConfirmResolve = resolve;
+    _appConfirmReturnFocus = document.activeElement;
     ov.classList.add('open');
     setTimeout(() => { const b = gid('appConfirmOk'); if(b) b.focus(); }, 30);
   });
 }
 if(typeof window !== 'undefined') window.showImportConfirm = showImportConfirm;
-let _appPromptResolve=null,_appPromptMultiline=false;
+let _appPromptResolve=null,_appPromptMultiline=false,_appPromptReturnFocus=null;
 function _appPromptTextareaKeydown(e){
   if(!_appPromptMultiline) return;
   if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){
@@ -1854,9 +1929,12 @@ function closeAppPrompt(val){
   const ov=gid('appPromptModal');
   if(ov) ov.classList.remove('open');
   const fn=_appPromptResolve;
+  const ret=_appPromptReturnFocus;
   _appPromptResolve=null;
   _appPromptMultiline=false;
+  _appPromptReturnFocus=null;
   if(fn) fn(val);
+  _restoreFocus(ret);
 }
 function submitAppPrompt(){
   const single=gid('appPromptInput'), multi=gid('appPromptTextarea');
@@ -1885,6 +1963,7 @@ function showAppPrompt(label, defaultValue, opts){
       }
     }
     _appPromptResolve=resolve;
+    _appPromptReturnFocus=document.activeElement;
     ov.classList.add('open');
     setTimeout(()=>{(useMulti?multi:single)?.focus()},30);
   });
@@ -1914,7 +1993,7 @@ document.addEventListener('keydown',e=>{
 // ========== LOG ==========
 function addLog(name,durSec,type){timeLog.unshift({id:++logIdCtr,name,durSec,type,time:timeNow()});renderLog();saveState('user')}
 function removeLog(id){timeLog=timeLog.filter(l=>l.id!==id);renderLog();saveState('user')}
-function renderLog(){const list=gid('logList');list.querySelectorAll('.log-item').forEach(e=>e.remove());if(!timeLog.length){gid('logEmpty').hidden = false;return}gid('logEmpty').hidden = true;timeLog.slice(0,40).forEach(l=>{const d=document.createElement('div');d.className='log-item';const col=l.type==='work'?'var(--work)':l.type==='short'?'var(--short)':l.type==='quick'?'#48b5e0':'var(--long)';const lid=l.id||0;const dot=document.createElement('div');dot.className='log-dot';dot.style.background=col;d.appendChild(dot);const nm=document.createElement('span');nm.className='log-name';nm.textContent=l.name;d.appendChild(nm);const dur=document.createElement('span');dur.className='log-dur';dur.textContent=fmtShort(l.durSec);d.appendChild(dur);const tm=document.createElement('span');tm.className='log-time';tm.textContent=l.time;d.appendChild(tm);if(lid){const del=document.createElement('button');del.className='log-del';del.title='Remove';del.textContent='�';del.onclick=function(){removeLog(lid)};d.appendChild(del)}list.appendChild(d)})}
+function renderLog(){const list=gid('logList');list.querySelectorAll('.log-item').forEach(e=>e.remove());if(!timeLog.length){gid('logEmpty').hidden = false;return}gid('logEmpty').hidden = true;timeLog.slice(0,40).forEach(l=>{const d=document.createElement('div');d.className='log-item';const col=l.type==='work'?'var(--work)':l.type==='short'?'var(--short)':l.type==='quick'?'#48b5e0':'var(--long)';const lid=l.id||0;const dot=document.createElement('div');dot.className='log-dot';dot.style.background=col;d.appendChild(dot);const nm=document.createElement('span');nm.className='log-name';nm.textContent=l.name;d.appendChild(nm);const dur=document.createElement('span');dur.className='log-dur';dur.textContent=fmtShort(l.durSec);d.appendChild(dur);const tm=document.createElement('span');tm.className='log-time';tm.textContent=l.time;d.appendChild(tm);if(lid){const del=document.createElement('button');del.className='log-del';del.title='Remove';del.textContent='×';del.setAttribute('aria-label','Remove log entry');del.onclick=function(){removeLog(lid)};d.appendChild(del)}list.appendChild(d)})}
 async function clearLog(){
   if(!timeLog.length) return;
   const msg = 'Clear ' + timeLog.length + ' time-log entr' + (timeLog.length===1?'y':'ies') + '? This cannot be undone.';
@@ -2647,17 +2726,23 @@ document.addEventListener('keydown', function(e){
   if(e.key !== 'Tab') return;
   // Find the topmost open modal-ish container.
   const candidates = [
+    document.getElementById('appConfirmModal'),
+    document.getElementById('appPromptModal'),
     document.getElementById('cmdkOverlay'),
     document.getElementById('taskModal'),
     document.getElementById('bulkImportModal'),
     document.getElementById('whatNextOverlay'),
     document.getElementById('aiBriefCard'),
   ].filter(Boolean);
-  const open = candidates.find(el => {
+  // App-confirm/prompt sit at the top of the stack — they're blocking dialogs
+  // launched from other modals. Iterate in reverse so the most recently opened
+  // dialog wins the trap regardless of DOM order.
+  const open = candidates.reverse().find(el => {
     const cls = el.classList;
     if(cls.contains('open')) return true;
     if(!el.hidden && cls.contains('cmdk-overlay')) return true;
     if(el.id === 'aiBriefCard' && !el.hidden) return true;
+    if(el.id === 'whatNextOverlay' && !el.hidden) return true;
     return false;
   });
   if(!open) return;
