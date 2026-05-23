@@ -861,11 +861,17 @@ function _bootIntelLoad(){
     if(typeof renderAIPanel === 'function') renderAIPanel();
     if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
     if(typeof scheduleIntelDupRefresh === 'function') scheduleIntelDupRefresh();
-  }).catch(() => {
+  }).catch(err => {
+    // Previously this handler discarded `err`, so every distinct failure
+    // (stuck SW, 404 on the .onnx, WASM init, CORS) collapsed into the same
+    // "Load failed" string with no diagnostic. Surface the real message so
+    // users (and the next debugger) can see which layer broke.
+    console.error('[intel] load failed', err);
+    const short = String((err && err.message) || err || '').slice(0, 120) || 'Load failed';
     if(w) w.hidden = true;
     if(retry) retry.hidden = false;
-    if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('error', 'Load failed');
-    if(typeof showExportToast === 'function') showExportToast('Embedding model failed to load — semantic features unavailable');
+    if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('error', short);
+    if(typeof showExportToast === 'function') showExportToast('Embedding model failed to load: ' + short);
     if(typeof renderAIPanel === 'function') renderAIPanel();
     else if(typeof syncSemanticSearchUi === 'function') syncSemanticSearchUi();
   });

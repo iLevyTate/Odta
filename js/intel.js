@@ -92,6 +92,18 @@ async function intelLoad(onProgress){
       }
       _intelReady = true;
     }catch(e){
+      // Log the resolved paths + device decision before re-throwing — gives
+      // the upstream handler (which now propagates the message) a useful
+      // companion log in the console for "where exactly did this fail?".
+      try{
+        console.error('[intel] pipeline failed', e, {
+          localModelPath: env && env.localModelPath,
+          wasmPaths: env && env.backends && env.backends.onnx && env.backends.onnx.wasm && env.backends.onnx.wasm.wasmPaths,
+          attempted: tryWebGPU ? 'webgpu→wasm' : 'wasm',
+          hasNavigatorGpu: !!(typeof navigator !== 'undefined' && navigator.gpu),
+          model: EMBED_MODEL,
+        });
+      }catch(_){}
       _extractor = null;
       _intelReady = false;
       _intelDevice = null;
