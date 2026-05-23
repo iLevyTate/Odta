@@ -3081,7 +3081,7 @@ function renderChecklist(taskId){
     <div class="cl-items" id="clItems"></div>
     <div class="cl-add">
       <input class="cl-input" id="clInput" placeholder="Add item…" data-onkeydown="checklistAddOnEnter" data-task-id="${taskId}">
-      <button class="btn-ghost btn-sm" data-action="checklistAddFromButton" data-task-id="${taskId}">+</button>
+      <button class="btn-ghost btn-sm" data-action="checklistAddFromButton" data-task-id="${taskId}" aria-label="Add checklist item" title="Add item">+</button>
     </div>`;
   // Dynamic progress width via DOM API.
   const clBar = el.querySelector('.cl-bar');
@@ -3089,7 +3089,7 @@ function renderChecklist(taskId){
   const list=document.getElementById('clItems');
   items.forEach(item=>{
     const d=document.createElement('div');d.className='cl-item'+(item.done?' cl-done':'');
-    d.innerHTML=`<button class="cl-check${item.done?' on':''}" data-action="toggleChecklistItem" data-args='[${taskId},${item.id}]'>${item.done?'✓':''}</button><span class="cl-text">${esc(item.text)}</span><button class="cl-rm" data-action="removeChecklistItem" data-args='[${taskId},${item.id}]'>×</button>`;
+    d.innerHTML=`<button class="cl-check${item.done?' on':''}" data-action="toggleChecklistItem" data-args='[${taskId},${item.id}]' aria-label="${item.done?'Mark item not done':'Mark item done'}" aria-pressed="${item.done?'true':'false'}" title="${item.done?'Mark not done':'Mark done'}">${item.done?'✓':''}</button><span class="cl-text">${esc(item.text)}</span><button class="cl-rm" data-action="removeChecklistItem" data-args='[${taskId},${item.id}]' aria-label="Remove checklist item" title="Remove">×</button>`;
     list.appendChild(d);
   });
 }
@@ -3252,7 +3252,7 @@ function renderTaskNotes(taskId){
   const list=document.getElementById('noteList');
   (t.notes||[]).forEach(n=>{
     const d=document.createElement('div');d.className='note-item';
-    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args='[${taskId},${n.id}]'>×</button>`;
+    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args='[${taskId},${n.id}]' aria-label="Remove note" title="Remove">×</button>`;
     list.appendChild(d);
   });
 }
@@ -3287,7 +3287,7 @@ function renderBlockedBy(taskId){
   blockers.forEach(bid=>{
     const bt=findTask(bid);if(!bt)return;
     const c=document.createElement('span');c.className='blocker-chip'+(bt.status==='done'?' resolved':'');
-    c.innerHTML=`${bt.status==='done'?'✓ ':''}<span>${esc(bt.name.slice(0,30))}</span><button data-action="removeBlockedBy" data-args='[${taskId},${bid}]'>×</button>`;
+    c.innerHTML=`${bt.status==='done'?'✓ ':''}<span>${esc(bt.name.slice(0,30))}</span><button data-action="removeBlockedBy" data-args='[${taskId},${bid}]' aria-label="Remove blocker" title="Remove">×</button>`;
     chips.appendChild(c);
   });
 }

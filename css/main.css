@@ -1577,7 +1577,7 @@
   body.light-theme #banner{background:var(--bg-1)!important;border-color:var(--border)!important}
 
   /* Modal overlay in light */
-  body.light-theme .modal-overlay{background:rgba(15,23,42,.55)}
+  body.light-theme .modal-overlay{background:rgba(15,23,42,.2)}
 
   /* Done-sparkle visibility in both themes */
   .done-sparkle{filter:drop-shadow(0 0 6px var(--success))}
