@@ -23,8 +23,8 @@
     const path = location.pathname.split('/');
     const scope = path.slice(0, -1).join('/') + '/';
     const manifest = {
-      name: 'OdTauLai — On device task app using local ambient intelligence',
-      short_name: 'OdTauLai',
+      name: 'Odta — On device task app using local ambient intelligence',
+      short_name: 'Odta',
       start_url: scope + (path[path.length - 1] || ''),
       scope: scope,
       display: 'standalone',
@@ -283,7 +283,7 @@
         [
           'Tap the Share button (square with up-arrow) at the bottom of Safari.',
           'Scroll and tap “Add to Home Screen”.',
-          'Tap Add — OdTauLai opens fullscreen like a native app.',
+          'Tap Add — Odta opens fullscreen like a native app.',
           'Note: iOS doesn’t provide a one-tap install API. Chrome on iOS uses the same WebKit; if “Add to Home Screen” is missing, switch to Safari.',
         ],
         'Install on iPhone / iPad'
@@ -307,7 +307,7 @@
         'The site must be served over HTTPS or localhost (file:// won’t work).',
         'On iOS Safari: Share → Add to Home Screen.',
       ],
-      'Install OdTauLai'
+      'Install Odta'
     );
   };
 

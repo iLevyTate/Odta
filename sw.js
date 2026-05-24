@@ -1,4 +1,4 @@
-// OdTauLai Service Worker — CACHE_NAME pulled from the single source in
+// Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
 let CACHE_NAME = 'odtaulai-v52';
 try {
@@ -160,7 +160,7 @@ self.addEventListener('message', e => {
   if(e.data?.type === 'SHOW_NOTIFICATION'){
     const d = e.data;
     e.waitUntil(
-      self.registration.showNotification(d.title || 'OdTauLai', {
+      self.registration.showNotification(d.title || 'Odta', {
         body:               d.body || '',
         tag:                d.tag || 'odtaulai',
         renotify:           d.renotify !== false,

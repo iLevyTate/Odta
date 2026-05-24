@@ -1,8 +1,8 @@
-# OdTauLai Design System
+# Odta Design System
 
 ## Overview
 
-OdTauLai's visual design system implements **7 core design principles** and **Shneiderman's 8 Golden Rules** to create a cohesive, accessible, and intentional user interface.
+Odta's visual design system implements **7 core design principles** and **Shneiderman's 8 Golden Rules** to create a cohesive, accessible, and intentional user interface.
 
 This document serves as the canonical reference for:
 - Design tokens and their usage

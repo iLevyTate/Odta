@@ -2,16 +2,16 @@
 // Catches unhandled exceptions and promise rejections so they never vanish
 // silently.  Logs to console (no user-facing toast to avoid spam).
 window.onerror = function(msg, src, line, col, err) {
-  console.error('[OdTauLai] Uncaught error:', msg, 'at', src, line + ':' + col, err);
+  console.error('[Odta] Uncaught error:', msg, 'at', src, line + ':' + col, err);
   return false; // allow default browser handling too
 };
 window.addEventListener('unhandledrejection', function(e) {
-  console.error('[OdTauLai] Unhandled promise rejection:', e.reason);
+  console.error('[Odta] Unhandled promise rejection:', e.reason);
 });
 // Capture-phase listener for resource load failures (broken images, script 404s, etc.)
 window.addEventListener('error', function(e) {
   if (e.target && e.target !== window && e.target.tagName) {
-    console.warn('[OdTauLai] Resource load error:', e.target.tagName, e.target.src || e.target.href || '');
+    console.warn('[Odta] Resource load error:', e.target.tagName, e.target.src || e.target.href || '');
   }
 }, true);
 
@@ -246,7 +246,7 @@ function buildReport(format){
   if(goals.length){r+=h2('Goals')+'\n';doneGoals.forEach(g=>{r+=check(true)+g.text+(g.doneAt?' ('+g.doneAt+')':'')+'\n'});missedGoals.forEach(g=>{r+=check(false)+g.text+'\n'});r+='\n'}
   if(tasks.length){r+=h2('Time by Task')+'\n'+buildTaskTreeReport(bullet,null,0)+'\n'}
   if(timeLog.length){r+=h2('Session Log')+'\n';timeLog.slice().reverse().forEach(l=>{r+=bullet+l.time+' | '+(l.type==='work'?'FOCUS':l.type==='short'?'SHORT BREAK':l.type==='quick'?'QUICK':'LONG BREAK')+' | '+l.name+' | '+fmtShort(l.durSec)+'\n'});r+='\n'}
-  r+=hr+'\nGenerated at '+timeNow()+' by OdTauLai\n';return r
+  r+=hr+'\nGenerated at '+timeNow()+' by Odta\n';return r
 }
 function exportFile(format){
   // Daily report only supports txt/md now; csv is routed to the unified task CSV
@@ -507,7 +507,7 @@ setTimeout(() => {
   }catch(_){}
 })();
 
-// G-22: File handlers — when launched via "Open with OdTauLai" the OS sends
+// G-22: File handlers — when launched via "Open with Odta" the OS sends
 // a launchQueue entry with the file. We support .json (full backup / tasks)
 // and .ics (calendar feed paste).
 (function applyFileHandlers(){

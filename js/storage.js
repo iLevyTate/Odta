@@ -1,5 +1,5 @@
 // ========== PERSISTENCE ==========
-// Internal keys keep stupind_* prefix so existing installs retain data after rebrand to OdTauLai.
+// Internal keys keep stupind_* prefix so existing installs retain data through rebrands (stupind → OdTauLai → Odta).
 const STORE_KEY     = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.STATE) || 'stupind_state';
 const ARCHIVE_KEY   = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.ARCHIVE) || 'stupind_archive';
 const SCHEMA_VERSION = 6;
@@ -1028,7 +1028,7 @@ function importData(file){
     const mb = (file.size / (1024 * 1024)).toFixed(1);
     const max = (_IMPORT_MAX_BYTES / (1024 * 1024)).toFixed(0);
     alert('Backup file is ' + mb + ' MB — that exceeds the ' + max + ' MB cap. ' +
-          'A real OdTauLai backup is much smaller; check this is the right file, ' +
+          'A real Odta backup is much smaller; check this is the right file, ' +
           'or split a giant archive into chunks before importing.');
     return;
   }
@@ -1345,7 +1345,7 @@ async function importDataEncrypted(file){
   let wrap;
   try{ wrap = JSON.parse(text); }catch(e){ alert('Not a valid JSON file.'); return; }
   if(!wrap || wrap.kind !== _ENC_KIND){
-    alert('This file is not an OdTauLai encrypted backup. Use Restore (.json) for unencrypted backups.');
+    alert('This file is not an Odta encrypted backup. Use Restore (.json) for unencrypted backups.');
     return;
   }
   const passphrase = prompt('Passphrase to decrypt this backup:');
@@ -1407,7 +1407,7 @@ function exportTasksICS(){
     'PRODID:-//OdTauLai//Tasks Export 1.0//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:OdTauLai Tasks',
+    'X-WR-CALNAME:Odta Tasks',
     'X-WR-TIMEZONE:UTC',
   ];
   for(const t of dated){

@@ -2826,7 +2826,7 @@ async function resetStats(){
   renderStats();renderPips();renderGoalList();renderTaskList();renderLog();renderBanner();renderArchive();saveState('user');
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
 }
-function updateTitle(){if(running)document.title=(phase==='work'?'🔴':'🟢')+' '+fmt(remaining)+' — '+getPL(phase);else if(finished)document.title='✅ '+getPL(phase)+' Complete';else document.title='OdTauLai'}
+function updateTitle(){if(running)document.title=(phase==='work'?'🔴':'🟢')+' '+fmt(remaining)+' — '+getPL(phase);else if(finished)document.title='✅ '+getPL(phase)+' Complete';else document.title='Odta'}
 
 // ========== C-1 Task ID badge ==========
 function renderTaskIdBadge(t){

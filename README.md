@@ -1,6 +1,6 @@
 <!--
   ╔══════════════════════════════════════════════════════════════════════════╗
-  ║   OdTauLai — On-Device Task App Using Local Ambient Intelligence         ║
+  ║   Odta — On-Device Task App Using Local Ambient Intelligence             ║
   ║   A Pomodoro + ClickUp-style task manager that understands meaning,      ║
   ║   on your device, offline. No accounts. No telemetry. No cloud LLM.      ║
   ╚══════════════════════════════════════════════════════════════════════════╝
@@ -8,11 +8,11 @@
 
 <div align="center">
 
-<img src="icons/icon-512.png" alt="OdTauLai" width="140" height="140" />
+<img src="icons/icon-512.png" alt="Odta" width="140" height="140" />
 
 <br />
 
-### **OdTauLai**
+### **Odta**
 
 **On-Device Task App Using Local Ambient Intelligence**
 
@@ -38,19 +38,15 @@
 
 ---
 
-## How to say it
+## What it stands for
 
-> **OdTauLai** → **"ode-TOW-lie"** *(/oʊdˈtaʊlaɪ/)* — two syllables, stress on the middle: *ode* · **Tow** · *lie*.
-
-Prefer letters? `O-D-T-A-U-L-A-I` works too. It's an acronym, so both are fine:
-
-> **O**n-**d**evice **t**ask **a**pp **u**sing **l**ocal **a**mbient **i**ntelligence.
+> **Odta** stands for **On Device Task App** — pronounced **"OH-duh"**.
 
 ---
 
-## Why OdTauLai
+## Why Odta
 
-| | Everyone else | **OdTauLai** |
+| | Everyone else | **Odta** |
 |---|---|---|
 | **Data** | Cloud sync, accounts, trackers | Nothing leaves the device. No account. No analytics. |
 | **"AI"** | Cloud LLM, your text leaves the device | On-device embeddings. Text stays local. |
@@ -247,9 +243,9 @@ Full walkthroughs with Nginx configs, troubleshooting, custom icons, and manifes
 ## Privacy, explicitly
 
 > [!NOTE]
-> **OdTauLai does not** collect any data, send your tasks anywhere, use analytics / tracking / cookies, require an account / email / phone, or sync across devices unless you explicitly opt into the beta P2P feature.
+> **Odta does not** collect any data, send your tasks anywhere, use analytics / tracking / cookies, require an account / email / phone, or sync across devices unless you explicitly opt into the beta P2P feature.
 
-**OdTauLai does:**
+**Odta does:**
 
 - store app state in `localStorage`,
 - store the embedding cache in `IndexedDB`,

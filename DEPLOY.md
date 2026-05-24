@@ -1,6 +1,6 @@
 # Deployment Guide
 
-OdTauLai is a static PWA — no build step, no server-side code, no API. You just need to host the files.
+Odta is a static PWA — no build step, no server-side code, no API. You just need to host the files.
 
 ## Web app manifest `id`
 
@@ -111,14 +111,14 @@ caddy file-server --domain odtaulai.example.com --root .
 
 After deploying, visit the site and open DevTools (desktop) or Safari Web Inspector (iOS):
 
-- **Chrome DevTools:** Application tab → Manifest → should show "OdTauLai" with icons
+- **Chrome DevTools:** Application tab → Manifest → should show "Odta" with icons
 - **Application tab → Service Workers:** should show `sw.js` registered and running
 - **Lighthouse:** Run PWA audit — should score 100%
 
 ### Expected behavior
 
 1. Visit site → browser shows install icon in address bar (desktop) or "Add to Home Screen" is suggested (mobile)
-2. Install → app opens in its own window with the OdTauLai icon
+2. Install → app opens in its own window with the Odta icon
 3. Turn off Wi-Fi → app still loads (service worker serves from cache)
 4. Tasks, timers, settings all persist across sessions and reloads
 
@@ -165,7 +165,7 @@ Then update `manifest.json` colors to match your brand:
 
 ## Content-Security-Policy (CSP)
 
-OdTauLai ships a permissive meta CSP in `index.html` — practical, not maximalist. The shipped policy allows `'unsafe-inline'` (the app uses inline `onclick` handlers throughout), `'wasm-unsafe-eval'` (Transformers.js needs it), and broad `connect-src http: https:` (calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs). On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this is what gets served and everything works.
+Odta ships a permissive meta CSP in `index.html` — practical, not maximalist. The shipped policy allows `'unsafe-inline'` (the app uses inline `onclick` handlers throughout), `'wasm-unsafe-eval'` (Transformers.js needs it), and broad `connect-src http: https:` (calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs). On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this is what gets served and everything works.
 
 If your host wants to enforce a stricter CSP via HTTP headers (overriding the meta tag), the embedding model needs at least these allow-list entries:
 

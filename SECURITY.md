@@ -1,6 +1,6 @@
 # Security
 
-OdTauLai is a static, local-first PWA. Report sensitive issues privately to the repository maintainers (use GitHub Security Advisories if enabled for this repo).
+Odta is a static, local-first PWA. Report sensitive issues privately to the repository maintainers (use GitHub Security Advisories if enabled for this repo).
 
 ## Threat model (short)
 

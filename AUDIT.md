@@ -1,4 +1,4 @@
-# OdTauLai — Post-Feature-Wave Audit
+# Odta — Post-Feature-Wave Audit
 
 **Original scope**: codebase state on branch `audit-findings`, head `40617a1` (cache `odtaulai-v43`, build 2026-04-27), after the wave of UX/UI/coverage PRs (#21–#25).
 

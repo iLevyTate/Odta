@@ -1,6 +1,6 @@
 {
-  "name": "OdTauLai — On device task app using local ambient intelligence",
-  "short_name": "OdTauLai",
+  "name": "Odta — On device task app using local ambient intelligence",
+  "short_name": "Odta",
   "id": "odtaulai-tasks",
   "description": "On-device Pomodoro timer + task manager. A small local embedding model (~33 MB) captures the meaning and context of your tasks — not just keywords — for semantic search, smart suggestions, duplicates, list routing, and values alignment. Works offline. Optional P2P sync. No account, no tracking.",
   "start_url": "./",
