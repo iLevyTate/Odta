@@ -208,6 +208,7 @@ function renderCmdK(){
     {type:'action',label:'Toggle theme',icon:ic('moon'),run:()=>toggleTheme()},
     {type:'action',label:'Focus-on-list mode (hide other lists)',icon:ic('folder'),run:()=>toggleFocusListMode()},
     {type:'action',label:(isBulkMode()?'Exit bulk-edit mode':'Bulk-edit mode (multi-select)'),icon:ic('check'),run:()=>toggleBulkMode()},
+    {type:'action',label:((typeof isReorderMode==='function'&&isReorderMode())?'Exit reorder mode':'Reorder mode (move & indent tasks)'),icon:ic('list'),run:()=>{showTab('tasks');if(typeof toggleReorderMode==='function')toggleReorderMode()}},
     {type:'action',label:'Save current view…',icon:ic('star'),run:()=>savePerspectivePrompt()},
     {type:'action',label:'Suggest due date for open task',icon:ic('calendar'),run:()=>suggestDueDateForTask()},
     {type:'action',label:'Snooze open task — 1 day',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,1); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
@@ -892,12 +893,21 @@ function renderTaskItem(t,depth){
     window._lastAddedTaskId=null;
     requestAnimationFrame(()=>{try{d.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_){}});
   }
+  // A keyboard reorder/indent rebuilds the list and drops focus. Restore it to
+  // the moved row so arrow/Tab sequences chain without re-grabbing the mouse.
+  if(window._refocusTaskId===t.id){
+    window._refocusTaskId=null;
+    requestAnimationFrame(()=>{try{d.focus();d.scrollIntoView({block:'nearest'})}catch(_){}});
+  }
   // Per-task ondragstart/over/leave/drop handlers were removed in the
   // Sortable migration. The container-level Sortable instance now owns
   // reorder; .drop-above/.drop-below visual hints are no longer used because
   // Sortable provides its own ghost/placeholder.
   d.onclick=function(e){
     if(e.target.closest('button')||e.target.closest('.task-chevron')||e.target.closest('.drag-handle')||e.target.closest('[data-action]'))return;
+    // In reorder mode the row's tap target is repurposed for the arrange
+    // controls — don't open the detail modal out from under them.
+    if(typeof isReorderMode === 'function' && isReorderMode()) return;
     if(typeof isBulkMode === 'function' && isBulkMode()){
       bulkToggleSelect(t.id);
       d.classList.toggle('task-bulk-selected', _bulkSelectedIds.has(t.id));
@@ -912,12 +922,24 @@ function renderTaskItem(t,depth){
   d.setAttribute('tabindex', '0');
   d.setAttribute('aria-label', (t.name || 'Task') + ' — Enter to open details');
   d.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' && e.key !== ' ') return;
     // Don't intercept when focus is on an inner control — those have their
     // own key handlers (e.g. Space toggles a button) and we shouldn't
     // double-fire openTaskDetail underneath them.
     if(e.target !== d) return;
+    // Reorder shortcuts. Alt+↑/↓ moves among siblings (works any time so power
+    // users don't need the mode); Tab/Shift+Tab indent/outdent but only while
+    // Reorder mode is on, so normal focus traversal is preserved otherwise.
+    if(e.altKey && e.key === 'ArrowUp'){ e.preventDefault(); if(typeof moveTaskUp==='function') moveTaskUp(t.id); return; }
+    if(e.altKey && e.key === 'ArrowDown'){ e.preventDefault(); if(typeof moveTaskDown==='function') moveTaskDown(t.id); return; }
+    if(e.key === 'Tab' && typeof isReorderMode === 'function' && isReorderMode()){
+      e.preventDefault();
+      if(e.shiftKey){ if(typeof outdentTask==='function') outdentTask(t.id); }
+      else { if(typeof indentTask==='function') indentTask(t.id); }
+      return;
+    }
+    if(e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
+    if(typeof isReorderMode === 'function' && isReorderMode()) return;
     if(typeof isBulkMode === 'function' && isBulkMode()){
       bulkToggleSelect(t.id);
       d.classList.toggle('task-bulk-selected', _bulkSelectedIds.has(t.id));
@@ -1026,13 +1048,28 @@ function renderTaskItem(t,depth){
   const tagsVisible=(t.tags||[]).slice(0,3).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
   const descPrev=(t.description&&t.description.length>0)?'<span class="task-desc-inline">'+esc(t.description.slice(0,50))+(t.description.length>50?'…':'')+'</span>':'';
 
-  const actions=t.archived
-    ?'<button type="button" class="ta-btn ta-restore" data-action="restoreTask" data-args="['+t.id+']" title="Restore" aria-label="Restore task">↺</button>'
-     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Delete permanently" aria-label="Delete task permanently">×</button>'
-    :'<button type="button" class="ta-btn ta-star'+(t.starred?' on':'')+'" data-action="toggleStar" data-args="['+t.id+']" title="'+(t.starred?'Unpin':'Pin to top')+'" aria-label="'+(t.starred?'Unpin task':'Pin task to top')+'" aria-pressed="'+(t.starred?'true':'false')+'">'+(t.starred?'★':'☆')+'</button>'
-     +'<button type="button" class="ta-btn ta-play '+(isActive?'on':'')+'" data-action="toggleTask" data-args="['+t.id+']" title="'+(isActive?'Stop timer':'Start timer')+'" aria-label="'+(isActive?'Stop timer for this task':'Start timer for this task')+'" aria-pressed="'+(isActive?'true':'false')+'">'+(isActive?'■':'▶')+'</button>'
-     +'<button type="button" class="ta-btn ta-sub" data-action="addSubtaskPrompt" data-args="['+t.id+']" title="Add subtask" aria-label="Add subtask">+</button>'
-     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Archive" aria-label="Archive task">×</button>';
+  // Row actions. Three modes:
+  //   • reorder mode → move ↑/↓ + outdent/indent (the row no longer navigates)
+  //   • archived     → restore + delete-permanently
+  //   • default      → one primary (timer) + a ⋯ overflow menu (star / subtask /
+  //                    archive), so the resting row stays uncluttered.
+  const reorderOn=(typeof isReorderMode==='function'&&isReorderMode());
+  let actions;
+  if(reorderOn){
+    actions=
+      '<button type="button" class="ta-btn ta-move" data-action="moveTaskUp" data-args="['+t.id+']" title="Move up" aria-label="Move task up">↑</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="moveTaskDown" data-args="['+t.id+']" title="Move down" aria-label="Move task down">↓</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="outdentTask" data-args="['+t.id+']" title="Outdent (promote)" aria-label="Outdent task"'+(t.parentId==null?' disabled':'')+'>⟸</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="indentTask" data-args="['+t.id+']" title="Indent (nest under task above)" aria-label="Indent task">⟹</button>';
+  } else if(t.archived){
+    actions=
+      '<button type="button" class="ta-btn ta-restore" data-action="restoreTask" data-args="['+t.id+']" title="Restore" aria-label="Restore task">↺</button>'
+     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Delete permanently" aria-label="Delete task permanently">×</button>';
+  } else {
+    actions=
+      '<button type="button" class="ta-btn ta-play '+(isActive?'on':'')+'" data-action="toggleTask" data-args="['+t.id+']" title="'+(isActive?'Stop timer':'Start timer')+'" aria-label="'+(isActive?'Stop timer for this task':'Start timer for this task')+'" aria-pressed="'+(isActive?'true':'false')+'">'+(isActive?'■':'▶')+'</button>'
+     +'<button type="button" class="ta-btn ta-more" data-action="showTaskActionMenu" data-args="['+t.id+']" title="More actions" aria-label="More actions" aria-haspopup="menu">⋯</button>';
+  }
 
   // Star pin — shown prominently only if starred (otherwise hidden in hover actions)
   const starPin=t.starred?'<span class="star-pin" title="Pinned" aria-label="Pinned to top">★</span>':'';
@@ -1732,6 +1769,61 @@ function toggleSearchBar(){
   if(btn) btn.classList.toggle('active', show);
 }
 window.toggleSearchBar=toggleSearchBar;
+
+// ── Task row overflow menu ──────────────────────────────────────────────────
+// The ⋯ button on each row opens a small popover with the secondary actions
+// (star / add subtask / archive) that used to crowd the row. One menu instance
+// at a time; outside-click or Esc dismisses.
+let _taskActionMenuEl=null;
+function closeTaskActionMenu(){
+  if(_taskActionMenuEl){ _taskActionMenuEl.remove(); _taskActionMenuEl=null; }
+  document.removeEventListener('mousedown',_tamOutside,true);
+  document.removeEventListener('keydown',_tamKey,true);
+}
+function _tamOutside(e){ if(_taskActionMenuEl && !_taskActionMenuEl.contains(e.target)) closeTaskActionMenu(); }
+function _tamKey(e){ if(e.key==='Escape'){ e.preventDefault(); closeTaskActionMenu(); } }
+function showTaskActionMenu(id){
+  const ev=arguments[arguments.length-1];
+  const t=findTask(id); if(!t) return;
+  closeTaskActionMenu();
+  const anchor=(ev&&ev.target&&ev.target.closest)?ev.target.closest('button'):null;
+  const menu=document.createElement('div');
+  menu.className='task-action-menu';
+  menu.setAttribute('role','menu');
+  const rows=[
+    {ic:t.starred?'★':'☆', label:t.starred?'Unpin':'Pin to top', run:()=>toggleStar(id)},
+    {ic:'+', label:'Add subtask', run:()=>addSubtaskPrompt(id)},
+    {ic:'×', label:'Archive', danger:true, run:()=>removeTask(id)},
+  ];
+  rows.forEach(r=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='tam-item'+(r.danger?' tam-danger':'');
+    b.setAttribute('role','menuitem');
+    const ic=document.createElement('span');ic.className='tam-ic';ic.setAttribute('aria-hidden','true');ic.textContent=r.ic;
+    const lb=document.createElement('span');lb.textContent=r.label;
+    b.append(ic,lb);
+    b.onclick=()=>{ closeTaskActionMenu(); r.run(); };
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  // Position under the anchor, flipping above / clamping to the viewport.
+  const r=anchor?anchor.getBoundingClientRect():{top:80,bottom:80,right:window.innerWidth-12};
+  const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  let top=r.bottom+6, left=r.right-mw;
+  if(left<8) left=8;
+  if(top+mh>window.innerHeight-8) top=Math.max(8,r.top-mh-6);
+  menu.style.top=top+'px';
+  menu.style.left=left+'px';
+  _taskActionMenuEl=menu;
+  setTimeout(()=>{
+    document.addEventListener('mousedown',_tamOutside,true);
+    document.addEventListener('keydown',_tamKey,true);
+  },0);
+  const first=menu.querySelector('.tam-item'); if(first){ try{ first.focus(); }catch(_){} }
+}
+window.showTaskActionMenu=showTaskActionMenu;
+window.closeTaskActionMenu=closeTaskActionMenu;
 function saveTaskDetail(){
   if(!editingTaskId)return;
   const t=findTask(editingTaskId);if(!t)return;

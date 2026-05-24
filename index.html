@@ -348,6 +348,11 @@
             <button id="viewBoard" data-action="setTaskView" data-arg="board"><span class="mv-ic" data-icon="grid"></span> Board</button>
             <button id="viewCal" data-action="setTaskView" data-arg="calendar"><span class="mv-ic" data-icon="calendar"></span> Cal</button>
           </div>
+          <div class="sheet-section-lbl">Arrange</div>
+          <button type="button" class="reorder-toggle" id="reorderModeToggle" data-action="toggleReorderMode" aria-pressed="false" title="Show move &amp; indent controls on each task row">
+            <span class="reorder-toggle-ic" aria-hidden="true">↕</span>
+            <span>Reorder mode — move &amp; indent tasks</span>
+          </button>
           <div class="task-toolbar" id="filtersPanel">
             <fieldset class="task-toolbar-row">
               <legend class="sr-only">Filter tasks</legend>
