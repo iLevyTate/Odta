@@ -185,7 +185,12 @@
          every filter tap. The labels stay readable via normal navigation. -->
     <div class="daily-momentum" id="dailyMomentum" hidden></div>
 
-    <!-- Add task form: TOP — primary action -->
+    <!-- Add-task cluster. Inline at the top on desktop; on mobile the FAB
+         relocates this whole #quickAddHost node into #quickAddSheet (thumb
+         zone) and back on close — one #taskInput and one parser binding, the
+         node is moved rather than duplicated. #quickAddAnchor is hidden on
+         mobile so the inline copy doesn't show while the sheet owns it. -->
+    <div id="quickAddAnchor"><div id="quickAddHost">
     <div class="task-form">
       <label class="sr-only" for="taskInput">New task</label>
       <div class="task-input-wrap">
@@ -238,6 +243,19 @@
       </button>
     </div>
     <div class="qa-more-panel" id="qaMorePanel" hidden></div>
+    </div></div>
+
+    <!-- Mobile thumb-zone add sheet. The FAB moves #quickAddHost into the slot
+         below; brain-dump mode keeps it open so multiple tasks can be added. -->
+    <div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 class="modal-title">Add a task</h2>
+          <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
+      </div>
+    </div>
 
     <!-- Compact filter bar — four triggers open bottom sheets so the task list
          is no longer buried under five stacked, clipping scroll strips. Labels

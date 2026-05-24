@@ -1807,6 +1807,9 @@ function openSheet(id){
 function closeSheet(id){
   const ov=document.getElementById(id);
   if(ov) ov.classList.remove('open');
+  // The quick-add sheet borrows the inline add-task cluster — put it back so
+  // the DOM is left as found (and the inline copy reappears on desktop).
+  if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function') _restoreQuickAddHost();
 }
 window.openSheet=openSheet;
 window.closeSheet=closeSheet;
@@ -2189,7 +2192,7 @@ document.addEventListener('keydown',e=>{
   if(bulk&&bulk.classList.contains('open')){ e.preventDefault(); if(typeof closeBulkImportModal==='function') closeBulkImportModal(); return }
   const tm=gid('taskModal');
   if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); return }
-  for(const sid of ['listsSheet','tagsSheet','viewSheet']){
+  for(const sid of ['quickAddSheet','listsSheet','tagsSheet','viewSheet']){
     const sh=gid(sid);
     if(sh&&sh.classList.contains('open')){ e.preventDefault(); closeSheet(sid); return }
   }
@@ -2311,19 +2314,40 @@ function miniTimerToggle(){
 // Floating quick-add FAB handler. Jumps to Tasks, scrolls the new-task input
 // into view, focuses it. Same flow as Cmd+N — the FAB is the touch-friendly
 // surface for users who don't have a keyboard handy.
+// Relocate the add-task cluster into the bottom sheet (mobile) and focus it.
+function openQuickAddSheet(){
+  const host=document.getElementById('quickAddHost');
+  const slot=document.getElementById('quickAddSheetSlot');
+  if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
+  openSheet('quickAddSheet');
+  const inp=document.getElementById('taskInput');
+  if(inp) requestAnimationFrame(()=>{ try{ inp.focus(); inp.select&&inp.select(); }catch(_){} });
+}
+// Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
+// found it (the anchor is CSS-hidden on mobile, visible on desktop).
+function _restoreQuickAddHost(){
+  const host=document.getElementById('quickAddHost');
+  const anchor=document.getElementById('quickAddAnchor');
+  if(host&&anchor&&host.parentElement!==anchor) anchor.appendChild(host);
+}
+window.openQuickAddSheet=openQuickAddSheet;
+window.closeQuickAddSheet=()=>closeSheet('quickAddSheet');
+window.closeQuickAddSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='quickAddSheet') closeSheet('quickAddSheet'); };
+
 function quickAddFabClick(){
   const fab = document.getElementById('quickAddFab');
   if(fab){ fab.classList.add('flash'); setTimeout(() => fab.classList.remove('flash'), 350); }
   if(typeof showTab === 'function') showTab('tasks');
+  if(typeof haptic === 'function') haptic(10);
+  // Mobile: open the thumb-zone sheet. Desktop: the inline form is always
+  // visible (the FAB is display:none there anyway), so just focus it.
+  if(matchMedia('(max-width:640px)').matches){ openQuickAddSheet(); return; }
   const inp = document.getElementById('taskInput');
   if(!inp) return;
-  // Defer a tick so showTab's hidden-attribute toggles have landed before we
-  // try to focus + scroll into view (focus on an inert section is a no-op).
   requestAnimationFrame(() => {
     try{ inp.focus(); inp.select && inp.select(); }catch(_){}
     inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
-  if(typeof haptic === 'function') haptic(10);
 }
 window.quickAddFabClick = quickAddFabClick;
 
