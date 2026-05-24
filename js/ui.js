@@ -1118,13 +1118,46 @@ function renderSubtaskForm(parentId,depth){
   });
 }
 
+// Toggle a board card's nested-subtask disclosure. Mirrors t.collapsed in the
+// list view but is board-specific so the two surfaces don't fight over one
+// flag. Default (undefined) = collapsed, so busy parents start tidy.
+function toggleBoardExpand(id){
+  const t=findTask(id);if(!t)return;
+  t.boardExpanded=!t.boardExpanded;
+  renderTaskList();saveState('user');
+}
+window.toggleBoardExpand=toggleBoardExpand;
+
+// A compact, tap-to-open card for a nested subtask shown inside its parent.
+// No drag — its status follows the parent's column; tapping opens the detail
+// where it can be edited or re-parented.
+function _boardMiniCard(k){
+  const mc=document.createElement('div');
+  mc.className='board-mini-card priority-'+(k.priority||'none')+'-card'+(k.status==='done'?' done':'');
+  mc.setAttribute('role','button');mc.setAttribute('tabindex','0');
+  mc.onclick=function(){openTaskDetail(k.id)};
+  mc.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();openTaskDetail(k.id)}});
+  const stt=STATUSES[k.status||'open'];
+  const ddc=k.dueDate&&typeof describeDue==='function'?describeDue(k.dueDate):(k.dueDate?{cls:getDueClass(k.dueDate),label:fmtDue(k.dueDate)}:null);
+  const due=ddc?'<span class="date-chip'+(ddc.cls?' date-chip--'+ddc.cls:'')+'">'+esc(String(ddc.label||''))+'</span>':'';
+  const gk=getTaskChildren(k.id).filter(x=>!x.archived).length;
+  mc.innerHTML='<div class="board-mini-name">'+(k.status==='done'?'<span class="bmc-check" aria-hidden="true">✓</span>':'')+esc(k.name)+'</div>'
+    +'<div class="board-mini-meta"><span class="status-badge '+stt.cls+'">'+esc(stt.label)+'</span>'+due
+    +(gk?'<span class="bmc-subs" title="'+gk+' nested subtask'+(gk>1?'s':'')+'">'+gk+' ▾</span>':'')+'</div>';
+  return mc;
+}
+
 // Kanban Board View
 function renderBoard(visibleTasks){
   const board=gid('boardView');board.textContent='';
   const isMobile=window.matchMedia('(max-width:640px)').matches;
+  const visibleSet=new Set(visibleTasks.map(t=>t.id));
   STATUS_ORDER.forEach(st=>{
     const status=STATUSES[st];
-    const colTasks=sortTasks(visibleTasks.filter(t=>(t.status||'open')===st));
+    // Only top-level cards per column: roots, plus any visible subtask whose
+    // parent is filtered out (so it doesn't silently vanish). Subtasks of a
+    // visible parent are nested under that parent's card instead.
+    const colTasks=sortTasks(visibleTasks.filter(t=>(t.status||'open')===st && (!t.parentId || !visibleSet.has(t.parentId))));
     // On mobile, hide empty columns unless it's "open" (default drop target) or "done" (completed)
     if(isMobile&&colTasks.length===0&&st!=='open'&&st!=='done')return;
     const col=document.createElement('div');col.className='board-col';
@@ -1160,7 +1193,12 @@ function renderBoard(visibleTasks){
       card.setAttribute('draggable','true');
       card.ondragstart=function(e){e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);card.style.opacity='.4'};
       card.ondragend=function(){card.style.opacity='1'};
-      card.onclick=function(){openTaskDetail(t.id)};
+      // Ignore taps on the subtask expander or a nested mini-card — those have
+      // their own handlers; only a tap on the parent body opens its detail.
+      card.onclick=function(e){
+        if(e.target.closest('[data-action]')||e.target.closest('.board-mini-card'))return;
+        openTaskDetail(t.id);
+      };
       const path=getTaskPath(t.id);
       const breadcrumb=path.length>1?'<div class="board-breadcrumb">'+esc(path.slice(0,-1).join(' › '))+'</div>':'';
       const dueIc=(typeof window.icon==='function')?window.icon('calendar',{size:12}):'';
@@ -1172,6 +1210,31 @@ function renderBoard(visibleTasks){
       card.innerHTML=breadcrumb
         +'<div class="board-card-name">'+esc(t.name)+'</div>'
         +'<div class="board-card-meta">'+due+tags+time+'</div>';
+
+      // Nested subtasks: collapsed by default behind a count pill; expanding
+      // reveals tap-to-open mini-cards. Tapping a mini-card opens its detail so
+      // it can be edited or moved — exactly the "click takes you back" ask.
+      const kids=getTaskChildren(t.id).filter(k=>!k.archived);
+      if(kids.length){
+        const prog=(typeof getSubtaskProgress==='function')?getSubtaskProgress(t.id):null;
+        const expanded=!!t.boardExpanded;
+        const pill=document.createElement('button');
+        pill.type='button';
+        pill.className='board-subs-toggle'+(expanded?' expanded':'');
+        pill.dataset.action='toggleBoardExpand';
+        pill.dataset.args='['+t.id+']';
+        pill.setAttribute('aria-expanded',expanded?'true':'false');
+        pill.draggable=false;
+        pill.innerHTML='<span class="bst-caret" aria-hidden="true">▸</span>'
+          +kids.length+' subtask'+(kids.length>1?'s':'')
+          +(prog?' · '+prog.done+'/'+prog.total+' done':'');
+        card.appendChild(pill);
+        if(expanded){
+          const wrap=document.createElement('div');wrap.className='board-card-subs';
+          sortTasks(kids).forEach(k=>wrap.appendChild(_boardMiniCard(k)));
+          card.appendChild(wrap);
+        }
+      }
 
       // ── Touch drag-and-drop (mobile Kanban) ─────────────────────────────
       // Ghost-element pattern: clone the card at a fixed position that follows

@@ -609,6 +609,34 @@
   .board-breadcrumb{font-size:10px;color:#5a8ab5;margin-bottom:4px;opacity:.8}
   .board-col-empty{font-size:12px;color:var(--text-4,#4a5668);text-align:center;padding:24px 0;font-style:italic}
 
+  /* Subtask disclosure on a board card */
+  .board-subs-toggle{
+    display:flex;align-items:center;gap:6px;width:100%;margin-top:8px;
+    padding:6px 8px;min-height:32px;
+    background:var(--bg-2,#0d1a28);border:1px solid var(--border,#1a2838);
+    border-radius:6px;color:var(--text-2,#8a9bae);
+    font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:.15s;text-align:start;
+  }
+  .board-subs-toggle:hover{background:var(--bg-3,#142238);color:var(--text-1,#e2e8f0)}
+  .board-subs-toggle .bst-caret{transition:transform .15s;display:inline-block}
+  .board-subs-toggle.expanded .bst-caret{transform:rotate(90deg)}
+  .board-card-subs{display:flex;flex-direction:column;gap:5px;margin-top:6px;padding-left:8px;border-left:2px solid var(--border,#1a2838)}
+  .board-mini-card{
+    padding:6px 8px;background:var(--bg-1,#0a1320);border:1px solid var(--border-subtle,#152238);
+    border-radius:6px;cursor:pointer;transition:.15s;border-left:3px solid #2a3a4a;
+  }
+  .board-mini-card:hover{background:var(--bg-2,#0d1a28);border-color:var(--border-strong,#2a4a6a)}
+  .board-mini-card:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .board-mini-card.priority-urgent-card{border-left-color:#c0392b}
+  .board-mini-card.priority-high-card{border-left-color:#e67e22}
+  .board-mini-card.priority-normal-card{border-left-color:#3d8bcc}
+  .board-mini-card.priority-low-card{border-left-color:#7f8c8d}
+  .board-mini-card.done .board-mini-name{text-decoration:line-through;opacity:.6}
+  .board-mini-name{font-size:11px;font-weight:600;color:var(--text-1,#e2e8f0);display:flex;align-items:baseline;gap:5px;word-break:break-word}
+  .board-mini-name .bmc-check{color:var(--success,#2ecc71);font-weight:700}
+  .board-mini-meta{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:5px}
+  .board-mini-meta .bmc-subs{font-size:10px;color:var(--text-3,#5a8ab5);opacity:.85}
+
   /* Small "today" badge */
   .due-today-banner{font-size:9px;padding:2px 8px;background:rgba(232,168,56,.15);color:#e8a838;border:1px solid #5a4a1a;border-radius:10px;letter-spacing:.5px}
 
