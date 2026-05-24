@@ -18,6 +18,12 @@
 
 <br />
 
+<a href="https://odta.app"><img src="https://img.shields.io/badge/%E2%96%B6%20Launch%20Odta-odta.app-7048e8?style=for-the-badge&logo=pwa&logoColor=white" alt="Launch Odta at odta.app" height="48" /></a>
+
+**[Open the live app → odta.app](https://odta.app)** &nbsp;·&nbsp; free &amp; open source · runs in your browser · installable as an app · works offline · no account
+
+<br />
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![No Build Step](https://img.shields.io/badge/build-none-blueviolet?style=for-the-badge)](#architecture)
 [![Local First](https://img.shields.io/badge/local-first-success?style=for-the-badge)](#privacy-explicitly)
@@ -32,7 +38,7 @@
 
 <br />
 
-[**Highlights**](#highlights) · [**Get started**](#getting-started) · [**Privacy**](#privacy-explicitly) · [**Architecture**](#architecture) · [**Cheat sheets**](#keyboard-cheat-sheet) · [**FAQ**](#faq)
+[**Live app ↗**](https://odta.app) · [**Highlights**](#highlights) · [**Get started**](#getting-started) · [**Privacy**](#privacy-explicitly) · [**Architecture**](#architecture) · [**Cheat sheets**](#keyboard-cheat-sheet) · [**FAQ**](#faq)
 
 </div>
 
@@ -201,11 +207,15 @@ A derived impact score ranks every active task from signals you already have —
 
 ## Getting started
 
-### The 10-second path
+### The 1-second path
+
+**[Open odta.app](https://odta.app)** in any modern browser — nothing to install, no account, no build. Want it on your home screen or dock? [Install it as an app](#install-as-an-app) and it runs fully offline.
+
+### Run it yourself
 
 ```bash
-git clone https://github.com/iLevyTate/OdTauLai.git
-cd OdTauLai
+git clone https://github.com/iLevyTate/Odta.git
+cd Odta
 python3 -m http.server 8080
 # open http://localhost:8080
 ```
@@ -266,7 +276,7 @@ No framework, no bundler, no transpiler. Just **HTML, CSS, and vanilla JS module
 <summary><b>Source tree</b></summary>
 
 ```
-OdTauLai/
+Odta/
 ├── index.html                single source of truth for the UI
 ├── manifest.json             PWA manifest
 ├── sw.js                     service worker (shell precache)

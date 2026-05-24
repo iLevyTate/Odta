@@ -32,22 +32,22 @@ function loadConfigAt(baseURI) {
 }
 
 test('config: vendor URLs resolve against document base (no js/js/ doubling)', () => {
-  const cfg = loadConfigAt('https://ilevytate.github.io/OdTauLai/');
+  const cfg = loadConfigAt('https://ilevytate.github.io/Odta/');
   assert.strictEqual(
     cfg.TRANSFORMERS_URL,
-    'https://ilevytate.github.io/OdTauLai/js/vendor/transformers/transformers.min.mjs',
+    'https://ilevytate.github.io/Odta/js/vendor/transformers/transformers.min.mjs',
   );
   assert.strictEqual(
     cfg.CHRONO_URL,
-    'https://ilevytate.github.io/OdTauLai/js/vendor/chrono-node.min.mjs',
+    'https://ilevytate.github.io/Odta/js/vendor/chrono-node.min.mjs',
   );
   assert.strictEqual(
     cfg.TRANSFORMERS_WASM_DIR,
-    'https://ilevytate.github.io/OdTauLai/js/vendor/transformers/',
+    'https://ilevytate.github.io/Odta/js/vendor/transformers/',
   );
   assert.strictEqual(
     cfg.MODEL_BASE_PATH,
-    'https://ilevytate.github.io/OdTauLai/assets/models/',
+    'https://ilevytate.github.io/Odta/assets/models/',
   );
   // The specific failure mode the user reported: ensure the resolved URL
   // never contains a doubled `js/js/` segment.

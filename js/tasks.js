@@ -2515,10 +2515,6 @@ function setTaskView(v){
   gid('viewList').classList.toggle('active',v==='list');
   gid('viewBoard').classList.toggle('active',v==='board');
   if(gid('viewCal'))gid('viewCal').classList.toggle('active',v==='calendar');
-  // Also sync mobile view-toggle buttons if they exist
-  if(gid('viewListMobile'))gid('viewListMobile').classList.toggle('active',v==='list');
-  if(gid('viewBoardMobile'))gid('viewBoardMobile').classList.toggle('active',v==='board');
-  if(gid('viewCalMobile'))gid('viewCalMobile').classList.toggle('active',v==='calendar');
   gid('taskList').hidden = !(v==='list');
   gid('boardView').hidden = v !== 'board';
   if(gid('calendarView'))gid('calendarView').hidden = !(v==='calendar');
@@ -2526,7 +2522,6 @@ function setTaskView(v){
   renderTaskList();
   saveState('user')
 }
-function updateMobileViewToggle(){/* alias for call sites */}
 function matchesFilters(t){
   // Archive view shows ONLY archived
   if(smartView==='archived'){if(!t.archived)return false}
@@ -2793,17 +2788,6 @@ function snoozeTodayBanner(){
   try{ localStorage.setItem((window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.TB_SNOOZE) || 'odtaulai_tb_snooze', todayISO()); }catch(e){}
   const banner=gid('todayBanner');
   if(banner) banner.hidden = true;
-}
-
-function toggleFiltersPanel(){
-  const panel=gid('filtersPanel');if(!panel)return;
-  const btn=gid('filtersToggle');
-  const isOpen = !panel.hidden;
-  panel.hidden = !!(isOpen);
-  if(btn){
-    btn.classList.toggle('active',!isOpen);
-    btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-  }
 }
 
 function updateFiltersActiveBadge(){

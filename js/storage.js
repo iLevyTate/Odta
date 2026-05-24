@@ -1404,7 +1404,7 @@ function exportTasksICS(){
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//OdTauLai//Tasks Export 1.0//EN',
+    'PRODID:-//Odta//Tasks Export 1.0//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'X-WR-CALNAME:Odta Tasks',

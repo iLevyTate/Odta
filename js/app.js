@@ -282,10 +282,6 @@ window.addTaskOrApplyPreview = function(){
   if(window._smartAddPreview && typeof applySmartAddAndSubmit === 'function') applySmartAddAndSubmit();
   else if(typeof addTask === 'function') addTask();
 };
-window.setTaskViewMobile = function(view){
-  if(typeof setTaskView === 'function') setTaskView(view);
-  if(typeof updateMobileViewToggle === 'function') updateMobileViewToggle();
-};
 window.qtLabelEnterKey = function(e){
   if(e && e.key === 'Enter' && typeof addQuickTimer === 'function') addQuickTimer();
 };
