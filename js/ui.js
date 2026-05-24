@@ -1640,11 +1640,11 @@ async function closeTaskDetail(opts){
 }
 
 // ── Bottom-sheet swipe-to-dismiss ──────────────────────────────────────────
-// On mobile (<640px) the .modal renders as a bottom sheet. Swipe down on the
-// sheet header to dismiss — matches iOS / Android conventions. Header-only so
-// scrolling the body doesn't accidentally trigger a dismiss.
-function _initTaskModalSwipeDismiss(){
-  const overlay=gid('taskModal');
+// On mobile (<640px) a .modal-overlay renders as a bottom sheet. Swipe down on
+// its header to dismiss — matches iOS / Android conventions. Header-only so
+// scrolling the body doesn't accidentally trigger a dismiss. Generic so every
+// sheet (task detail, filter sheets, quick-add) shares one implementation.
+function bindSheetSwipe(overlay, closeFn){
   if(!overlay||overlay.dataset.swipeBound==='1') return;
   const sheet=overlay.querySelector('.modal');
   const head=overlay.querySelector('.modal-head');
@@ -1673,7 +1673,7 @@ function _initTaskModalSwipeDismiss(){
     if(deltaY>120){
       // Animate to fully off-screen, then close (close also resets transform).
       sheet.style.transform='translateY(110%)';
-      setTimeout(()=>closeTaskDetail(),180);
+      setTimeout(()=>{ try{ closeFn(); }finally{ sheet.style.transform=''; } },180);
     }else{
       sheet.style.transform='';
     }
@@ -1685,7 +1685,53 @@ function _initTaskModalSwipeDismiss(){
   head.addEventListener('touchcancel',onEnd,{passive:true});
   overlay.dataset.swipeBound='1';
 }
+window.bindSheetSwipe=bindSheetSwipe;
+
+function _initTaskModalSwipeDismiss(){
+  bindSheetSwipe(gid('taskModal'), ()=>closeTaskDetail());
+}
 window._initTaskModalSwipeDismiss=_initTaskModalSwipeDismiss;
+
+// ── Generic filter/options sheet open-close ─────────────────────────────────
+// Reuses the .modal-overlay.open bottom-sheet styling. Esc closes the topmost
+// open sheet; backdrop taps close via each overlay's data-action.
+function openSheet(id){
+  const ov=document.getElementById(id);
+  if(!ov) return;
+  ov.classList.add('open');
+  bindSheetSwipe(ov, ()=>closeSheet(id));
+  // Focus the first focusable control for keyboard users.
+  const f=ov.querySelector('.modal-close,button,select,input,a[href]');
+  if(f){ try{ f.focus(); }catch(_){} }
+}
+function closeSheet(id){
+  const ov=document.getElementById(id);
+  if(ov) ov.classList.remove('open');
+}
+window.openSheet=openSheet;
+window.closeSheet=closeSheet;
+
+// Named triggers wired from the .filter-bar buttons (data-action).
+window.openListsSheet=()=>openSheet('listsSheet');
+window.closeListsSheet=()=>closeSheet('listsSheet');
+window.openTagsSheet=()=>openSheet('tagsSheet');
+window.closeTagsSheet=()=>closeSheet('tagsSheet');
+window.openViewSheet=()=>openSheet('viewSheet');
+window.closeViewSheet=()=>closeSheet('viewSheet');
+// Backdrop-close handlers (fire only when the click lands on the overlay itself).
+window.closeListsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='listsSheet') closeSheet('listsSheet'); };
+window.closeTagsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='tagsSheet') closeSheet('tagsSheet'); };
+window.closeViewSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='viewSheet') closeSheet('viewSheet'); };
+function toggleSearchBar(){
+  const bar=document.getElementById('searchBarWrap');
+  if(!bar) return;
+  const show=bar.hasAttribute('hidden');
+  if(show){ bar.removeAttribute('hidden'); const inp=document.getElementById('taskSearch'); if(inp){ try{ inp.focus(); }catch(_){} } }
+  else { bar.setAttribute('hidden',''); }
+  const btn=document.getElementById('fbSearch');
+  if(btn) btn.classList.toggle('active', show);
+}
+window.toggleSearchBar=toggleSearchBar;
 function saveTaskDetail(){
   if(!editingTaskId)return;
   const t=findTask(editingTaskId);if(!t)return;
@@ -1987,7 +2033,11 @@ document.addEventListener('keydown',e=>{
   const bulk=gid('bulkImportModal');
   if(bulk&&bulk.classList.contains('open')){ e.preventDefault(); if(typeof closeBulkImportModal==='function') closeBulkImportModal(); return }
   const tm=gid('taskModal');
-  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); }
+  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); return }
+  for(const sid of ['listsSheet','tagsSheet','viewSheet']){
+    const sh=gid(sid);
+    if(sh&&sh.classList.contains('open')){ e.preventDefault(); closeSheet(sid); return }
+  }
 });
 
 // ========== LOG ==========

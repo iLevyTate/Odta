@@ -2070,6 +2070,38 @@ function updateFiltersSummary(){
   el.textContent=grpPart?sortPart+' · '+grpPart:sortPart;
 }
 
+// Keep the compact .filter-bar trigger labels in sync with the live filter
+// state. Called at the end of every renderTaskList so list switches, smart-view
+// changes, category picks and view toggles all reflect immediately.
+function syncFilterBar(){
+  const listLbl=gid('fbListsLabel');
+  if(listLbl){
+    let name='All Lists';
+    if(!showAllLists && typeof activeListId!=='undefined' && activeListId){
+      const l=lists.find(x=>x.id===activeListId);
+      if(l) name=l.name;
+    }
+    listLbl.textContent=name;
+  }
+  const tagLbl=gid('fbTagsLabel');
+  if(tagLbl){
+    const cat=(gid('filterCategory')||{}).value||'all';
+    let label='Tags';
+    if(cat&&cat!=='all'&&typeof getCategoryDef==='function'){
+      const def=getCategoryDef(cat);
+      if(def&&def.label) label=def.label;
+    }
+    tagLbl.textContent=label;
+    const btn=gid('fbTags');
+    if(btn) btn.classList.toggle('active', cat&&cat!=='all');
+  }
+  const viewLbl=gid('fbViewLabel');
+  if(viewLbl){
+    viewLbl.textContent=taskView==='board'?'Board':taskView==='calendar'?'Cal':'List';
+  }
+}
+window.syncFilterBar=syncFilterBar;
+
 let _semanticSearchReqId=0;
 let _updateTaskFiltersDebounce=null;
 
@@ -2907,6 +2939,7 @@ function renderTaskList(){
   renderSmartViewCounts();
   if(typeof updateHabitsHiddenNotice==='function') updateHabitsHiddenNotice();
   if(typeof updateFiltersSummary==='function') updateFiltersSummary();
+  if(typeof syncFilterBar==='function') syncFilterBar();
   const visibleTasks=tasks.filter(matchesFilters);
   const activeCount=visibleTasks.filter(t=>t.status!=='done'&&!t.parentId).length;
   const badge=gid('taskCountBadge');if(badge)badge.textContent=activeCount+' active';
