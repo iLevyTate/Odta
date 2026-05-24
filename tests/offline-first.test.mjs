@@ -85,7 +85,8 @@ test('vendored libraries are present', () => {
   // If any of these go missing the app falls back to a broken import.
   const required = [
     'js/vendor/chrono-node.min.mjs',
-    'js/vendor/transformers/transformers.min.mjs',
+    'js/vendor/transformers/transformers.min.js',
+    'js/vendor/transformers/ort.bundle.min.mjs',
     'js/vendor/transformers/ort-wasm-simd-threaded.jsep.mjs',
     'js/vendor/transformers/ort-wasm-simd-threaded.jsep.wasm',
     'js/vendor/peerjs.min.js',
@@ -100,7 +101,8 @@ test('service worker precaches every vendored file', () => {
   const sw = readFileSync(join(root, 'sw.js'), 'utf8');
   const required = [
     './js/vendor/chrono-node.min.mjs',
-    './js/vendor/transformers/transformers.min.mjs',
+    './js/vendor/transformers/transformers.min.js',
+    './js/vendor/transformers/ort.bundle.min.mjs',
     './js/vendor/transformers/ort-wasm-simd-threaded.jsep.mjs',
     './js/vendor/transformers/ort-wasm-simd-threaded.jsep.wasm',
   ];
@@ -124,7 +126,7 @@ test('intel.js prefers local model files with remote as fallback', () => {
 
 test('config.js exposes the vendored URLs (not CDN URLs)', () => {
   const src = readFileSync(join(root, 'js/config.js'), 'utf8');
-  assert.match(src, /TRANSFORMERS_URL:\s*['"]\.\/js\/vendor\/transformers\/transformers\.min\.mjs['"]/);
+  assert.match(src, /TRANSFORMERS_URL:\s*['"]\.\/js\/vendor\/transformers\/transformers\.min\.js['"]/);
   assert.match(src, /CHRONO_URL:\s*['"]\.\/js\/vendor\/chrono-node\.min\.mjs['"]/);
   assert.match(src, /MODEL_BASE_PATH:\s*['"]\.\/assets\/models\/['"]/);
 });

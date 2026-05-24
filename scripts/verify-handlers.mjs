@@ -2,14 +2,12 @@
 // data-on<event> attribute in the DOM check that window[name] is a
 // function. Reports any orphans the human dispatcher would silently no-op.
 import puppeteer from 'puppeteer';
+import { installSmoketestGuards } from './smoke-guards.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
 const browser = await puppeteer.launch({ headless: 'new' });
 const page = await browser.newPage();
-const pageErrors = [];
-const consoleErrors = [];
-page.on('pageerror', err => pageErrors.push(err.message));
-page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+const { consoleErrors, pageErrors, unexpected404Urls } = installSmoketestGuards(page);
 await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
 
 const report = await page.evaluate(() => {
@@ -43,6 +41,12 @@ console.log(`\nConsole errors: ${consoleErrors.length}`);
 consoleErrors.slice(0, 5).forEach(e => console.log(`  ${e}`));
 console.log(`Page errors:    ${pageErrors.length}`);
 pageErrors.slice(0, 5).forEach(e => console.log(`  ${e}`));
+if (unexpected404Urls.length) {
+  console.log(`\nUnexpected HTTP 404s (${unexpected404Urls.length}):`);
+  unexpected404Urls.slice(0, 8).forEach(u => console.log(`  ${u}`));
+}
 
 await browser.close();
-process.exit(report.missing.length || consoleErrors.length || pageErrors.length ? 1 : 0);
+process.exit(
+  report.missing.length || consoleErrors.length || pageErrors.length || unexpected404Urls.length ? 1 : 0,
+);

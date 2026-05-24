@@ -6,18 +6,12 @@
  *   (assumes a server is already running on localhost:8080)
  */
 import puppeteer from 'puppeteer';
+import { installSmoketestGuards } from './smoke-guards.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
 const browser = await puppeteer.launch({ headless: 'new' });
 const page = await browser.newPage();
-
-const consoleErrors = [];
-const pageErrors = [];
-
-page.on('console', msg => {
-  if (msg.type() === 'error') consoleErrors.push(msg.text());
-});
-page.on('pageerror', err => pageErrors.push(err.message));
+const { consoleErrors, pageErrors, unexpected404Urls } = installSmoketestGuards(page);
 
 console.log(`Loading ${URL}...`);
 await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
@@ -48,6 +42,8 @@ console.log(`\nConsole errors (${consoleErrors.length}):`);
 consoleErrors.slice(0, 10).forEach(e => console.log(`  ${e}`));
 console.log(`\nPage errors (${pageErrors.length}):`);
 pageErrors.slice(0, 10).forEach(e => console.log(`  ${e}`));
+console.log(`\nUnexpected HTTP 404s (${unexpected404Urls.length}):`);
+unexpected404Urls.slice(0, 10).forEach(u => console.log(`  ${u}`));
 
 await browser.close();
-process.exit(consoleErrors.length + pageErrors.length > 0 ? 1 : 0);
+process.exit(consoleErrors.length + pageErrors.length + unexpected404Urls.length > 0 ? 1 : 0);

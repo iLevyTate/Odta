@@ -3,13 +3,12 @@
 // each rendered surface has a window function. Reports total handlers seen
 // (initial + after-dynamic-render) and any orphans.
 import puppeteer from 'puppeteer';
+import { installSmoketestGuards } from './smoke-guards.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
-const browser = await puppeteer.launch({ headless: 'new' });
+const browser = await puppeteer.launch({ headless: 'new', protocolTimeout: 240_000 });
 const page = await browser.newPage();
-const pageErrors = [], consoleErrors = [];
-page.on('pageerror', e => pageErrors.push(e.message));
-page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+const { consoleErrors, pageErrors, unexpected404Urls } = installSmoketestGuards(page);
 await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
 
 async function audit(label){
@@ -47,7 +46,7 @@ await new Promise(r => setTimeout(r, 300));
 await audit('after-add-task');
 
 // Open task detail modal — clicks the row body.
-const card = await page.$('.task-card, .task-row');
+const card = await page.$('[data-task-id].task-item, .task-item.clickable');
 if (card) {
   await card.click();
   await new Promise(r => setTimeout(r, 300));
@@ -82,6 +81,8 @@ console.log(`Console: ${consoleErrors.length}`);
 consoleErrors.slice(0, 8).forEach(e => console.log(`  ${e}`));
 console.log(`Page:    ${pageErrors.length}`);
 pageErrors.slice(0, 8).forEach(e => console.log(`  ${e}`));
+console.log(`HTTP 404: ${unexpected404Urls.length}`);
+unexpected404Urls.slice(0, 6).forEach(u => console.log(`  ${u}`));
 
 await browser.close();
-process.exit((consoleErrors.length || pageErrors.length) ? 1 : 0);
+process.exit((consoleErrors.length || pageErrors.length || unexpected404Urls.length) ? 1 : 0);

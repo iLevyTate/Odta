@@ -1,6 +1,6 @@
 // OdTauLai Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v49';
+let CACHE_NAME = 'odtaulai-v50';
 try {
   importScripts('./js/version.js');
   if (self.ODTAULAI_RELEASE && self.ODTAULAI_RELEASE.swCache) {
@@ -46,7 +46,8 @@ const ASSETS = [
   './js/vendor/peerjs.min.js',
   './js/vendor/Sortable.min.js',
   './js/vendor/chrono-node.min.mjs',
-  './js/vendor/transformers/transformers.min.mjs',
+  './js/vendor/transformers/transformers.min.js',
+  './js/vendor/transformers/ort.bundle.min.mjs',
   './js/vendor/transformers/ort-wasm-simd-threaded.jsep.mjs',
   './js/vendor/transformers/ort-wasm-simd-threaded.jsep.wasm',
   // Model weights for the WASM/WebGPU embedding pipeline. Precaching these

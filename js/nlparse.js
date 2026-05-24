@@ -4,7 +4,17 @@
  *
  * chrono-node is vendored under js/vendor/ — no CDN fetch, works offline.
  */
-const CHRONO_URL = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_URL) || './js/vendor/chrono-node.min.mjs';
+function _nlparseResolve(spec){
+  if(!spec || typeof spec !== 'string') return spec;
+  if(/^https?:\/\//i.test(spec)) return spec;
+  try{
+    return new URL(spec, document.baseURI).href;
+  }catch(_e){
+    return spec;
+  }
+}
+const CHRONO_URL = _nlparseResolve(
+  (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.CHRONO_URL) || './js/vendor/chrono-node.min.mjs');
 
 let _chronoMod = null;
 let _chronoLoad = null;

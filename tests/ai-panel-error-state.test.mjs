@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const aiSrc = readFileSync(join(root, 'js', 'ai.js'), 'utf8');
+// Normalize CRLF so delimiter scans behave the same on Windows checkouts.
+const aiSrc = readFileSync(join(root, 'js', 'ai.js'), 'utf8').replace(/\r\n/g, '\n');
 
 const fnIdx = aiSrc.indexOf('function renderAIPanel');
 assert.ok(fnIdx > 0, 'renderAIPanel not found');
@@ -62,9 +63,10 @@ test('app.js still calls syncHeaderAIChip("error",…) on load failure', () => {
   // Defense in depth: the rejection handler in app.js must continue to set
   // the chip state to error so renderAIPanel (which now reads that state)
   // can render the failure surface even if it re-renders later.
-  const appSrc = readFileSync(join(root, 'js', 'app.js'), 'utf8');
+  const appSrc = readFileSync(join(root, 'js', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
   const intelLoadIdx = appSrc.indexOf('intelLoad(onProgress)');
   assert.ok(intelLoadIdx > 0, 'intelLoad call not found in app.js');
-  const tail = appSrc.slice(intelLoadIdx, intelLoadIdx + 2000);
+  // .then branch is long (migration, centroids, embeddings) — need range that includes .catch.
+  const tail = appSrc.slice(intelLoadIdx, intelLoadIdx + 9000);
   assert.match(tail, /syncHeaderAIChip\(\s*['"]error['"]/, 'app.js must mark chip error on intelLoad rejection');
 });

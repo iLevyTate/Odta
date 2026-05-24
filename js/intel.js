@@ -12,9 +12,21 @@
  * entirely.
  */
 const _C = window.ODTAULAI_CONFIG || {};
-const TRANSFORMERS_URL      = _C.TRANSFORMERS_URL      || './js/vendor/transformers/transformers.min.mjs';
-const TRANSFORMERS_WASM_DIR = _C.TRANSFORMERS_WASM_DIR || './js/vendor/transformers/';
-const MODEL_BASE_PATH       = _C.MODEL_BASE_PATH       || './assets/models/';
+
+/** Relative ./js/... paths in config are document-root paths; dynamic import() otherwise resolves against /js/. */
+function _appUrl(spec){
+  if(!spec || typeof spec !== 'string') return spec;
+  if(/^https?:\/\//i.test(spec)) return spec;
+  try{
+    return new URL(spec, document.baseURI).href;
+  }catch(_e){
+    return spec;
+  }
+}
+
+const TRANSFORMERS_URL      = _appUrl(_C.TRANSFORMERS_URL      || './js/vendor/transformers/transformers.min.js');
+const TRANSFORMERS_WASM_DIR = _appUrl(_C.TRANSFORMERS_WASM_DIR || './js/vendor/transformers/');
+const MODEL_BASE_PATH       = _appUrl(_C.MODEL_BASE_PATH       || './assets/models/');
 const EMBED_MODEL           = _C.EMBED_MODEL           || 'Xenova/bge-small-en-v1.5';
 const EMBED_DIM             = _C.EMBED_DIM             || 384;
 /** Version string for IndexedDB migration — must change when embed model or dim changes */
@@ -119,6 +131,10 @@ async function intelLoad(onProgress){
   }
 }
 
+// Serialize ONNX / WebGPU forwards — overlapping _extractor() calls corrupt the
+// single shared session (`Session already started` / `Session mismatch`).
+let _embedTextChain = Promise.resolve();
+
 /**
  * @param {string} text
  * @returns {Promise<Float32Array>} L2-normalized embedding, length EMBED_DIM
@@ -127,19 +143,26 @@ async function embedText(text){
   if(!_extractor) throw new Error('Intelligence engine not loaded');
   const t = (text || '').trim();
   if(!t) throw new Error('Empty text');
-  const out = await _extractor(t.slice(0, 8000), { pooling: 'mean', normalize: true });
-  const raw = out && out.data !== undefined ? out.data : out;
-  let data = raw;
-  if(raw && typeof raw === 'object' && typeof raw.length === 'number' && !(raw instanceof Float32Array)){
-    data = new Float32Array(raw);
-  }
-  if(!(data instanceof Float32Array)){
-    throw new Error('Unexpected embedding output');
-  }
-  if(data.length !== EMBED_DIM){
-    throw new Error('[intel] unexpected embedding dim ' + data.length + ' expected ' + EMBED_DIM);
-  }
-  return data;
+
+  const work = async () => {
+    const out = await _extractor(t.slice(0, 8000), { pooling: 'mean', normalize: true });
+    const raw = out && out.data !== undefined ? out.data : out;
+    let data = raw;
+    if(raw && typeof raw === 'object' && typeof raw.length === 'number' && !(raw instanceof Float32Array)){
+      data = new Float32Array(raw);
+    }
+    if(!(data instanceof Float32Array)){
+      throw new Error('Unexpected embedding output');
+    }
+    if(data.length !== EMBED_DIM){
+      throw new Error('[intel] unexpected embedding dim ' + data.length + ' expected ' + EMBED_DIM);
+    }
+    return data;
+  };
+
+  const p = _embedTextChain.then(work);
+  _embedTextChain = p.catch(() => {});
+  return p;
 }
 
 /** Unit-normalized vectors → dot product equals cosine similarity */

@@ -16,7 +16,8 @@ window.ODTAULAI_CONFIG = Object.freeze({
   // ── Vendored library paths (relative to index.html) ──────────────────────
   // Pinned versions match the tarballs under js/vendor/. To upgrade, replace
   // the file under js/vendor/ and bump the version comment here.
-  TRANSFORMERS_URL: './js/vendor/transformers/transformers.min.mjs', // v3.3.1
+  /** Browser/webpack bundle (`exports.default`); not the Node `transformers.min.mjs` build. */
+  TRANSFORMERS_URL: './js/vendor/transformers/transformers.min.js', // v3.3.1
   CHRONO_URL:       './js/vendor/chrono-node.min.mjs',               // v2.7.7
   /** Where transformers.js loads ORT WASM artefacts from. Must end with `/`. */
   TRANSFORMERS_WASM_DIR: './js/vendor/transformers/',
