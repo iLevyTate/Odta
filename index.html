@@ -185,7 +185,12 @@
          every filter tap. The labels stay readable via normal navigation. -->
     <div class="daily-momentum" id="dailyMomentum" hidden></div>
 
-    <!-- Add task form: TOP — primary action -->
+    <!-- Add-task cluster. Inline at the top on desktop; on mobile the FAB
+         relocates this whole #quickAddHost node into #quickAddSheet (thumb
+         zone) and back on close — one #taskInput and one parser binding, the
+         node is moved rather than duplicated. #quickAddAnchor is hidden on
+         mobile so the inline copy doesn't show while the sheet owns it. -->
+    <div id="quickAddAnchor"><div id="quickAddHost">
     <div class="task-form">
       <label class="sr-only" for="taskInput">New task</label>
       <div class="task-input-wrap">
@@ -238,153 +243,197 @@
       </button>
     </div>
     <div class="qa-more-panel" id="qaMorePanel" hidden></div>
+    </div></div>
 
-    <!-- Views, Lists & Tags Collapsible -->
-    <details class="views-accordion" open>
-      <summary class="views-accordion-summary">Views & Filters</summary>
-      <div class="views-accordion-body">
-        
-        <!-- Lists bar: only if multiple lists exist -->
-        <div class="lists-bar" id="listsBar"></div>
-
-        <!-- Tags / Categories (prominent placement) -->
-        <div class="tags-bar-wrap" id="tagsBarWrap">
-          <label class="sr-only" for="filterCategory">Filter by category</label>
-          <select class="task-tb-sel" id="filterCategory" data-onchange="updateTaskFilters" hidden>
-            <option value="all">Any category</option>
-          </select>
-          <div class="smart-views" id="tagsBar">
-            <button class="sv-chip active" data-action="setFilterCategory" data-arg="all">All Tags</button>
-          </div>
+    <!-- Mobile thumb-zone add sheet. The FAB moves #quickAddHost into the slot
+         below; brain-dump mode keeps it open so multiple tasks can be added. -->
+    <div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 class="modal-title">Add a task</h2>
+          <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
         </div>
-
-        <!-- Smart views -->
-        <div class="smart-views" id="smartViews">
-          <button class="sv-chip active" data-view="all" data-action="setSmartView" data-arg="all"><span class="sv-icon" data-icon="list"></span>All<span class="sv-count" id="svcAll">0</span></button>
-          <button class="sv-chip" data-view="inbox" data-action="setSmartView" data-arg="inbox" title="Untriaged — no list, no category, no due date, no tags"><span class="sv-icon" data-icon="inbox"></span>Inbox<span class="sv-count" id="svcInbox">0</span></button>
-          <button class="sv-chip" data-view="today" data-action="setSmartView" data-arg="today"><span class="sv-icon" data-icon="calendar"></span>Today<span class="sv-count" id="svcToday">0</span></button>
-          <button class="sv-chip" data-view="week" data-action="setSmartView" data-arg="week"><span class="sv-icon" data-icon="calendarWeek"></span>Week<span class="sv-count" id="svcWeek">0</span></button>
-          <button class="sv-chip" data-view="overdue" data-action="setSmartView" data-arg="overdue"><span class="sv-icon" data-icon="alertTriangle"></span>Overdue<span class="sv-count" id="svcOverdue">0</span></button>
-          <button class="sv-chip" data-view="unscheduled" data-action="setSmartView" data-arg="unscheduled"><span class="sv-icon" data-icon="circleDashed"></span>Unscheduled<span class="sv-count" id="svcUnscheduled">0</span></button>
-          <button class="sv-chip" data-view="starred" data-action="setSmartView" data-arg="starred"><span class="sv-icon" data-icon="star"></span>Starred<span class="sv-count" id="svcStarred">0</span></button>
-          <button class="sv-chip" data-view="impact" data-action="setSmartView" data-arg="impact" title="Top ~20% by leverage — derived from priority, due, effort, unblocks, values, star"><span class="sv-icon" data-icon="zap"></span>Impact<span class="sv-count" id="svcImpact">0</span></button>
-          <button class="sv-chip" data-view="waiting" data-action="setSmartView" data-arg="waiting" title="Tasks blocked on someone else (type = waiting)"><span class="sv-icon" data-icon="hourglass"></span>Waiting<span class="sv-count" id="svcWaiting">0</span></button>
-          <button class="sv-chip" data-view="stuck" data-action="setSmartView" data-arg="stuck" title="Open tasks untouched for 14+ days"><span class="sv-icon" data-icon="alertCircle"></span>Stuck<span class="sv-count" id="svcStuck">0</span></button>
-          <button class="sv-chip" data-view="snoozed" data-action="setSmartView" data-arg="snoozed" title="Tasks hidden until a date (snoozed)"><span class="sv-icon" data-icon="moon"></span>Snoozed<span class="sv-count" id="svcSnoozed">0</span></button>
-          <button class="sv-chip" data-view="habits" data-action="setSmartView" data-arg="habits" title="Recurring &amp; habits"><span class="sv-icon" data-icon="refresh"></span>Habits<span class="sv-count" id="svcHabits">0</span></button>
-          <button class="sv-chip" data-view="completed" data-action="setSmartView" data-arg="completed"><span class="sv-icon" data-icon="checkCircle"></span>Done<span class="sv-count" id="svcCompleted">0</span></button>
-          <button class="sv-chip" data-view="archived" data-action="setSmartView" data-arg="archived"><span class="sv-icon" data-icon="archive"></span>Archive<span class="sv-count" id="svcArchived">0</span></button>
-        </div>
-
-        <div class="task-search-bar">
-          <div class="task-search-row">
-            <label class="sr-only" for="taskSearch">Search tasks</label>
-            <input type="text" class="task-search" id="taskSearch" placeholder="Search · try tag:work is:overdue priority:high" aria-label="Search tasks. Operators: tag:, list:, is:, priority:, due:, status:" data-oninput="updateTaskFilters" autocomplete="off">
-            <button type="button" class="task-search-clear" id="taskSearchClear" data-action="clearTaskSearch" hidden aria-label="Clear search">×</button>
-            <span class="task-search-mode-pill" id="taskSearchSemanticPill" hidden>Semantic</span>
-            <label class="task-search-semantic" title="Rank by meaning (requires model loaded)">
-              <input type="checkbox" id="taskSearchSemantic" data-onchange="toggleTaskSearchSemantic"> Semantic
-            </label>
-          </div>
-        </div>
-
-        <!-- Unified active-filter bar. Single source of truth for every
-             filter currently narrowing the list: smart view, active list,
-             search text, search operators (tag/list/is/...), and the
-             filter-panel status/priority/category selections. Each chip
-             has an inline × to clear just that filter; the bar self-hides
-             when nothing is active. Replaces the previous separate
-             "operator pills" row — one row to scan, one place to clear. -->
-        <div class="active-filters-bar" id="activeFiltersBar" hidden aria-live="polite"></div>
-
-        <!-- Compact control bar: view toggle + filters button -->
-        <div class="task-controlbar">
-          <div class="view-toggle">
-            <button class="active" id="viewList" data-action="setTaskView" data-arg="list">List</button>
-            <button id="viewBoard" data-action="setTaskView" data-arg="board">Board</button>
-            <button id="viewCal" data-action="setTaskView" data-arg="calendar">Cal</button>
-          </div>
-          <!-- Non-live: the active-filters bar above is the canonical
-               announce surface for filter changes. The summary span is the
-               sort/group descriptor, not an event, so let it be read on
-               demand rather than fired on every rerender. -->
-          <span class="filters-summary" id="filtersSummary"></span>
-          <button type="button" class="filters-toggle" id="filtersToggle" data-action="toggleFiltersPanel" title="Filters & sort" aria-expanded="false" aria-controls="filtersPanel">
-            <span class="ft-icon">⚙</span>
-            <span class="ft-label">Filters</span>
-            <span class="ft-count" id="filtersActiveCount" hidden>0</span>
-          </button>
-        </div>
-
-        <!-- Collapsible filter panel (hidden by default on mobile) -->
-        <div class="task-toolbar" id="filtersPanel" hidden>
-          <!-- View selector (mobile-only, when controlbar view-toggle is hidden) -->
-          <div class="view-toggle mobile-view-toggle">
-            <button id="viewListMobile" class="active" data-action="setTaskViewMobile" data-arg="list"><span class="mv-ic" data-icon="list"></span> List</button>
-            <button id="viewBoardMobile" data-action="setTaskViewMobile" data-arg="board"><span class="mv-ic" data-icon="grid"></span> Board</button>
-            <button id="viewCalMobile" data-action="setTaskViewMobile" data-arg="calendar"><span class="mv-ic" data-icon="calendar"></span> Cal</button>
-          </div>
-          <fieldset class="task-toolbar-row">
-            <legend class="sr-only">Filter tasks</legend>
-            <label class="sr-only" for="filterStatus">Filter by status</label>
-            <select class="task-tb-sel" id="filterStatus" data-onchange="updateTaskFilters">
-              <option value="all">All status</option>
-              <option value="open">Open</option>
-              <option value="progress">In Progress</option>
-              <option value="review">Review</option>
-              <option value="blocked">Blocked</option>
-              <option value="done">Done</option>
-              <option value="active">Not Done</option>
-            </select>
-            <label class="sr-only" for="filterPriority">Filter by priority</label>
-            <select class="task-tb-sel" id="filterPriority" data-onchange="updateTaskFilters">
-              <option value="all">Any priority</option>
-              <option value="urgent">Urgent</option>
-              <option value="high">High</option>
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
-            </select>
-          </fieldset>
-          <fieldset class="task-toolbar-row">
-            <legend class="sr-only">Sort and group tasks</legend>
-            <label class="sr-only" for="taskSortSel">Sort tasks by</label>
-            <select class="task-tb-sel" id="taskSortSel" data-onchange="updateTaskFilters">
-              <option value="manual">Sort: Manual</option>
-              <option value="smart">Sort: Smart (starred, due, priority)</option>
-              <option value="impact">Sort: Impact (Pareto 80/20)</option>
-              <option value="due">Sort: Due date</option>
-              <option value="priority">Sort: Priority</option>
-              <option value="created">Sort: Created</option>
-              <option value="name">Sort: Name</option>
-              <option value="time">Sort: Time tracked</option>
-            </select>
-            <label class="sr-only" for="groupBySel">Group tasks by</label>
-            <select class="task-tb-sel" id="groupBySel" data-onchange="updateTaskFilters">
-              <option value="none">Group: None</option>
-              <option value="priority">Group: Priority</option>
-              <option value="status">Group: Status</option>
-              <option value="due">Group: Due Date</option>
-              <option value="list">Group: List</option>
-            </select>
-          </fieldset>
-          <div class="task-toolbar-row task-toolbar-display">
-            <span class="filter-display-lbl">Display</span>
-            <div class="density-seg" role="radiogroup" aria-label="Card density">
-              <button type="button" class="density-seg-btn" data-density="comfortable" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="comfortable" title="Roomy padding, easier scanning">Comfortable</button>
-              <button type="button" class="density-seg-btn" data-density="cozy" role="radio" aria-checked="true" data-action="setCardDensity" data-arg="cozy" title="Default — balanced">Cozy</button>
-              <button type="button" class="density-seg-btn" data-density="compact" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="compact" title="Tight rows — fit more on screen">Compact</button>
-            </div>
-            <label class="task-tb-check" title="When on, recurring tasks only appear in the Habits view">
-              <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide recurring from main
-            </label>
-            <label class="task-tb-check" title="Include completed tasks in the All view">
-              <input type="checkbox" id="showCompletedAll" data-onchange="onShowCompletedToggle"> Show completed
-            </label>
-          </div>
-        </div>
-
+        <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
       </div>
-    </details>
+    </div>
+
+    <!-- Compact filter bar — four triggers open bottom sheets so the task list
+         is no longer buried under five stacked, clipping scroll strips. Labels
+         reflect the live filter state via syncFilterBar(). -->
+    <div class="filter-bar" id="filterBar">
+      <button type="button" class="fb-btn" id="fbLists" data-action="openListsSheet" aria-haspopup="dialog" title="Lists & views">
+        <span class="fb-ic" aria-hidden="true">☰</span>
+        <span class="fb-lbl" id="fbListsLabel">All Lists</span>
+      </button>
+      <button type="button" class="fb-btn" id="fbTags" data-action="openTagsSheet" aria-haspopup="dialog" title="Filter by tag / category">
+        <span class="fb-ic" aria-hidden="true">#</span>
+        <span class="fb-lbl" id="fbTagsLabel">Tags</span>
+      </button>
+      <button type="button" class="fb-btn fb-btn--icon" id="fbSearch" data-action="toggleSearchBar" aria-label="Search tasks" title="Search">
+        <span class="fb-ic" aria-hidden="true">🔍</span>
+      </button>
+      <button type="button" class="fb-btn fb-btn--view" id="fbView" data-action="openViewSheet" aria-haspopup="dialog" title="View, sort &amp; filter">
+        <span class="fb-ic" aria-hidden="true">⚙</span>
+        <span class="fb-lbl" id="fbViewLabel">List</span>
+        <span class="ft-count" id="filtersActiveCount" hidden>0</span>
+      </button>
+    </div>
+
+    <!-- Collapsible search — hidden until the 🔍 trigger is tapped. -->
+    <div class="task-search-bar" id="searchBarWrap" hidden>
+      <div class="task-search-row">
+        <label class="sr-only" for="taskSearch">Search tasks</label>
+        <input type="text" class="task-search" id="taskSearch" placeholder="Search · try tag:work is:overdue priority:high" aria-label="Search tasks. Operators: tag:, list:, is:, priority:, due:, status:" data-oninput="updateTaskFilters" autocomplete="off">
+        <button type="button" class="task-search-clear" id="taskSearchClear" data-action="clearTaskSearch" hidden aria-label="Clear search">×</button>
+        <span class="task-search-mode-pill" id="taskSearchSemanticPill" hidden>Semantic</span>
+        <label class="task-search-semantic" title="Rank by meaning (requires model loaded)">
+          <input type="checkbox" id="taskSearchSemantic" data-onchange="toggleTaskSearchSemantic"> Semantic
+        </label>
+      </div>
+    </div>
+
+    <!-- Unified active-filter bar. Single source of truth for every
+         filter currently narrowing the list: smart view, active list,
+         search text, search operators (tag/list/is/...), and the
+         filter-panel status/priority/category selections. Each chip
+         has an inline × to clear just that filter; the bar self-hides
+         when nothing is active. -->
+    <div class="active-filters-bar" id="activeFiltersBar" hidden aria-live="polite"></div>
+
+    <!-- ===== Lists & Views sheet ===== -->
+    <div class="modal-overlay sheet" id="listsSheet" role="dialog" aria-modal="true" aria-label="Lists and views" data-action="closeListsSheetOnBackdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 class="modal-title">Lists &amp; Views</h2>
+          <button type="button" class="modal-close" data-action="closeListsSheet" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="sheet-section-lbl">Lists</div>
+          <div class="lists-bar" id="listsBar"></div>
+          <div class="sheet-section-lbl">Views</div>
+          <div class="smart-views" id="smartViews">
+            <button class="sv-chip active" data-view="all" data-action="setSmartView" data-arg="all"><span class="sv-icon" data-icon="list"></span>All<span class="sv-count" id="svcAll">0</span></button>
+            <button class="sv-chip" data-view="inbox" data-action="setSmartView" data-arg="inbox" title="Untriaged — no list, no category, no due date, no tags"><span class="sv-icon" data-icon="inbox"></span>Inbox<span class="sv-count" id="svcInbox">0</span></button>
+            <button class="sv-chip" data-view="today" data-action="setSmartView" data-arg="today"><span class="sv-icon" data-icon="calendar"></span>Today<span class="sv-count" id="svcToday">0</span></button>
+            <button class="sv-chip" data-view="week" data-action="setSmartView" data-arg="week"><span class="sv-icon" data-icon="calendarWeek"></span>Week<span class="sv-count" id="svcWeek">0</span></button>
+            <button class="sv-chip" data-view="overdue" data-action="setSmartView" data-arg="overdue"><span class="sv-icon" data-icon="alertTriangle"></span>Overdue<span class="sv-count" id="svcOverdue">0</span></button>
+            <button class="sv-chip" data-view="unscheduled" data-action="setSmartView" data-arg="unscheduled"><span class="sv-icon" data-icon="circleDashed"></span>Unscheduled<span class="sv-count" id="svcUnscheduled">0</span></button>
+            <button class="sv-chip" data-view="starred" data-action="setSmartView" data-arg="starred"><span class="sv-icon" data-icon="star"></span>Starred<span class="sv-count" id="svcStarred">0</span></button>
+            <button class="sv-chip" data-view="impact" data-action="setSmartView" data-arg="impact" title="Top ~20% by leverage — derived from priority, due, effort, unblocks, values, star"><span class="sv-icon" data-icon="zap"></span>Impact<span class="sv-count" id="svcImpact">0</span></button>
+            <button class="sv-chip" data-view="waiting" data-action="setSmartView" data-arg="waiting" title="Tasks blocked on someone else (type = waiting)"><span class="sv-icon" data-icon="hourglass"></span>Waiting<span class="sv-count" id="svcWaiting">0</span></button>
+            <button class="sv-chip" data-view="stuck" data-action="setSmartView" data-arg="stuck" title="Open tasks untouched for 14+ days"><span class="sv-icon" data-icon="alertCircle"></span>Stuck<span class="sv-count" id="svcStuck">0</span></button>
+            <button class="sv-chip" data-view="snoozed" data-action="setSmartView" data-arg="snoozed" title="Tasks hidden until a date (snoozed)"><span class="sv-icon" data-icon="moon"></span>Snoozed<span class="sv-count" id="svcSnoozed">0</span></button>
+            <button class="sv-chip" data-view="habits" data-action="setSmartView" data-arg="habits" title="Recurring &amp; habits"><span class="sv-icon" data-icon="refresh"></span>Habits<span class="sv-count" id="svcHabits">0</span></button>
+            <button class="sv-chip" data-view="completed" data-action="setSmartView" data-arg="completed"><span class="sv-icon" data-icon="checkCircle"></span>Done<span class="sv-count" id="svcCompleted">0</span></button>
+            <button class="sv-chip" data-view="archived" data-action="setSmartView" data-arg="archived"><span class="sv-icon" data-icon="archive"></span>Archive<span class="sv-count" id="svcArchived">0</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Tags / Categories sheet ===== -->
+    <div class="modal-overlay sheet" id="tagsSheet" role="dialog" aria-modal="true" aria-label="Filter by tag or category" data-action="closeTagsSheetOnBackdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 class="modal-title">Tags &amp; Categories</h2>
+          <button type="button" class="modal-close" data-action="closeTagsSheet" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="tags-bar-wrap" id="tagsBarWrap">
+            <label class="sr-only" for="filterCategory">Filter by category</label>
+            <select class="task-tb-sel" id="filterCategory" data-onchange="updateTaskFilters" hidden>
+              <option value="all">Any category</option>
+            </select>
+            <div class="smart-views" id="tagsBar">
+              <button class="sv-chip active" data-action="setFilterCategory" data-arg="all">All Tags</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== View, Sort & Filter sheet ===== -->
+    <div class="modal-overlay sheet" id="viewSheet" role="dialog" aria-modal="true" aria-label="View, sort and filter" data-action="closeViewSheetOnBackdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 class="modal-title">View, Sort &amp; Filter</h2>
+          <button type="button" class="modal-close" data-action="closeViewSheet" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="sheet-section-lbl">View</div>
+          <div class="view-toggle">
+            <button class="active" id="viewList" data-action="setTaskView" data-arg="list"><span class="mv-ic" data-icon="list"></span> List</button>
+            <button id="viewBoard" data-action="setTaskView" data-arg="board"><span class="mv-ic" data-icon="grid"></span> Board</button>
+            <button id="viewCal" data-action="setTaskView" data-arg="calendar"><span class="mv-ic" data-icon="calendar"></span> Cal</button>
+          </div>
+          <div class="sheet-section-lbl">Arrange</div>
+          <button type="button" class="reorder-toggle" id="reorderModeToggle" data-action="toggleReorderMode" aria-pressed="false" title="Show move &amp; indent controls on each task row">
+            <span class="reorder-toggle-ic" aria-hidden="true">↕</span>
+            <span>Reorder mode — move &amp; indent tasks</span>
+          </button>
+          <div class="task-toolbar" id="filtersPanel">
+            <fieldset class="task-toolbar-row">
+              <legend class="sr-only">Filter tasks</legend>
+              <label class="sr-only" for="filterStatus">Filter by status</label>
+              <select class="task-tb-sel" id="filterStatus" data-onchange="updateTaskFilters">
+                <option value="all">All status</option>
+                <option value="open">Open</option>
+                <option value="progress">In Progress</option>
+                <option value="review">Review</option>
+                <option value="blocked">Blocked</option>
+                <option value="done">Done</option>
+                <option value="active">Not Done</option>
+              </select>
+              <label class="sr-only" for="filterPriority">Filter by priority</label>
+              <select class="task-tb-sel" id="filterPriority" data-onchange="updateTaskFilters">
+                <option value="all">Any priority</option>
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+              </select>
+            </fieldset>
+            <fieldset class="task-toolbar-row">
+              <legend class="sr-only">Sort and group tasks</legend>
+              <label class="sr-only" for="taskSortSel">Sort tasks by</label>
+              <select class="task-tb-sel" id="taskSortSel" data-onchange="updateTaskFilters">
+                <option value="manual">Sort: Manual</option>
+                <option value="smart">Sort: Smart (starred, due, priority)</option>
+                <option value="impact">Sort: Impact (Pareto 80/20)</option>
+                <option value="due">Sort: Due date</option>
+                <option value="priority">Sort: Priority</option>
+                <option value="created">Sort: Created</option>
+                <option value="name">Sort: Name</option>
+                <option value="time">Sort: Time tracked</option>
+              </select>
+              <label class="sr-only" for="groupBySel">Group tasks by</label>
+              <select class="task-tb-sel" id="groupBySel" data-onchange="updateTaskFilters">
+                <option value="none">Group: None</option>
+                <option value="priority">Group: Priority</option>
+                <option value="status">Group: Status</option>
+                <option value="due">Group: Due Date</option>
+                <option value="list">Group: List</option>
+              </select>
+            </fieldset>
+            <div class="task-toolbar-row task-toolbar-display">
+              <span class="filter-display-lbl">Display</span>
+              <div class="density-seg" role="radiogroup" aria-label="Card density">
+                <button type="button" class="density-seg-btn" data-density="comfortable" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="comfortable" title="Roomy padding, easier scanning">Comfortable</button>
+                <button type="button" class="density-seg-btn" data-density="cozy" role="radio" aria-checked="true" data-action="setCardDensity" data-arg="cozy" title="Default — balanced">Cozy</button>
+                <button type="button" class="density-seg-btn" data-density="compact" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="compact" title="Tight rows — fit more on screen">Compact</button>
+              </div>
+              <label class="task-tb-check" title="When on, recurring tasks only appear in the Habits view">
+                <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide recurring from main
+              </label>
+              <label class="task-tb-check" title="Include completed tasks in the All view">
+                <input type="checkbox" id="showCompletedAll" data-onchange="onShowCompletedToggle"> Show completed
+              </label>
+            </div>
+            <span class="filters-summary" id="filtersSummary"></span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- G-18: Calendar events for Today view (rendered conditionally) -->
     <div class="today-cal-events" id="todayCalEvents" hidden></div>

@@ -208,6 +208,7 @@ function renderCmdK(){
     {type:'action',label:'Toggle theme',icon:ic('moon'),run:()=>toggleTheme()},
     {type:'action',label:'Focus-on-list mode (hide other lists)',icon:ic('folder'),run:()=>toggleFocusListMode()},
     {type:'action',label:(isBulkMode()?'Exit bulk-edit mode':'Bulk-edit mode (multi-select)'),icon:ic('check'),run:()=>toggleBulkMode()},
+    {type:'action',label:((typeof isReorderMode==='function'&&isReorderMode())?'Exit reorder mode':'Reorder mode (move & indent tasks)'),icon:ic('list'),run:()=>{showTab('tasks');if(typeof toggleReorderMode==='function')toggleReorderMode()}},
     {type:'action',label:'Save current view…',icon:ic('star'),run:()=>savePerspectivePrompt()},
     {type:'action',label:'Suggest due date for open task',icon:ic('calendar'),run:()=>suggestDueDateForTask()},
     {type:'action',label:'Snooze open task — 1 day',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,1); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
@@ -892,12 +893,21 @@ function renderTaskItem(t,depth){
     window._lastAddedTaskId=null;
     requestAnimationFrame(()=>{try{d.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_){}});
   }
+  // A keyboard reorder/indent rebuilds the list and drops focus. Restore it to
+  // the moved row so arrow/Tab sequences chain without re-grabbing the mouse.
+  if(window._refocusTaskId===t.id){
+    window._refocusTaskId=null;
+    requestAnimationFrame(()=>{try{d.focus();d.scrollIntoView({block:'nearest'})}catch(_){}});
+  }
   // Per-task ondragstart/over/leave/drop handlers were removed in the
   // Sortable migration. The container-level Sortable instance now owns
   // reorder; .drop-above/.drop-below visual hints are no longer used because
   // Sortable provides its own ghost/placeholder.
   d.onclick=function(e){
     if(e.target.closest('button')||e.target.closest('.task-chevron')||e.target.closest('.drag-handle')||e.target.closest('[data-action]'))return;
+    // In reorder mode the row's tap target is repurposed for the arrange
+    // controls — don't open the detail modal out from under them.
+    if(typeof isReorderMode === 'function' && isReorderMode()) return;
     if(typeof isBulkMode === 'function' && isBulkMode()){
       bulkToggleSelect(t.id);
       d.classList.toggle('task-bulk-selected', _bulkSelectedIds.has(t.id));
@@ -912,12 +922,24 @@ function renderTaskItem(t,depth){
   d.setAttribute('tabindex', '0');
   d.setAttribute('aria-label', (t.name || 'Task') + ' — Enter to open details');
   d.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' && e.key !== ' ') return;
     // Don't intercept when focus is on an inner control — those have their
     // own key handlers (e.g. Space toggles a button) and we shouldn't
     // double-fire openTaskDetail underneath them.
     if(e.target !== d) return;
+    // Reorder shortcuts. Alt+↑/↓ moves among siblings (works any time so power
+    // users don't need the mode); Tab/Shift+Tab indent/outdent but only while
+    // Reorder mode is on, so normal focus traversal is preserved otherwise.
+    if(e.altKey && e.key === 'ArrowUp'){ e.preventDefault(); if(typeof moveTaskUp==='function') moveTaskUp(t.id); return; }
+    if(e.altKey && e.key === 'ArrowDown'){ e.preventDefault(); if(typeof moveTaskDown==='function') moveTaskDown(t.id); return; }
+    if(e.key === 'Tab' && typeof isReorderMode === 'function' && isReorderMode()){
+      e.preventDefault();
+      if(e.shiftKey){ if(typeof outdentTask==='function') outdentTask(t.id); }
+      else { if(typeof indentTask==='function') indentTask(t.id); }
+      return;
+    }
+    if(e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
+    if(typeof isReorderMode === 'function' && isReorderMode()) return;
     if(typeof isBulkMode === 'function' && isBulkMode()){
       bulkToggleSelect(t.id);
       d.classList.toggle('task-bulk-selected', _bulkSelectedIds.has(t.id));
@@ -1026,13 +1048,28 @@ function renderTaskItem(t,depth){
   const tagsVisible=(t.tags||[]).slice(0,3).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
   const descPrev=(t.description&&t.description.length>0)?'<span class="task-desc-inline">'+esc(t.description.slice(0,50))+(t.description.length>50?'…':'')+'</span>':'';
 
-  const actions=t.archived
-    ?'<button type="button" class="ta-btn ta-restore" data-action="restoreTask" data-args="['+t.id+']" title="Restore" aria-label="Restore task">↺</button>'
-     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Delete permanently" aria-label="Delete task permanently">×</button>'
-    :'<button type="button" class="ta-btn ta-star'+(t.starred?' on':'')+'" data-action="toggleStar" data-args="['+t.id+']" title="'+(t.starred?'Unpin':'Pin to top')+'" aria-label="'+(t.starred?'Unpin task':'Pin task to top')+'" aria-pressed="'+(t.starred?'true':'false')+'">'+(t.starred?'★':'☆')+'</button>'
-     +'<button type="button" class="ta-btn ta-play '+(isActive?'on':'')+'" data-action="toggleTask" data-args="['+t.id+']" title="'+(isActive?'Stop timer':'Start timer')+'" aria-label="'+(isActive?'Stop timer for this task':'Start timer for this task')+'" aria-pressed="'+(isActive?'true':'false')+'">'+(isActive?'■':'▶')+'</button>'
-     +'<button type="button" class="ta-btn ta-sub" data-action="addSubtaskPrompt" data-args="['+t.id+']" title="Add subtask" aria-label="Add subtask">+</button>'
-     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Archive" aria-label="Archive task">×</button>';
+  // Row actions. Three modes:
+  //   • reorder mode → move ↑/↓ + outdent/indent (the row no longer navigates)
+  //   • archived     → restore + delete-permanently
+  //   • default      → one primary (timer) + a ⋯ overflow menu (star / subtask /
+  //                    archive), so the resting row stays uncluttered.
+  const reorderOn=(typeof isReorderMode==='function'&&isReorderMode());
+  let actions;
+  if(reorderOn){
+    actions=
+      '<button type="button" class="ta-btn ta-move" data-action="moveTaskUp" data-args="['+t.id+']" title="Move up" aria-label="Move task up">↑</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="moveTaskDown" data-args="['+t.id+']" title="Move down" aria-label="Move task down">↓</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="outdentTask" data-args="['+t.id+']" title="Outdent (promote)" aria-label="Outdent task"'+(t.parentId==null?' disabled':'')+'>⟸</button>'
+     +'<button type="button" class="ta-btn ta-move" data-action="indentTask" data-args="['+t.id+']" title="Indent (nest under task above)" aria-label="Indent task">⟹</button>';
+  } else if(t.archived){
+    actions=
+      '<button type="button" class="ta-btn ta-restore" data-action="restoreTask" data-args="['+t.id+']" title="Restore" aria-label="Restore task">↺</button>'
+     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Delete permanently" aria-label="Delete task permanently">×</button>';
+  } else {
+    actions=
+      '<button type="button" class="ta-btn ta-play '+(isActive?'on':'')+'" data-action="toggleTask" data-args="['+t.id+']" title="'+(isActive?'Stop timer':'Start timer')+'" aria-label="'+(isActive?'Stop timer for this task':'Start timer for this task')+'" aria-pressed="'+(isActive?'true':'false')+'">'+(isActive?'■':'▶')+'</button>'
+     +'<button type="button" class="ta-btn ta-more" data-action="showTaskActionMenu" data-args="['+t.id+']" title="More actions" aria-label="More actions" aria-haspopup="menu">⋯</button>';
+  }
 
   // Star pin — shown prominently only if starred (otherwise hidden in hover actions)
   const starPin=t.starred?'<span class="star-pin" title="Pinned" aria-label="Pinned to top">★</span>':'';
@@ -1081,13 +1118,46 @@ function renderSubtaskForm(parentId,depth){
   });
 }
 
+// Toggle a board card's nested-subtask disclosure. Mirrors t.collapsed in the
+// list view but is board-specific so the two surfaces don't fight over one
+// flag. Default (undefined) = collapsed, so busy parents start tidy.
+function toggleBoardExpand(id){
+  const t=findTask(id);if(!t)return;
+  t.boardExpanded=!t.boardExpanded;
+  renderTaskList();saveState('user');
+}
+window.toggleBoardExpand=toggleBoardExpand;
+
+// A compact, tap-to-open card for a nested subtask shown inside its parent.
+// No drag — its status follows the parent's column; tapping opens the detail
+// where it can be edited or re-parented.
+function _boardMiniCard(k){
+  const mc=document.createElement('div');
+  mc.className='board-mini-card priority-'+(k.priority||'none')+'-card'+(k.status==='done'?' done':'');
+  mc.setAttribute('role','button');mc.setAttribute('tabindex','0');
+  mc.onclick=function(){openTaskDetail(k.id)};
+  mc.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();openTaskDetail(k.id)}});
+  const stt=STATUSES[k.status||'open'];
+  const ddc=k.dueDate&&typeof describeDue==='function'?describeDue(k.dueDate):(k.dueDate?{cls:getDueClass(k.dueDate),label:fmtDue(k.dueDate)}:null);
+  const due=ddc?'<span class="date-chip'+(ddc.cls?' date-chip--'+ddc.cls:'')+'">'+esc(String(ddc.label||''))+'</span>':'';
+  const gk=getTaskChildren(k.id).filter(x=>!x.archived).length;
+  mc.innerHTML='<div class="board-mini-name">'+(k.status==='done'?'<span class="bmc-check" aria-hidden="true">✓</span>':'')+esc(k.name)+'</div>'
+    +'<div class="board-mini-meta"><span class="status-badge '+stt.cls+'">'+esc(stt.label)+'</span>'+due
+    +(gk?'<span class="bmc-subs" title="'+gk+' nested subtask'+(gk>1?'s':'')+'">'+gk+' ▾</span>':'')+'</div>';
+  return mc;
+}
+
 // Kanban Board View
 function renderBoard(visibleTasks){
   const board=gid('boardView');board.textContent='';
   const isMobile=window.matchMedia('(max-width:640px)').matches;
+  const visibleSet=new Set(visibleTasks.map(t=>t.id));
   STATUS_ORDER.forEach(st=>{
     const status=STATUSES[st];
-    const colTasks=sortTasks(visibleTasks.filter(t=>(t.status||'open')===st));
+    // Only top-level cards per column: roots, plus any visible subtask whose
+    // parent is filtered out (so it doesn't silently vanish). Subtasks of a
+    // visible parent are nested under that parent's card instead.
+    const colTasks=sortTasks(visibleTasks.filter(t=>(t.status||'open')===st && (!t.parentId || !visibleSet.has(t.parentId))));
     // On mobile, hide empty columns unless it's "open" (default drop target) or "done" (completed)
     if(isMobile&&colTasks.length===0&&st!=='open'&&st!=='done')return;
     const col=document.createElement('div');col.className='board-col';
@@ -1123,7 +1193,12 @@ function renderBoard(visibleTasks){
       card.setAttribute('draggable','true');
       card.ondragstart=function(e){e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);card.style.opacity='.4'};
       card.ondragend=function(){card.style.opacity='1'};
-      card.onclick=function(){openTaskDetail(t.id)};
+      // Ignore taps on the subtask expander or a nested mini-card — those have
+      // their own handlers; only a tap on the parent body opens its detail.
+      card.onclick=function(e){
+        if(e.target.closest('[data-action]')||e.target.closest('.board-mini-card'))return;
+        openTaskDetail(t.id);
+      };
       const path=getTaskPath(t.id);
       const breadcrumb=path.length>1?'<div class="board-breadcrumb">'+esc(path.slice(0,-1).join(' › '))+'</div>':'';
       const dueIc=(typeof window.icon==='function')?window.icon('calendar',{size:12}):'';
@@ -1135,6 +1210,31 @@ function renderBoard(visibleTasks){
       card.innerHTML=breadcrumb
         +'<div class="board-card-name">'+esc(t.name)+'</div>'
         +'<div class="board-card-meta">'+due+tags+time+'</div>';
+
+      // Nested subtasks: collapsed by default behind a count pill; expanding
+      // reveals tap-to-open mini-cards. Tapping a mini-card opens its detail so
+      // it can be edited or moved — exactly the "click takes you back" ask.
+      const kids=getTaskChildren(t.id).filter(k=>!k.archived);
+      if(kids.length){
+        const prog=(typeof getSubtaskProgress==='function')?getSubtaskProgress(t.id):null;
+        const expanded=!!t.boardExpanded;
+        const pill=document.createElement('button');
+        pill.type='button';
+        pill.className='board-subs-toggle'+(expanded?' expanded':'');
+        pill.dataset.action='toggleBoardExpand';
+        pill.dataset.args='['+t.id+']';
+        pill.setAttribute('aria-expanded',expanded?'true':'false');
+        pill.draggable=false;
+        pill.innerHTML='<span class="bst-caret" aria-hidden="true">▸</span>'
+          +kids.length+' subtask'+(kids.length>1?'s':'')
+          +(prog?' · '+prog.done+'/'+prog.total+' done':'');
+        card.appendChild(pill);
+        if(expanded){
+          const wrap=document.createElement('div');wrap.className='board-card-subs';
+          sortTasks(kids).forEach(k=>wrap.appendChild(_boardMiniCard(k)));
+          card.appendChild(wrap);
+        }
+      }
 
       // ── Touch drag-and-drop (mobile Kanban) ─────────────────────────────
       // Ghost-element pattern: clone the card at a fixed position that follows
@@ -1640,11 +1740,11 @@ async function closeTaskDetail(opts){
 }
 
 // ── Bottom-sheet swipe-to-dismiss ──────────────────────────────────────────
-// On mobile (<640px) the .modal renders as a bottom sheet. Swipe down on the
-// sheet header to dismiss — matches iOS / Android conventions. Header-only so
-// scrolling the body doesn't accidentally trigger a dismiss.
-function _initTaskModalSwipeDismiss(){
-  const overlay=gid('taskModal');
+// On mobile (<640px) a .modal-overlay renders as a bottom sheet. Swipe down on
+// its header to dismiss — matches iOS / Android conventions. Header-only so
+// scrolling the body doesn't accidentally trigger a dismiss. Generic so every
+// sheet (task detail, filter sheets, quick-add) shares one implementation.
+function bindSheetSwipe(overlay, closeFn){
   if(!overlay||overlay.dataset.swipeBound==='1') return;
   const sheet=overlay.querySelector('.modal');
   const head=overlay.querySelector('.modal-head');
@@ -1673,7 +1773,7 @@ function _initTaskModalSwipeDismiss(){
     if(deltaY>120){
       // Animate to fully off-screen, then close (close also resets transform).
       sheet.style.transform='translateY(110%)';
-      setTimeout(()=>closeTaskDetail(),180);
+      setTimeout(()=>{ try{ closeFn(); }finally{ sheet.style.transform=''; } },180);
     }else{
       sheet.style.transform='';
     }
@@ -1685,7 +1785,111 @@ function _initTaskModalSwipeDismiss(){
   head.addEventListener('touchcancel',onEnd,{passive:true});
   overlay.dataset.swipeBound='1';
 }
+window.bindSheetSwipe=bindSheetSwipe;
+
+function _initTaskModalSwipeDismiss(){
+  bindSheetSwipe(gid('taskModal'), ()=>closeTaskDetail());
+}
 window._initTaskModalSwipeDismiss=_initTaskModalSwipeDismiss;
+
+// ── Generic filter/options sheet open-close ─────────────────────────────────
+// Reuses the .modal-overlay.open bottom-sheet styling. Esc closes the topmost
+// open sheet; backdrop taps close via each overlay's data-action.
+function openSheet(id){
+  const ov=document.getElementById(id);
+  if(!ov) return;
+  ov.classList.add('open');
+  bindSheetSwipe(ov, ()=>closeSheet(id));
+  // Focus the first focusable control for keyboard users.
+  const f=ov.querySelector('.modal-close,button,select,input,a[href]');
+  if(f){ try{ f.focus(); }catch(_){} }
+}
+function closeSheet(id){
+  const ov=document.getElementById(id);
+  if(ov) ov.classList.remove('open');
+  // The quick-add sheet borrows the inline add-task cluster — put it back so
+  // the DOM is left as found (and the inline copy reappears on desktop).
+  if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function') _restoreQuickAddHost();
+}
+window.openSheet=openSheet;
+window.closeSheet=closeSheet;
+
+// Named triggers wired from the .filter-bar buttons (data-action).
+window.openListsSheet=()=>openSheet('listsSheet');
+window.closeListsSheet=()=>closeSheet('listsSheet');
+window.openTagsSheet=()=>openSheet('tagsSheet');
+window.closeTagsSheet=()=>closeSheet('tagsSheet');
+window.openViewSheet=()=>openSheet('viewSheet');
+window.closeViewSheet=()=>closeSheet('viewSheet');
+// Backdrop-close handlers (fire only when the click lands on the overlay itself).
+window.closeListsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='listsSheet') closeSheet('listsSheet'); };
+window.closeTagsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='tagsSheet') closeSheet('tagsSheet'); };
+window.closeViewSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='viewSheet') closeSheet('viewSheet'); };
+function toggleSearchBar(){
+  const bar=document.getElementById('searchBarWrap');
+  if(!bar) return;
+  const show=bar.hasAttribute('hidden');
+  if(show){ bar.removeAttribute('hidden'); const inp=document.getElementById('taskSearch'); if(inp){ try{ inp.focus(); }catch(_){} } }
+  else { bar.setAttribute('hidden',''); }
+  const btn=document.getElementById('fbSearch');
+  if(btn) btn.classList.toggle('active', show);
+}
+window.toggleSearchBar=toggleSearchBar;
+
+// ── Task row overflow menu ──────────────────────────────────────────────────
+// The ⋯ button on each row opens a small popover with the secondary actions
+// (star / add subtask / archive) that used to crowd the row. One menu instance
+// at a time; outside-click or Esc dismisses.
+let _taskActionMenuEl=null;
+function closeTaskActionMenu(){
+  if(_taskActionMenuEl){ _taskActionMenuEl.remove(); _taskActionMenuEl=null; }
+  document.removeEventListener('mousedown',_tamOutside,true);
+  document.removeEventListener('keydown',_tamKey,true);
+}
+function _tamOutside(e){ if(_taskActionMenuEl && !_taskActionMenuEl.contains(e.target)) closeTaskActionMenu(); }
+function _tamKey(e){ if(e.key==='Escape'){ e.preventDefault(); closeTaskActionMenu(); } }
+function showTaskActionMenu(id){
+  const ev=arguments[arguments.length-1];
+  const t=findTask(id); if(!t) return;
+  closeTaskActionMenu();
+  const anchor=(ev&&ev.target&&ev.target.closest)?ev.target.closest('button'):null;
+  const menu=document.createElement('div');
+  menu.className='task-action-menu';
+  menu.setAttribute('role','menu');
+  const rows=[
+    {ic:t.starred?'★':'☆', label:t.starred?'Unpin':'Pin to top', run:()=>toggleStar(id)},
+    {ic:'+', label:'Add subtask', run:()=>addSubtaskPrompt(id)},
+    {ic:'×', label:'Archive', danger:true, run:()=>removeTask(id)},
+  ];
+  rows.forEach(r=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='tam-item'+(r.danger?' tam-danger':'');
+    b.setAttribute('role','menuitem');
+    const ic=document.createElement('span');ic.className='tam-ic';ic.setAttribute('aria-hidden','true');ic.textContent=r.ic;
+    const lb=document.createElement('span');lb.textContent=r.label;
+    b.append(ic,lb);
+    b.onclick=()=>{ closeTaskActionMenu(); r.run(); };
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  // Position under the anchor, flipping above / clamping to the viewport.
+  const r=anchor?anchor.getBoundingClientRect():{top:80,bottom:80,right:window.innerWidth-12};
+  const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  let top=r.bottom+6, left=r.right-mw;
+  if(left<8) left=8;
+  if(top+mh>window.innerHeight-8) top=Math.max(8,r.top-mh-6);
+  menu.style.top=top+'px';
+  menu.style.left=left+'px';
+  _taskActionMenuEl=menu;
+  setTimeout(()=>{
+    document.addEventListener('mousedown',_tamOutside,true);
+    document.addEventListener('keydown',_tamKey,true);
+  },0);
+  const first=menu.querySelector('.tam-item'); if(first){ try{ first.focus(); }catch(_){} }
+}
+window.showTaskActionMenu=showTaskActionMenu;
+window.closeTaskActionMenu=closeTaskActionMenu;
 function saveTaskDetail(){
   if(!editingTaskId)return;
   const t=findTask(editingTaskId);if(!t)return;
@@ -1987,7 +2191,11 @@ document.addEventListener('keydown',e=>{
   const bulk=gid('bulkImportModal');
   if(bulk&&bulk.classList.contains('open')){ e.preventDefault(); if(typeof closeBulkImportModal==='function') closeBulkImportModal(); return }
   const tm=gid('taskModal');
-  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); }
+  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); return }
+  for(const sid of ['quickAddSheet','listsSheet','tagsSheet','viewSheet']){
+    const sh=gid(sid);
+    if(sh&&sh.classList.contains('open')){ e.preventDefault(); closeSheet(sid); return }
+  }
 });
 
 // ========== LOG ==========
@@ -2106,19 +2314,40 @@ function miniTimerToggle(){
 // Floating quick-add FAB handler. Jumps to Tasks, scrolls the new-task input
 // into view, focuses it. Same flow as Cmd+N — the FAB is the touch-friendly
 // surface for users who don't have a keyboard handy.
+// Relocate the add-task cluster into the bottom sheet (mobile) and focus it.
+function openQuickAddSheet(){
+  const host=document.getElementById('quickAddHost');
+  const slot=document.getElementById('quickAddSheetSlot');
+  if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
+  openSheet('quickAddSheet');
+  const inp=document.getElementById('taskInput');
+  if(inp) requestAnimationFrame(()=>{ try{ inp.focus(); inp.select&&inp.select(); }catch(_){} });
+}
+// Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
+// found it (the anchor is CSS-hidden on mobile, visible on desktop).
+function _restoreQuickAddHost(){
+  const host=document.getElementById('quickAddHost');
+  const anchor=document.getElementById('quickAddAnchor');
+  if(host&&anchor&&host.parentElement!==anchor) anchor.appendChild(host);
+}
+window.openQuickAddSheet=openQuickAddSheet;
+window.closeQuickAddSheet=()=>closeSheet('quickAddSheet');
+window.closeQuickAddSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='quickAddSheet') closeSheet('quickAddSheet'); };
+
 function quickAddFabClick(){
   const fab = document.getElementById('quickAddFab');
   if(fab){ fab.classList.add('flash'); setTimeout(() => fab.classList.remove('flash'), 350); }
   if(typeof showTab === 'function') showTab('tasks');
+  if(typeof haptic === 'function') haptic(10);
+  // Mobile: open the thumb-zone sheet. Desktop: the inline form is always
+  // visible (the FAB is display:none there anyway), so just focus it.
+  if(matchMedia('(max-width:640px)').matches){ openQuickAddSheet(); return; }
   const inp = document.getElementById('taskInput');
   if(!inp) return;
-  // Defer a tick so showTab's hidden-attribute toggles have landed before we
-  // try to focus + scroll into view (focus on an inert section is a no-op).
   requestAnimationFrame(() => {
     try{ inp.focus(); inp.select && inp.select(); }catch(_){}
     inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
-  if(typeof haptic === 'function') haptic(10);
 }
 window.quickAddFabClick = quickAddFabClick;
 

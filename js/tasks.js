@@ -1124,6 +1124,92 @@ function getTaskPath(taskId){
   return path;
 }
 
+// ── Manual reorder & indent ("Reorder mode") ────────────────────────────────
+// Move a task up/down among its siblings or change its nesting depth without
+// dragging. Sibling order is the manual-sort `t.order` field; indent/outdent
+// re-point `t.parentId`. All paths force manual sort so the change is visible
+// and persist immediately.
+let taskReorderMode=false;
+function isReorderMode(){return taskReorderMode}
+function toggleReorderMode(on){
+  taskReorderMode=(typeof on==='boolean')?on:!taskReorderMode;
+  if(typeof document!=='undefined') document.body.classList.toggle('reorder-mode',taskReorderMode);
+  const tgl=gid('reorderModeToggle');
+  if(tgl){tgl.classList.toggle('active',taskReorderMode);tgl.setAttribute('aria-pressed',taskReorderMode?'true':'false');}
+  // Close the View sheet so the list (now showing the arrange controls) is
+  // visible — the toggle lives inside that sheet.
+  if(typeof closeSheet==='function') closeSheet('viewSheet');
+  renderTaskList();
+}
+function _forceManualSort(){
+  if(taskSortBy!=='manual'){
+    taskSortBy='manual';
+    const sel=gid('taskSortSel');if(sel)sel.value='manual';
+  }
+}
+// Non-archived siblings in display order, renumbered to clean 0,10,20… so the
+// swap/insert math below is unambiguous even for tasks predating manual sort.
+function _normalizeSiblingOrder(parentId){
+  const sibs=sortTasks(getTaskChildren(parentId||null).filter(s=>!s.archived));
+  sibs.forEach((s,i)=>{s.order=i*10});
+  return sibs;
+}
+function _moveTask(id,dir){
+  const t=findTask(id);if(!t)return;
+  _forceManualSort();
+  const sibs=_normalizeSiblingOrder(t.parentId||null);
+  const idx=sibs.findIndex(s=>s.id===id);
+  const j=idx+dir;
+  if(idx<0||j<0||j>=sibs.length)return;
+  const other=sibs[j];
+  const tmp=t.order;t.order=other.order;other.order=tmp;
+  if(typeof haptic==='function')haptic(10);
+  window._refocusTaskId=id;
+  saveState('user');renderTaskList();
+}
+function moveTaskUp(id){_moveTask(id,-1)}
+function moveTaskDown(id){_moveTask(id,1)}
+function indentTask(id){
+  const t=findTask(id);if(!t)return;
+  _forceManualSort();
+  const sibs=_normalizeSiblingOrder(t.parentId||null);
+  const idx=sibs.findIndex(s=>s.id===id);
+  if(idx<=0)return; // no preceding sibling to nest under
+  const newParent=sibs[idx-1];
+  t.parentId=newParent.id;
+  newParent.collapsed=false; // reveal the freshly-nested child
+  const kids=getTaskChildren(newParent.id).filter(s=>s.id!==id);
+  const maxOrder=kids.reduce((m,s)=>Math.max(m,s.order||0),-10);
+  t.order=maxOrder+10;
+  if(typeof haptic==='function')haptic(10);
+  window._refocusTaskId=id;
+  saveState('user');renderTaskList();
+}
+function outdentTask(id){
+  const t=findTask(id);if(!t||t.parentId==null)return;
+  _forceManualSort();
+  const parent=findTask(t.parentId);if(!parent)return;
+  const grandparentId=parent.parentId||null;
+  // Renumber the grandparent's current children so `parent` has a clean order,
+  // then drop `t` just after it (the +5 gap keeps t between parent and the
+  // next sibling without colliding with the 0,10,20… grid).
+  _normalizeSiblingOrder(grandparentId);
+  const pOrder=parent.order||0;
+  t.parentId=grandparentId;
+  t.order=pOrder+5;
+  if(typeof haptic==='function')haptic(10);
+  window._refocusTaskId=id;
+  saveState('user');renderTaskList();
+}
+if(typeof window!=='undefined'){
+  window.isReorderMode=isReorderMode;
+  window.toggleReorderMode=toggleReorderMode;
+  window.moveTaskUp=moveTaskUp;
+  window.moveTaskDown=moveTaskDown;
+  window.indentTask=indentTask;
+  window.outdentTask=outdentTask;
+}
+
 /** Non-archived tasks pointing at a missing or archived parent become roots (sync/import repair). */
 function repairOrphanedTaskParents(){
   if(!Array.isArray(tasks)) return 0;
@@ -2070,6 +2156,38 @@ function updateFiltersSummary(){
   el.textContent=grpPart?sortPart+' · '+grpPart:sortPart;
 }
 
+// Keep the compact .filter-bar trigger labels in sync with the live filter
+// state. Called at the end of every renderTaskList so list switches, smart-view
+// changes, category picks and view toggles all reflect immediately.
+function syncFilterBar(){
+  const listLbl=gid('fbListsLabel');
+  if(listLbl){
+    let name='All Lists';
+    if(!showAllLists && typeof activeListId!=='undefined' && activeListId){
+      const l=lists.find(x=>x.id===activeListId);
+      if(l) name=l.name;
+    }
+    listLbl.textContent=name;
+  }
+  const tagLbl=gid('fbTagsLabel');
+  if(tagLbl){
+    const cat=(gid('filterCategory')||{}).value||'all';
+    let label='Tags';
+    if(cat&&cat!=='all'&&typeof getCategoryDef==='function'){
+      const def=getCategoryDef(cat);
+      if(def&&def.label) label=def.label;
+    }
+    tagLbl.textContent=label;
+    const btn=gid('fbTags');
+    if(btn) btn.classList.toggle('active', cat&&cat!=='all');
+  }
+  const viewLbl=gid('fbViewLabel');
+  if(viewLbl){
+    viewLbl.textContent=taskView==='board'?'Board':taskView==='calendar'?'Cal':'List';
+  }
+}
+window.syncFilterBar=syncFilterBar;
+
 let _semanticSearchReqId=0;
 let _updateTaskFiltersDebounce=null;
 
@@ -2907,6 +3025,7 @@ function renderTaskList(){
   renderSmartViewCounts();
   if(typeof updateHabitsHiddenNotice==='function') updateHabitsHiddenNotice();
   if(typeof updateFiltersSummary==='function') updateFiltersSummary();
+  if(typeof syncFilterBar==='function') syncFilterBar();
   const visibleTasks=tasks.filter(matchesFilters);
   const activeCount=visibleTasks.filter(t=>t.status!=='done'&&!t.parentId).length;
   const badge=gid('taskCountBadge');if(badge)badge.textContent=activeCount+' active';
