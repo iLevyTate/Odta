@@ -1,5 +1,5 @@
 {
-  "name": "OdTauLai Claude Bridge",
+  "name": "Odta Claude Bridge",
   "nodes": [
     {
       "parameters": {
@@ -88,12 +88,12 @@
       "typeVersion": 2,
       "position": [240, 740],
       "webhookId": "odtaulai-patch",
-      "notes": "Claude (via MCP or manual) POSTs patch here. OdTauLai picks it up on next Pull."
+      "notes": "Claude (via MCP or manual) POSTs patch here. Odta picks it up on next Pull."
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Store Claude's patch for OdTauLai to pull\nconst patch = $input.item.json.body || $input.item.json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.pendingPatch = JSON.stringify(patch);\nreturn { json: { ok: true, updateCount: (patch.updates||[]).length } };"
+        "jsCode": "// Store Claude's patch for Odta to pull\nconst patch = $input.item.json.body || $input.item.json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.pendingPatch = JSON.stringify(patch);\nreturn { json: { ok: true, updateCount: (patch.updates||[]).length } };"
       },
       "id": "store-patch",
       "name": "Store Patch",
@@ -141,18 +141,18 @@
     "templateCredsSetupCompleted": true
   },
   "_readme": {
-    "description": "OdTauLai ↔ Claude bridge via n8n",
+    "description": "Odta ↔ Claude bridge via n8n",
     "endpoints": {
-      "push":  "POST /webhook/odtaulai-push  — OdTauLai pushes task snapshot here",
-      "pull":  "GET  /webhook/odtaulai-pull  — OdTauLai polls for Claude's pending updates",
+      "push":  "POST /webhook/odtaulai-push  — Odta pushes task snapshot here",
+      "pull":  "GET  /webhook/odtaulai-pull  — Odta polls for Claude's pending updates",
       "patch": "POST /webhook/odtaulai-patch — Claude POSTs task updates here"
     },
     "how_to_use_from_claude_chat": [
-      "1. In OdTauLai → Settings → Claude Integration, enter your n8n Push and Pull URLs",
+      "1. In Odta → Settings → Claude Integration, enter your n8n Push and Pull URLs",
       "2. Click 'Push to Claude' — this sends your full task list to n8n",
       "3. In this Claude chat, paste your tasks or ask Claude to fetch them via n8n MCP",
       "4. Claude analyzes and POSTs a patch to /webhook/odtaulai-patch",
-      "5. Click 'Pull Updates' in OdTauLai — updates apply instantly",
+      "5. Click 'Pull Updates' in Odta — updates apply instantly",
       "",
       "Patch format Claude must return:",
       "{",

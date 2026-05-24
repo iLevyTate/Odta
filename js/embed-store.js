@@ -1,6 +1,6 @@
 /**
  * IndexedDB store for task embeddings + meta (Schwartz value vectors).
- * DB: stupind_intel (legacy name; retains existing IndexedDB after rebrand to OdTauLai)
+ * DB: stupind_intel (legacy name; retains existing IndexedDB through rebrands to OdTauLai then Odta)
  */
 const _EC = window.ODTAULAI_CONFIG || {};
 const INTEL_DB = (_EC.IDB && _EC.IDB.INTEL_DB) || 'stupind_intel';

@@ -3001,7 +3001,7 @@ function renderTaskList(){
           w.className = 'task-empty-welcome';
           const h = document.createElement('div');
           h.className = 'task-empty-welcome-title';
-          h.textContent = 'Welcome to OdTauLai';
+          h.textContent = 'Welcome to Odta';
           w.appendChild(h);
           const ul = document.createElement('ul');
           ul.className = 'task-empty-welcome-list';

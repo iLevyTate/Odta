@@ -797,7 +797,7 @@ function renderCalFeedsPanel(){
       <ol start="5" class="calfeed-worker-list">
         <li>Click <strong>Save and deploy</strong></li>
         <li>Copy your Worker URL (looks like <code>ical-proxy.your-name.workers.dev</code>)</li>
-        <li>In OdTauLai, paste it in the "CORS proxy URL" field above, appending <code>?url=</code></li>
+        <li>In Odta, paste it in the "CORS proxy URL" field above, appending <code>?url=</code></li>
       </ol>
       <p class="calfeed-worker-note"><strong>Privacy note:</strong> This Worker only forwards requests to <code>calendar.google.com</code>. You're the only one using it. Cloudflare's free tier gives 100k requests/day, more than enough for personal use.</p>
     </div>
@@ -945,7 +945,7 @@ async function confirmRemoveCalFeed(feedId){
   _loadCalFeeds();
   const f = _calFeeds.feeds.find(x => x.id === feedId);
   if(!f) return;
-  const q = `Remove "${f.label}"? This only removes it from OdTauLai — your actual calendar is unaffected.`;
+  const q = `Remove "${f.label}"? This only removes it from Odta — your actual calendar is unaffected.`;
   const ok = typeof showAppConfirm === 'function' ? await showAppConfirm(q) : confirm(q);
   if(!ok) return;
   removeCalFeed(feedId);

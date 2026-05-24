@@ -54,9 +54,9 @@ function startKeepalive(){
   if('mediaSession' in navigator){
     try{
       navigator.mediaSession.metadata=new MediaMetadata({
-        title:'OdTauLai Focus Timer',
+        title:'Odta Focus Timer',
         artist:'Pomodoro session in progress',
-        album:'OdTauLai'
+        album:'Odta'
       });
       navigator.mediaSession.playbackState='playing';
       navigator.mediaSession.setActionHandler('pause',()=>{if(running)pauseTimer()});

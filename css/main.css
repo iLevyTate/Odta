@@ -301,7 +301,7 @@
   .notif-status-btn:hover{background:var(--accent);color:var(--bg-0)}
   .sr-lbl{font-size:10px;color:#6a8aaa;letter-spacing:1px;min-width:120px}
   .sinput{width:56px;padding:6px 8px;background:#0d1a28;border:1px solid #1a2840;border-radius:6px;color:#c8d6e5;font-size:13px;font-family:inherit;text-align:center;outline:0}
-  select.sinput{width:auto;min-width:100px;text-align:left;padding-right:24px;text-overflow:ellipsis}
+  select.sinput{width:auto;min-width:140px;text-align:left;padding-right:24px}
   .sunit{font-size:10px;color:#4a6a8a}
   .toggle{width:36px;height:20px;border-radius:10px;background:#1a2a3a;position:relative;cursor:pointer;transition:.2s;border:1px solid #2a3a4a}
   .toggle.on{background:#1a4a6a;border-color:#2a6a9a}
@@ -310,7 +310,7 @@
 
   .fl{display:block;font-size:9px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:#4a6a8a;margin-bottom:4px}
   .fi{padding:7px 8px;background:#0d1a28;border:1px solid #1a2840;border-radius:6px;color:#c8d6e5;font-size:12px;font-family:inherit;outline:0}
-  .fi-w{width:100%}.fi-n{width:48px}.fi-s{width:76px;cursor:pointer}
+  .fi-w{width:100%}.fi-n{width:48px}.fi-s{min-width:110px;width:auto;cursor:pointer;padding-right:24px}
 
   .iform{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;padding:12px;background:#0a1320;border-radius:10px;border:1px solid #152238;margin-bottom:10px}
   .iadd{padding:7px 14px;background:linear-gradient(135deg,#1a5a2a,#228b3b);border-radius:6px;color:#c8f0d0;font-size:11px;font-weight:700;letter-spacing:1px}
@@ -320,7 +320,7 @@
   .iitem.flash{background:#0d2838;border-color:#2980b9}
   .idot{width:7px;height:7px;border-radius:50%;background:#2a3a4a;flex-shrink:0;transition:.3s}
   .idot.active{background:#3d8bcc;box-shadow:0 0 6px rgba(61,139,204,.3)}.idot.flash{background:#48b5e0;box-shadow:0 0 10px rgba(72,181,224,.5)}
-  .iinfo{flex:1;min-width:0}.iname{font-size:11px;font-weight:600;color:#b0c4d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .iinfo{flex:1;min-width:0}.iname{font-size:11px;font-weight:600;color:#b0c4d8;word-break:break-word}
   .imeta{font-size:var(--fs-12);color:var(--text-3);margin-top:1px}
   .istat{text-align:right;flex-shrink:0}.ifires{font-size:13px;font-weight:700;color:#3d8bcc}.ifires.flash{color:#48b5e0}
   .inext{font-size:var(--fs-12);color:var(--text-3);margin-top:1px}
@@ -334,12 +334,15 @@
      (line ~716). The legacy green-gradient rule that lived here was dead
      code — superseded by the cascade — and removed to avoid future
      confusion about which color the Add button should be. */
-  .task-list{display:flex;flex-direction:column;gap:6px}
+  /* Reserve vertical space so the first paint (empty taskList) matches the
+     populated render that arrives once app.js executes — otherwise the FAB,
+     footer and surrounding chrome shift down noticeably when N tasks land. */
+  .task-list{display:flex;flex-direction:column;gap:6px;min-height:50vh;contain:layout}
   /* Mini-timer: body padding keeps content above the floating pill */
   body:has(.mini-timer.visible){padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}
   /* Task tags: cap width to prevent horizontal overflow when task has many tags */
-  .task-tags-inline{display:flex;flex-wrap:wrap;gap:4px;max-width:100%;overflow:hidden}
-  .task-tags-inline .tag-chip{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .task-tags-inline{display:flex;flex-wrap:wrap;gap:4px;max-width:100%}
+  .task-tags-inline .tag-chip{max-width:100%;white-space:normal;word-break:break-word}
   .task-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:#0a1320;border:1px solid #152238;transition:.3s}
   .task-item.active-task{border-color:var(--accent);background:var(--work-bg);box-shadow:inset 0 0 0 1px rgba(106,168,255,.2)}
   .task-play{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;transition:.2s}
@@ -793,7 +796,7 @@
   .header-logo{width:32px;height:32px;border-radius:8px;display:block;flex-shrink:0}
   .header-line{display:none}
   .header-mid{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:6px}
-  .header-date{font-size:13px;color:var(--text-3);letter-spacing:0;font-family:var(--font-sans)}
+  .header-date{font-size:13px;color:var(--text-3);letter-spacing:0;font-family:var(--font-sans);min-height:1.2em}
   .what-next-pill{font-size:11px;font-weight:600;padding:6px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg-2);color:var(--accent);cursor:pointer;font-family:inherit;transition:background .15s,border-color .15s}
   .what-next-pill:hover{background:rgba(61,139,204,.12);border-color:rgba(61,139,204,.35)}
 
@@ -1023,7 +1026,7 @@
   .qa-parse-chips[hidden]{display:none}
   .qpc-name{
     font-weight:600;color:var(--text-1);
-    max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    max-width:75%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   }
   .qpc-list{display:inline-flex;flex-wrap:wrap;gap:var(--space-2)}
   .qpc{
@@ -1846,7 +1849,7 @@
     .today-banner{padding:12px 8px;margin-bottom:10px;gap:4px!important;flex-wrap:nowrap!important}
     .tb-item{flex:1!important;min-width:0!important;text-align:center;padding:0 2px}
     .tb-num{font-size:22px!important}
-    .tb-lbl{font-size:10px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .tb-lbl{font-size:10px!important;white-space:normal;word-break:keep-all;line-height:1.15}
     .tb-divider{display:none!important}
 
     /* Smart views - horizontal scroll instead of wrap. mask-image fades the
@@ -2115,7 +2118,7 @@
     /* Bumped from 34→40 — compromise between Apple HIG 44pt and density of multiple per-task actions */
     .ta-btn{width:40px;height:40px;font-size:14px}
     .task-row-secondary{padding:0 12px 8px 48px;gap:6px;font-size:10px}
-    .task-tags-inline .tag-chip{font-size:10px;padding:1px 6px;max-width:100px;overflow:hidden;text-overflow:ellipsis}
+    .task-tags-inline .tag-chip{font-size:10px;padding:1px 6px;max-width:100%;white-space:normal;word-break:break-word}
 
     /* === TIMER TAB: smaller ring so everything fits === */
     .ring-wrap{width:200px;height:200px;margin:0 auto}
@@ -2143,7 +2146,7 @@
     .iform{flex-wrap:wrap;gap:6px;align-items:flex-end}
     .iform > div:first-child,.iform > div:first-child[style]{flex:1 1 100%!important}
     .iform > div:not(:first-child){flex:1 1 auto}
-    .iform select.fi-s{width:100%!important;padding-right:24px!important;text-overflow:ellipsis;min-width:90px}
+    .iform select.fi-s{width:100%!important;padding-right:24px!important;min-width:120px}
     .iprev{width:40px;height:40px;min-width:40px}
     .iform .iadd{min-height:40px!important;padding:9px 16px!important;flex:0 1 auto;white-space:nowrap}
 
