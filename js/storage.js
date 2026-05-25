@@ -644,7 +644,7 @@ function _applyState(s){
     if(sortIn === 'order') sortIn = 'manual';
     let groupIn = s.taskGroupBy;
     if(groupIn === 'dueDate') groupIn = 'due';
-    const validSorts = ['smart','manual','priority','due','name','created','time','impact'];
+    const validSorts = ['smart','manual','priority','due','name','created','recent','updated','time','impact'];
     const validSmart = ['all','today','week','overdue','unscheduled','starred','impact','habits','completed','archived'];
     const validGroup = ['none','priority','status','due','list'];
     if(s.taskView   && validViews.includes(s.taskView))  taskView   = s.taskView;
