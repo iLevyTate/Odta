@@ -953,7 +953,10 @@ function renderTaskItem(t,depth){
   let touchStartX=0,touchStartY=0,touchCurrentX=0,swiping=false;
   let _longPressId=null,_longPressFired=false;
   d.addEventListener('touchstart',function(e){
-    if(e.target.closest('button')||e.target.closest('input'))return;
+    // Don't track a swipe (or long-press) when the touch begins on the drag
+    // grip — that gesture belongs to Sortable's reorder, and double-handling
+    // it would also fire move/delete on release.
+    if(e.target.closest('button')||e.target.closest('input')||e.target.closest('.drag-handle'))return;
     touchStartX=e.touches[0].clientX;touchStartY=e.touches[0].clientY;swiping=false;
     _longPressFired=false;
     if(_longPressId){clearTimeout(_longPressId);_longPressId=null}
