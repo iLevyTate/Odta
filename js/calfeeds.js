@@ -507,6 +507,30 @@ if(typeof window !== 'undefined'){
   window.retryFailedCalFeeds = retryFailedCalFeeds;
 }
 
+// Collapse identical occurrences that entered the merged set from more than one
+// source: the same calendar subscribed as two feeds, an event living on two of
+// your calendars, or a Google recurring master colliding with a RECURRENCE-ID
+// override in the same slot. Two rows sharing UID + date + time are never
+// intentional, so keep the first and drop the rest. Distinct UIDs (or distinct
+// times) are preserved, so genuinely different events both still show. Falls
+// back to title when a feed omits UID.
+function _dedupCalEvents(list){
+  if(!Array.isArray(list) || list.length < 2) return list;
+  const seen = new Set();
+  const out = [];
+  for(const ev of list){
+    const date = ev.dateISO || '';
+    const time = ev.time || '';
+    const key = ev.uid
+      ? 'u:' + ev.uid + '|' + date + '|' + time
+      : 'n:' + String(ev.title || '').trim().toLowerCase() + '|' + date + '|' + time;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(ev);
+  }
+  return out;
+}
+
 function getCalFeedEventsForDate(isoDate){
   _loadCalFeeds();
   const out = [];
@@ -527,7 +551,7 @@ function getCalFeedEventsForDate(isoDate){
       }
     });
   });
-  return out;
+  return _dedupCalEvents(out);
 }
 
 // Get all visible feed events (for list view / search)
@@ -540,7 +564,7 @@ function getAllCalFeedEvents(){
       out.push({ ...ev, feedId: feed.id, feedLabel: feed.label, feedColor: feed.color });
     });
   });
-  return out;
+  return _dedupCalEvents(out);
 }
 
 function _calEventStartMs(ev){
