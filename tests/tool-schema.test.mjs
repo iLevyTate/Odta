@@ -124,36 +124,37 @@ test('validator: tags coerced from comma/space string to array, # stripped', () 
   assert.deepEqual(r.valid[0].args.tags, ['a', 'b', 'c', 'd']);
 });
 
-test('validator: DELETE_TASK on non-archived rejected', () => {
+test('validator: DELETE_TASK on any task is allowed (no archive prerequisite)', () => {
   const { validateOps } = loadSchema();
-  const ctx = ctxFrom([{ id: 5, name: 'T', archived: false }], []);
+  const ctx = ctxFrom([{ id: 5, name: 'T' }], []);
   const r = validateOps([{ name: 'DELETE_TASK', args: { id: 5 } }], ctx);
-  assert.equal(r.valid.length, 0);
-  assert.equal(r.rejected[0].reason, 'TASK_NOT_ARCHIVED');
+  assert.equal(r.valid.length, 1);
+  assert.equal(r.rejected.length, 0);
+  assert.equal(r.destructiveLevel, 'hard');
 });
 
-test('validator: DELETE on archived is allowed and destructiveLevel=hard', () => {
+test('validator: a single DELETE is destructiveLevel=hard (delete is permanent)', () => {
   const { validateOps } = loadSchema();
-  const ctx = ctxFrom([{ id: 5, name: 'T', archived: true }], []);
+  const ctx = ctxFrom([{ id: 5, name: 'T' }], []);
   const r = validateOps([{ name: 'DELETE_TASK', args: { id: 5 } }], ctx);
   assert.equal(r.valid.length, 1);
   assert.equal(r.destructiveLevel, 'hard');
 });
 
-test('validator: mass ARCHIVE (≥5) is hard destructive', () => {
+test('validator: mass DELETE (≥5) is hard destructive', () => {
   const { validateOps } = loadSchema();
-  const tasks = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, name: 'T', archived: false }));
+  const tasks = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, name: 'T' }));
   const ctx = ctxFrom(tasks, []);
-  const r = validateOps(tasks.map((t) => ({ name: 'ARCHIVE_TASK', args: { id: t.id } })), ctx);
+  const r = validateOps(tasks.map((t) => ({ name: 'DELETE_TASK', args: { id: t.id } })), ctx);
   assert.equal(r.valid.length, 6);
   assert.equal(r.destructiveLevel, 'hard');
 });
 
-test('validator: 1–4 ARCHIVE is warn level', () => {
+test('validator: 1–4 CHANGE_LIST is warn level', () => {
   const { validateOps } = loadSchema();
-  const ctx = ctxFrom([{ id: 1, archived: false }, { id: 2, archived: false }, { id: 3, archived: false }], []);
+  const ctx = ctxFrom([{ id: 1 }, { id: 2 }, { id: 3 }], [{ id: 9, name: 'L' }]);
   const r = validateOps(
-    [{ name: 'ARCHIVE_TASK', args: { id: 1 } }, { name: 'ARCHIVE_TASK', args: { id: 2 } }, { name: 'ARCHIVE_TASK', args: { id: 3 } }],
+    [{ name: 'CHANGE_LIST', args: { id: 1, listId: 9 } }, { name: 'CHANGE_LIST', args: { id: 2, listId: 9 } }, { name: 'CHANGE_LIST', args: { id: 3, listId: 9 } }],
     ctx,
   );
   assert.equal(r.destructiveLevel, 'warn');
@@ -177,27 +178,27 @@ test('validator: ops past batch cap get BATCH_LIMIT rejection entries', () => {
   assert.ok(r.rejected.every((x) => /BATCH_LIMIT/.test(x.reason)));
 });
 
-test('validator: ARCHIVE_TASK then DELETE_TASK in same batch validates', () => {
-  const { validateOps } = loadSchema();
-  const ctx = ctxFrom([{ id: 5, name: 'T', archived: false }], []);
-  const r = validateOps(
-    [{ name: 'ARCHIVE_TASK', args: { id: 5 } }, { name: 'DELETE_TASK', args: { id: 5 } }],
-    ctx,
-  );
-  assert.equal(r.valid.length, 2);
-  assert.equal(r.rejected.length, 0);
+test('validator: ARCHIVE_TASK / RESTORE_TASK are no longer recognized ops', () => {
+  const { TOOL_SCHEMA, validateOps } = loadSchema();
+  assert.equal(TOOL_SCHEMA.ARCHIVE_TASK, undefined);
+  assert.equal(TOOL_SCHEMA.RESTORE_TASK, undefined);
+  const ctx = ctxFrom([{ id: 5, name: 'T' }], []);
+  const r = validateOps([{ name: 'ARCHIVE_TASK', args: { id: 5 } }], ctx);
+  assert.equal(r.valid.length, 0);
+  assert.ok(/UNKNOWN_OP/.test(r.rejected[0].reason));
 });
 
-test('validator: ARCHIVE_TASK with parentId cycle in tasksById completes (batch sim BFS)', () => {
+test('validator: MOVE_TASK with parentId cycle in tasksById completes (batch sim BFS)', () => {
   const { validateOps } = loadSchema();
   const ctx = ctxFrom(
     [
-      { id: 1, name: 'A', archived: false, parentId: 2 },
-      { id: 2, name: 'B', archived: false, parentId: 1 },
+      { id: 1, name: 'A', parentId: 2 },
+      { id: 2, name: 'B', parentId: 1 },
     ],
     [],
   );
-  const r = validateOps([{ name: 'ARCHIVE_TASK', args: { id: 1 } }], ctx);
+  // The descendant BFS must terminate on a pre-existing cycle rather than hang.
+  const r = validateOps([{ name: 'MOVE_TASK', args: { id: 1, newParentId: null } }], ctx);
   assert.equal(r.valid.length, 1);
   assert.equal(r.rejected.length, 0);
 });

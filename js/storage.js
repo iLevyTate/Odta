@@ -2,7 +2,7 @@
 // Internal keys keep stupind_* prefix so existing installs retain data through rebrands (stupind → OdTauLai → Odta).
 const STORE_KEY     = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.STATE) || 'stupind_state';
 const ARCHIVE_KEY   = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.ARCHIVE) || 'stupind_archive';
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 /** P2P sync: permanent task deletion tombstones id → deleted-at (ms). Merged with max(ts). */
 var syncTaskDels = {};
@@ -219,6 +219,14 @@ function migrateState(s){
         return base;
       });
     }
+  });
+
+  step(7, () => {
+    // The "archive" feature was removed in favour of direct delete + undo.
+    // Archived tasks were the old recycle bin, so drop them permanently on
+    // upgrade. Archiving always cascaded to descendants, so every member of an
+    // archived subtree carries archived:true — filtering the flat list is safe.
+    if(Array.isArray(s.tasks)) s.tasks = s.tasks.filter(t => !(t && t.archived === true));
   });
 
   // ── Field-level repair pass — runs on EVERY load regardless of version ──────
@@ -645,7 +653,7 @@ function _applyState(s){
     let groupIn = s.taskGroupBy;
     if(groupIn === 'dueDate') groupIn = 'due';
     const validSorts = ['smart','manual','priority','due','name','created','recent','updated','time','impact'];
-    const validSmart = ['all','today','week','overdue','unscheduled','starred','impact','habits','completed','archived'];
+    const validSmart = ['all','today','week','overdue','unscheduled','starred','impact','habits','completed'];
     const validGroup = ['none','priority','status','due','list'];
     if(s.taskView   && validViews.includes(s.taskView))  taskView   = s.taskView;
     if(sortIn && validSorts.includes(sortIn)) taskSortBy = sortIn;
@@ -1076,12 +1084,10 @@ function _summarizeImport(s, archiveBlob){
   const cur = {
     tasks:  Array.isArray(tasks) ? tasks.length : 0,
     lists:  (typeof lists !== 'undefined' && Array.isArray(lists)) ? lists.length : 0,
-    archived: (Array.isArray(tasks) ? tasks.filter(t => t && t.archived).length : 0),
   };
   const inc = {
     tasks:  Array.isArray(s.tasks) ? s.tasks.length : 0,
     lists:  Array.isArray(s.lists) ? s.lists.length : 0,
-    archived: Array.isArray(s.tasks) ? s.tasks.filter(t => t && t.archived).length : 0,
   };
   let archDays = null;
   if(archiveBlob){

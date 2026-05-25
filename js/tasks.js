@@ -1076,9 +1076,9 @@ function getTaskChildren(parentId){return tasks.filter(t=>(t.parentId||null)===p
 function _subtaskAllowedUnderShownParent(t){
   if(!t) return false;
   const today = (typeof todayISO === 'function') ? todayISO() : null;
-  if(t.archived && smartView !== 'archived') return false;
+  if(t.archived) return false;
   if(today && t.hiddenUntil && t.hiddenUntil > today
-     && smartView !== 'snoozed' && smartView !== 'archived'
+     && smartView !== 'snoozed'
      && smartView !== 'completed') return false;
   return true;
 }
@@ -1354,82 +1354,61 @@ function toggleTask(id, ev){
   if(typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
 }
 
-async function removeTask(id, ev, opts){
+async function removeTask(id, ev){
   _stopEvt(ev);
   const task=findTask(id);if(!task)return;
-  // If viewing archive — or the caller forces it (swipe-to-delete) — this is a
-  // permanent delete rather than an archive.
-  const forceDelete=!!(opts&&opts.force);
-  if(task.archived||smartView==='archived'||forceDelete){
-    const descendants=getTaskDescendantIds(id);
-    if(!(await showAppConfirm('Permanently delete "'+task.name+'"'+(descendants.length>0?' and '+descendants.length+' subtask'+(descendants.length!==1?'s':''):'')+'? Cannot be undone.')))return;
-    const toRemove=[id,...descendants];
-    if(toRemove.includes(activeTaskId)){
-      if(taskStartedAt){const t=findTask(activeTaskId);if(t)t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000)}
-      activeTaskId=null;taskStartedAt=null;
-      if(typeof window!=='undefined'&&typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
-    }
-    for(const rid of toRemove) _taskIndexRemove(rid);
-    tasks=tasks.filter(t=>!toRemove.includes(t.id));
-    if(typeof syncTaskDels==='object'&&syncTaskDels){
-      const t = Date.now();
-      for(const rid of toRemove) syncTaskDels[rid]=t;
-    }
-    if(typeof embedStore !== 'undefined' && embedStore && embedStore.purge){
-      embedStore.purge(toRemove).catch(()=>{});
-    }
-  }else{
-    // Archive it
-    const descendants=getTaskDescendantIds(id);
-    if(descendants.length>0&&!(await showAppConfirm('Archive "'+task.name+'" and '+descendants.length+' subtask'+(descendants.length!==1?'s':'')+'?')))return;
-    const toArchive=[id,...descendants];
-    // Remember whether the archive stopped an active timer — undo needs to
-    // restore the link (#8 in UX audit). The accumulated burst is folded
-    // into totalSec before clearing, so it's preserved across the undo.
-    const _activeIdBeforeArchive = toArchive.includes(activeTaskId) ? activeTaskId : null;
-    if(toArchive.includes(activeTaskId)){
-      if(taskStartedAt){const t=findTask(activeTaskId);if(t)t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000)}
-      activeTaskId=null;taskStartedAt=null;
-      if(typeof window!=='undefined'&&typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
-    }
-    toArchive.forEach(tid=>{const t=findTask(tid);if(t)t.archived=true});
-    // Undo affordance for accidental misfires (the × button is small).
-    // Even when descendants forced a confirm, surface undo — confirm fatigue
-    // plus accidental Enter is real (#9 in UX audit).
-    if(typeof showActionToast==='function' && smartView!=='archived'){
-      const _undoIds=toArchive.slice();
-      const _name=task.name;
-      const _label = descendants.length > 0
-        ? `Archived "${task.name}" + ${descendants.length} subtask${descendants.length===1?'':'s'}`
-        : 'Task archived';
-      showActionToast(_label, 'Undo', () => {
-        _undoIds.forEach(uid => {
-          const t = findTask(uid);
-          if(t) t.archived = false;
-        });
-        if(_activeIdBeforeArchive != null && activeTaskId == null){
-          activeTaskId = _activeIdBeforeArchive;
-          taskStartedAt = Date.now();
-          if(typeof window!=='undefined' && typeof window._updateActiveTaskTickSchedule==='function') window._updateActiveTaskTickSchedule();
-        }
-        renderTaskList();
-        renderBanner();
-        saveState('user');
-        if(typeof announce === 'function') announce('Restored: ' + _name);
-      }, 5000);
-    }
+  // Delete is permanent — the Undo toast (and Cmd+Z ring) is the safety net, so
+  // an accidental × is fully recoverable for 5s. Deleting a subtree is
+  // higher-stakes, so still confirm when there are children.
+  const descendants=getTaskDescendantIds(id);
+  if(descendants.length>0&&!(await showAppConfirm('Delete "'+task.name+'" and '+descendants.length+' subtask'+(descendants.length!==1?'s':'')+'?')))return;
+  const toRemove=[id,...descendants];
+  // Remember whether the delete stopped an active timer — undo restores the
+  // link. The accumulated burst is folded into totalSec (captured in the
+  // snapshot below) before clearing, so it survives the undo.
+  const _activeIdBeforeDelete = toRemove.includes(activeTaskId) ? activeTaskId : null;
+  if(toRemove.includes(activeTaskId)){
+    if(taskStartedAt){const t=findTask(activeTaskId);if(t)t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000)}
+    activeTaskId=null;taskStartedAt=null;
+    if(typeof window!=='undefined'&&typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
+  }
+  // Snapshot removed objects + original positions so undo re-inserts them
+  // exactly where they were (ascending index preserves order).
+  const _removedSnaps=[];
+  tasks.forEach((t,idx)=>{ if(toRemove.includes(t.id)) _removedSnaps.push({idx, task:{...t}}); });
+  for(const rid of toRemove) _taskIndexRemove(rid);
+  tasks=tasks.filter(t=>!toRemove.includes(t.id));
+  if(typeof syncTaskDels==='object'&&syncTaskDels){
+    const ts = Date.now();
+    for(const rid of toRemove) syncTaskDels[rid]=ts;
+  }
+  if(typeof embedStore !== 'undefined' && embedStore && embedStore.purge){
+    embedStore.purge(toRemove).catch(()=>{});
+  }
+  if(typeof showActionToast==='function'){
+    const _name=task.name;
+    const _label = descendants.length > 0
+      ? `Deleted "${task.name}" + ${descendants.length} subtask${descendants.length===1?'':'s'}`
+      : 'Task deleted';
+    showActionToast(_label, 'Undo', () => {
+      _removedSnaps.slice().sort((a,b)=>a.idx-b.idx).forEach(({idx, task:snap}) => {
+        tasks.splice(Math.min(idx, tasks.length), 0, {...snap});
+      });
+      if(typeof rebuildTaskIdIndex==='function') rebuildTaskIdIndex();
+      if(typeof syncTaskDels==='object'&&syncTaskDels){ for(const rid of toRemove) delete syncTaskDels[rid]; }
+      if(_activeIdBeforeDelete != null && activeTaskId == null){
+        activeTaskId = _activeIdBeforeDelete;
+        taskStartedAt = Date.now();
+        if(typeof window!=='undefined' && typeof window._updateActiveTaskTickSchedule==='function') window._updateActiveTaskTickSchedule();
+      }
+      renderTaskList();
+      renderBanner();
+      saveState('user');
+      if(typeof announce === 'function') announce('Restored: ' + _name);
+    }, 5000);
   }
   window._preserveTaskScroll = true;
   renderTaskList();renderBanner();saveState('user')
-}
-
-function restoreTask(id, ev){
-  _stopEvt(ev);
-  const t=findTask(id);if(!t)return;
-  t.archived=false;
-  // Restore any descendants too
-  getTaskDescendantIds(id).forEach(did=>{const d=findTask(did);if(d)d.archived=false});
-  renderTaskList();saveState('user')
 }
 
 /**
@@ -1466,28 +1445,6 @@ function unsnoozeTask(id, ev){
   renderTaskList(); saveState('user');
 }
 
-function emptyArchive(){
-  const removed=tasks.filter(t=>t.archived).map(t=>t.id);
-  const keep=tasks.filter(t=>!t.archived);
-  tasks=keep;
-  if(removed.length&&typeof syncTaskDels==='object'&&syncTaskDels){
-    const t=Date.now();
-    for(const id of removed) syncTaskDels[id]=t;
-  }
-  if(removed.length&&typeof embedStore!=='undefined'&&embedStore&&embedStore.purge){
-    embedStore.purge(removed).catch(()=>{});
-  }
-  rebuildTaskIdIndex();
-  renderTaskList();saveState('user')
-}
-async function emptyArchiveWithConfirm(){
-  const msg='Permanently delete ALL archived tasks? This cannot be undone.';
-  if(typeof showAppConfirm==='function'){if(!(await showAppConfirm(msg)))return}
-  else if(!confirm(msg))return;
-  emptyArchive();
-}
-window.emptyArchiveWithConfirm=emptyArchiveWithConfirm;
-
 // Tags / Categories
 function setFilterCategory(catId) {
   const sel = document.getElementById('filterCategory');
@@ -1505,7 +1462,6 @@ window.setFilterCategory = setFilterCategory;
 function setSmartView(v){
   smartView=v;
   document.querySelectorAll('.sv-chip').forEach(el=>{el.classList.toggle('active',el.dataset.view===v)});
-  const notice=gid('archivedNotice');if(notice)notice.hidden = v !== 'archived';
   // Sync collapsed/expanded class to the user preference. By default the bar
   // is collapsed-to-active so the task header stays compact; users can opt
   // into the always-expanded layout with the `All views ▾` toggle.
@@ -2201,7 +2157,7 @@ let _updateTaskFiltersDebounce=null;
 //
 //   tag:work          one or more tags (#work also works)
 //   list:Personal     list by name (case-insensitive)
-//   is:overdue        overdue|today|week|done|archived|starred|recurring
+//   is:overdue        overdue|today|week|done|starred|recurring
 //   priority:high     urgent|high|normal|low|none (@high also works)
 //   due:today         today|tomorrow|week|none|overdue|YYYY-MM-DD
 //   status:open       open|progress|review|blocked|done
@@ -2315,7 +2271,7 @@ function renderActiveFilters(){
       inbox:'Inbox', today:'Today', week:'This week', overdue:'Overdue',
       unscheduled:'Unscheduled', starred:'Starred', impact:'Impact',
       waiting:'Waiting', stuck:'Stuck', snoozed:'Snoozed',
-      habits:'Habits', completed:'Done', archived:'Archive',
+      habits:'Habits', completed:'Done',
     };
     const label = labelMap[smartView] || smartView;
     chips.push(_afChip('qpc--view', 'View: ' + label, 'view ' + label,
@@ -2528,9 +2484,6 @@ function setTaskView(v){
   saveState('user')
 }
 function matchesFilters(t){
-  // Archive view shows ONLY archived
-  if(smartView==='archived'){if(!t.archived)return false}
-  else if(t.archived)return false;
   // List filter — only apply on 'all' view, not on focused smart views
   const listSensitiveViews=['all','inbox','waiting','stuck'];
   if(!showAllLists&&listSensitiveViews.includes(smartView)&&t.listId&&activeListId&&t.listId!==activeListId)return false;
@@ -2538,13 +2491,13 @@ function matchesFilters(t){
   if(!showAllLists&&typeof cfg==='object'&&cfg&&cfg.focusListMode&&activeListId&&t.listId!==activeListId)return false;
   // Smart view filters
   const today=todayISO();
-  // hiddenUntil (snooze): hide from EVERY main view except 'snoozed' and
-  // 'archived', UNLESS the user explicitly searched is:snoozed — that should
-  // surface snoozed tasks regardless of the active smart view (#22 in UX
-  // audit). Same for is:hidden (alias) and is:any (kept for symmetry).
+  // hiddenUntil (snooze): hide from EVERY main view except 'snoozed',
+  // UNLESS the user explicitly searched is:snoozed — that should surface
+  // snoozed tasks regardless of the active smart view (#22 in UX audit).
+  // Same for is:hidden (alias) and is:any (kept for symmetry).
   const opIsList = (taskFilters && taskFilters.ops && Array.isArray(taskFilters.ops.is)) ? taskFilters.ops.is : [];
   const _snoozedOverride = opIsList.includes('snoozed') || opIsList.includes('hidden');
-  if(t.hiddenUntil && t.hiddenUntil>today && smartView!=='snoozed' && smartView!=='completed' && smartView!=='archived' && !_snoozedOverride) return false;
+  if(t.hiddenUntil && t.hiddenUntil>today && smartView!=='snoozed' && smartView!=='completed' && !_snoozedOverride) return false;
   if(smartView==='today'){if(t.dueDate!==today||t.status==='done')return false}
   else if(smartView==='week'){
     if(!t.dueDate||t.status==='done')return false;
@@ -2664,7 +2617,6 @@ function matchesFilters(t){
           }
           case 'done':      return t.status === 'done';
           case 'open':      return t.status !== 'done';
-          case 'archived':  return !!t.archived;
           case 'starred':   return !!t.starred;
           case 'recurring':
           case 'habit':     return !!t.recur;
@@ -2857,13 +2809,6 @@ function renderSmartViewCounts(){
   set('svcStuck',visibleNow.filter(t=>typeof t.lastModified==='number'&&t.lastModified>0&&t.lastModified<stuckCutoff).length);
   set('svcSnoozed',activeNotDone.filter(t=>t.hiddenUntil&&t.hiddenUntil>today).length);
   set('svcCompleted',active.filter(t=>t.status==='done').length);
-  const archivedCount=tasks.filter(t=>t.archived&&inList(t)).length;
-  set('svcArchived',archivedCount);
-  // Pin the Archive chip in the collapsed smart-views bar whenever the
-  // archive is non-empty — otherwise the only entry point is the All-views
-  // expander, which a first-time user has no reason to discover.
-  const archChip=document.querySelector('.sv-chip[data-view="archived"]');
-  if(archChip) archChip.classList.toggle('sv-chip-pinned', archivedCount>0);
   const doneChip=document.querySelector('.sv-chip[data-view="completed"]');
   if(doneChip) doneChip.classList.toggle('sv-chip-pinned', (active.filter(t=>t.status==='done').length)>0);
 }
@@ -2923,10 +2868,8 @@ function _dailyMomentumStats(){
 function renderDailyMomentum(){
   const host = gid('dailyMomentum');
   if(!host) return;
-  // Hide on Archive smart view — momentum doesn't make sense there. Also
-  // hide while the welcome card is up (no tasks yet — no momentum to show).
+  // Hide while the welcome card is up (no tasks yet — no momentum to show).
   if(!Array.isArray(tasks) || !tasks.length){ host.hidden = true; host.replaceChildren(); return; }
-  if(smartView === 'archived'){ host.hidden = true; return; }
   const s = _dailyMomentumStats();
   host.hidden = false;
   host.replaceChildren();
@@ -2965,12 +2908,15 @@ function renderDailyMomentum(){
   ringWrap.appendChild(ringMeta);
   host.appendChild(ringWrap);
 
-  // Streak (consecutive days with ≥1 completion).
+  // Day streak (consecutive days you've completed at least one task).
   const streakCls = s.streak >= 7 ? 'dm-cell-value--success' : (s.streak >= 1 ? 'dm-cell-value--accent' : '');
   const streakLabel = s.streak === 0 ? '—' : (s.streak + ' day' + (s.streak !== 1 ? 's' : ''));
-  host.appendChild(mkCell('streak', 'Streak', streakLabel, streakCls,
+  const streakTitle = s.streak === 0
+    ? 'Day streak: complete a task today to start one. Counts consecutive days you finish at least one task.'
+    : s.streak + '-day streak — consecutive days you’ve completed at least one task. Finish a task today to keep it going.';
+  host.appendChild(mkCell('streak', 'Day streak', streakLabel, streakCls,
     () => { if(typeof setSmartView === 'function') setSmartView('completed'); },
-    'Current completion streak: ' + s.streak + ' day' + (s.streak !== 1 ? 's' : '')));
+    streakTitle));
 
   // 7-day sparkline of completions.
   const sparkCell = document.createElement('button');
@@ -3088,10 +3034,6 @@ function renderTaskList(){
       empty.appendChild(buildIcon('filter'));
       addBlock('task-empty-title', 'No tasks match your filters');
       addBlock('task-empty-help',  'Try adjusting the Filters panel, or switch to the "All" smart view.');
-    } else if(smartView==='archived'){
-      empty.appendChild(buildIcon('archive'));
-      addBlock('task-empty-title', 'Archive is empty');
-      addBlock('task-empty-help',  'Archived tasks will appear here when you archive them from the menu.');
     } else if(smartView==='habits'){
       empty.appendChild(buildIcon('refresh'));
       addBlock('task-empty-title', 'No recurring tasks yet');

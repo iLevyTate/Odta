@@ -25,7 +25,7 @@ test('importData calls showImportConfirm before _applyState', () => {
   assert.ok(confirmAt < applyAt, 'showImportConfirm must run BEFORE _applyState (destructive)');
 });
 
-test('_summarizeImport returns current/incoming/archive counts', () => {
+test('_summarizeImport returns current/incoming/archive-day counts', () => {
   const idx = storageSrc.indexOf('function _summarizeImport');
   assert.ok(idx > 0, '_summarizeImport not found');
   const body = storageSrc.slice(idx, idx + 800);
@@ -33,8 +33,7 @@ test('_summarizeImport returns current/incoming/archive counts', () => {
   // not just "import 142 tasks?" with no point of comparison.
   assert.match(body, /current/, 'must return current counts');
   assert.match(body, /incoming/, 'must return incoming counts');
-  assert.match(body, /archived/, 'must include archived count');
-  assert.match(body, /archiveDays/, 'must surface archive day count');
+  assert.match(body, /archiveDays/, 'must surface daily Past-Days archive count');
 });
 
 test('showImportConfirm renders with textContent only', () => {

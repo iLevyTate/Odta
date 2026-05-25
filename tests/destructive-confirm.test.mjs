@@ -22,7 +22,7 @@ test('hard bulk confirm: needed for hard + no DELETE', () => {
   const f = loadIntelHardBulkConfirmNeeded();
   assert.equal(
     f(
-      [{ name: 'ARCHIVE_TASK', args: { id: 1 } }],
+      [{ name: 'CHANGE_LIST', args: { id: 1, listId: 9 } }],
       'hard',
     ),
     true,
@@ -33,7 +33,7 @@ test('hard bulk confirm: not needed when DELETE is present (checkbox path)', () 
   const f = loadIntelHardBulkConfirmNeeded();
   assert.equal(
     f(
-      [{ name: 'DELETE_TASK', args: { id: 1 } }, { name: 'ARCHIVE_TASK', args: { id: 2 } }],
+      [{ name: 'DELETE_TASK', args: { id: 1 } }, { name: 'CHANGE_LIST', args: { id: 2, listId: 9 } }],
       'hard',
     ),
     false,
@@ -42,8 +42,8 @@ test('hard bulk confirm: not needed when DELETE is present (checkbox path)', () 
 
 test('hard bulk confirm: not for warn/none', () => {
   const f = loadIntelHardBulkConfirmNeeded();
-  assert.equal(f([{ name: 'ARCHIVE_TASK', args: { id: 1 } }], 'warn'), false);
-  assert.equal(f([{ name: 'ARCHIVE_TASK', args: { id: 1 } }], 'none'), false);
+  assert.equal(f([{ name: 'CHANGE_LIST', args: { id: 1, listId: 9 } }], 'warn'), false);
+  assert.equal(f([{ name: 'CHANGE_LIST', args: { id: 1, listId: 9 } }], 'none'), false);
 });
 
 test('hard bulk confirm: empty ops', () => {

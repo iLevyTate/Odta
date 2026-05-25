@@ -12,8 +12,6 @@ const TOOL_SCHEMA = {
   MARK_DONE:      { required:['id'],   optional:['completionNote'], destructive:false, readOnly:false },
   REOPEN:         { required:['id'],   optional:[], destructive:false, readOnly:false },
   TOGGLE_STAR:    { required:['id'],   optional:[], destructive:false, readOnly:false },
-  ARCHIVE_TASK:   { required:['id'],   optional:[], destructive:'mass', readOnly:false },
-  RESTORE_TASK:   { required:['id'],   optional:[], destructive:false, readOnly:false },
   DELETE_TASK:    { required:['id'],   optional:[], destructive:'always', readOnly:false },
   DUPLICATE_TASK: { required:['id'],   optional:[], destructive:false, readOnly:false },
   MOVE_TASK:      { required:['id'],   optional:['newParentId'], destructive:false, readOnly:false },
@@ -196,23 +194,20 @@ function validateOps(raw, ctx){
     arr = arr.slice(0, ASK_MAX_OPS);
   }
 
-  const destructiveCounts = { DELETE_TASK: 0, ARCHIVE_TASK: 0, CHANGE_LIST: 0 };
-  const simArchived = new Map();
+  const destructiveCounts = { DELETE_TASK: 0, CHANGE_LIST: 0 };
   const simTasksById = new Map();
   let simNextId = 1;
   if(ctx.tasksById && typeof ctx.tasksById.forEach === 'function'){
     ctx.tasksById.forEach((t, id) => {
       const nid = typeof id === 'number' ? id : parseInt(String(id), 10);
       if(Number.isFinite(nid) && nid >= simNextId) simNextId = nid + 1;
-      simArchived.set(id, !!(t && t.archived));
       if(t && typeof t === 'object'){
         simTasksById.set(id, {
           id: t.id != null ? t.id : id,
           parentId: t.parentId != null ? t.parentId : null,
-          archived: !!t.archived,
         });
       }else{
-        simTasksById.set(id, { id, parentId: null, archived: false });
+        simTasksById.set(id, { id, parentId: null });
       }
     });
   }
@@ -280,14 +275,6 @@ function validateOps(raw, ctx){
       continue;
     }
 
-    // DELETE_TASK only works on archived tasks (simulated across prior ops in this batch).
-    if(name === 'DELETE_TASK'){
-      if(!simArchived.get(args.id)){
-        out.rejected.push({ op: rawOp, reason: 'TASK_NOT_ARCHIVED' });
-        continue;
-      }
-    }
-
     if(destructiveCounts[name] != null) destructiveCounts[name]++;
     const validated = { name, args };
     // Optional passthrough: _rationale is metadata surfaced to preview cards
@@ -302,27 +289,19 @@ function validateOps(raw, ctx){
 
     if(name === 'CREATE_TASK'){
       const nid = simNextId++;
-      simTasksById.set(nid, { id: nid, parentId: args.parentId != null ? args.parentId : null, archived: false });
+      simTasksById.set(nid, { id: nid, parentId: args.parentId != null ? args.parentId : null });
     }
     if(name === 'MOVE_TASK'){
       const st = simTasksById.get(args.id);
       if(st) st.parentId = args.newParentId != null ? args.newParentId : null;
     }
-    if(name === 'ARCHIVE_TASK' && simTasksById.size){
-      simArchived.set(args.id, true);
-      for(const did of _descendantIdsForBatchSim(args.id, simTasksById)) simArchived.set(did, true);
-    }
-    if(name === 'RESTORE_TASK' && simTasksById.size){
-      simArchived.set(args.id, false);
-      for(const did of _descendantIdsForBatchSim(args.id, simTasksById)) simArchived.set(did, false);
-    }
   }
 
-  // Aggregate destructive level.
+  // Aggregate destructive level. Delete is permanent, so any delete is hard.
   const massThreshold = 5;
   if(destructiveCounts.DELETE_TASK > 0) out.destructiveLevel = 'hard';
-  else if(destructiveCounts.ARCHIVE_TASK >= massThreshold || destructiveCounts.CHANGE_LIST >= massThreshold) out.destructiveLevel = 'hard';
-  else if(destructiveCounts.ARCHIVE_TASK + destructiveCounts.CHANGE_LIST > 0) out.destructiveLevel = 'warn';
+  else if(destructiveCounts.CHANGE_LIST >= massThreshold) out.destructiveLevel = 'hard';
+  else if(destructiveCounts.CHANGE_LIST > 0) out.destructiveLevel = 'warn';
 
   return out;
 }

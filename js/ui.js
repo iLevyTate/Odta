@@ -201,7 +201,6 @@ function renderCmdK(){
     {type:'action',label:'Habits view (recurring tasks)',icon:ic('refresh'),run:()=>{showTab('tasks');setSmartView('habits')}},
     {type:'action',label:'Impact view (Pareto 80/20)',icon:ic('zap'),run:()=>{showTab('tasks');setSmartView('impact')}},
     {type:'action',label:'Sort by Impact (Pareto)',icon:ic('zap'),run:()=>{showTab('tasks');const s=gid('taskSortSel');if(s){s.value='impact';if(typeof updateTaskFilters==='function')updateTaskFilters()}}},
-    {type:'action',label:'Archive view',icon:ic('archive'),run:()=>{showTab('tasks');setSmartView('archived')}},
     {type:'action',label:'List view',icon:ic('list'),run:()=>{showTab('tasks');setTaskView('list')}},
     {type:'action',label:'Board view',icon:ic('grid'),run:()=>{showTab('tasks');setTaskView('board')}},
     {type:'action',label:'Calendar view',icon:ic('calendar'),run:()=>{showTab('tasks');setTaskView('calendar')}},
@@ -265,7 +264,6 @@ function renderCmdK(){
         if(w==='today')    return t.dueDate === today;
         if(w==='done')     return t.status === 'done';
         if(w==='open')     return t.status !== 'done';
-        if(w==='archived') return !!t.archived;
         if(w==='starred')  return !!t.starred;
         if(w==='recurring' || w==='habit') return !!t.recur;
         return false;
@@ -292,10 +290,10 @@ function renderCmdK(){
     items.push({section:'Tasks'});
     activeMatches.forEach(t=>items.push({type:'task',label:t.name,icon:t.status==='done'?'✓':'○',desc:(t.dueDate?fmtDue(t.dueDate):'')||getTaskPath(t.id).slice(0,-1).join(' › '),run:()=>{showTab('tasks');openTaskDetail(t.id)}}));
   }
-  const doneMatches = tasks.filter(t => (t.archived || t.status === 'done') && matchTask(t)).slice(0, 6);
+  const doneMatches = tasks.filter(t => t.status === 'done' && matchTask(t)).slice(0, 6);
   if(shouldShowTasks && doneMatches.length){
-    items.push({section:'Completed & archived'});
-    doneMatches.forEach(t=>items.push({type:'task',label:t.name,icon:t.archived?'🗂':'✓',desc:t.archived?'archived':'done',run:()=>{
+    items.push({section:'Completed'});
+    doneMatches.forEach(t=>items.push({type:'task',label:t.name,icon:'✓',desc:'done',run:()=>{
       // Switching to the matching smart view so the user can see the task in
       // context instead of just opening it in isolation. rAF instead of an
       // arbitrary 60ms timer so slow phones don't race the modal open
@@ -303,9 +301,7 @@ function renderCmdK(){
       // cross-tab sync between click and open doesn't open a stale row.
       const taskId = t.id;
       showTab('tasks');
-      const wasArchived = !!t.archived;
-      if(wasArchived){ if(typeof setSmartView==='function') setSmartView('archived'); }
-      else { if(typeof setSmartView==='function') setSmartView('completed'); }
+      if(typeof setSmartView==='function') setSmartView('completed');
       requestAnimationFrame(() => {
         const fresh = (typeof findTask === 'function') ? findTask(taskId) : null;
         if(!fresh) return;
@@ -868,7 +864,6 @@ function renderTaskItem(t,depth){
     +(kids?' has-children':'')
     +(depth>0?' depth-'+Math.min(depth,4):'')
     +(isDone?' completed':'')
-    +(t.archived?' archived':'')
     +(dueCls==='overdue'&&!isDone?' overdue':'')
     +(t.starred?' starred-task':'');
   if(smartView==='impact'&&typeof isParetoTop==='function'&&isParetoTop(t.id))d.classList.add('task-item--pareto');
@@ -1010,7 +1005,7 @@ function renderTaskItem(t,depth){
     if(swiping&&Math.abs(dx)>80){
       haptic(20);
       if(dx>0){showTaskListPickerSheet(t.id)}
-      else{removeTask(t.id,null,{force:true})}
+      else{removeTask(t.id,null)}
     }
     touchStartX=0;touchCurrentX=0;swiping=false;
   },{passive:false});
@@ -1048,11 +1043,10 @@ function renderTaskItem(t,depth){
   const tagsVisible=(t.tags||[]).slice(0,3).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
   const descPrev=(t.description&&t.description.length>0)?'<span class="task-desc-inline">'+esc(t.description.slice(0,50))+(t.description.length>50?'…':'')+'</span>':'';
 
-  // Row actions. Three modes:
+  // Row actions. Two modes:
   //   • reorder mode → move ↑/↓ + outdent/indent (the row no longer navigates)
-  //   • archived     → restore + delete-permanently
   //   • default      → one primary (timer) + a ⋯ overflow menu (star / subtask /
-  //                    archive), so the resting row stays uncluttered.
+  //                    delete), so the resting row stays uncluttered.
   const reorderOn=(typeof isReorderMode==='function'&&isReorderMode());
   let actions;
   if(reorderOn){
@@ -1061,10 +1055,6 @@ function renderTaskItem(t,depth){
      +'<button type="button" class="ta-btn ta-move" data-action="moveTaskDown" data-args="['+t.id+']" title="Move down" aria-label="Move task down">↓</button>'
      +'<button type="button" class="ta-btn ta-move" data-action="outdentTask" data-args="['+t.id+']" title="Outdent (promote)" aria-label="Outdent task"'+(t.parentId==null?' disabled':'')+'>⟸</button>'
      +'<button type="button" class="ta-btn ta-move" data-action="indentTask" data-args="['+t.id+']" title="Indent (nest under task above)" aria-label="Indent task">⟹</button>';
-  } else if(t.archived){
-    actions=
-      '<button type="button" class="ta-btn ta-restore" data-action="restoreTask" data-args="['+t.id+']" title="Restore" aria-label="Restore task">↺</button>'
-     +'<button type="button" class="ta-btn ta-del" data-action="removeTask" data-args="['+t.id+']" title="Delete permanently" aria-label="Delete task permanently">×</button>';
   } else {
     actions=
       '<button type="button" class="ta-btn ta-play '+(isActive?'on':'')+'" data-action="toggleTask" data-args="['+t.id+']" title="'+(isActive?'Stop timer':'Start timer')+'" aria-label="'+(isActive?'Stop timer for this task':'Start timer for this task')+'" aria-pressed="'+(isActive?'true':'false')+'">'+(isActive?'■':'▶')+'</button>'
@@ -1916,7 +1906,7 @@ window.toggleSearchBar=toggleSearchBar;
 
 // ── Task row overflow menu ──────────────────────────────────────────────────
 // The ⋯ button on each row opens a small popover with the secondary actions
-// (star / add subtask / archive) that used to crowd the row. One menu instance
+// (star / add subtask / delete) that used to crowd the row. One menu instance
 // at a time; outside-click or Esc dismisses.
 let _taskActionMenuEl=null;
 function closeTaskActionMenu(){
@@ -1937,7 +1927,7 @@ function showTaskActionMenu(id){
   const rows=[
     {ic:t.starred?'★':'☆', label:t.starred?'Unpin':'Pin to top', run:()=>toggleStar(id)},
     {ic:'+', label:'Add subtask', run:()=>addSubtaskPrompt(id)},
-    {ic:'×', label:'Archive', danger:true, run:()=>removeTask(id)},
+    {ic:'×', label:'Delete', danger:true, run:()=>removeTask(id)},
   ];
   rows.forEach(r=>{
     const b=document.createElement('button');
@@ -2232,7 +2222,6 @@ function showImportConfirm(summary){
       ['', 'Current', 'After import'],
       ['Tasks',    summary.current.tasks,    summary.incoming.tasks],
       ['Lists',    summary.current.lists,    summary.incoming.lists],
-      ['Archived', summary.current.archived, summary.incoming.archived],
     ];
     rows.forEach((row, i) => {
       row.forEach((cell, j) => {
@@ -2879,12 +2868,12 @@ async function _bulkApplyOps(makeOps){
   }
   // Selection persists so the user can adjust, but we exit bulk mode after
   // a destructive batch so the chips stop blocking.
-  if(ops.some(o => o.name === 'ARCHIVE_TASK' || o.name === 'DELETE_TASK')) {
+  if(ops.some(o => o.name === 'DELETE_TASK')) {
     _bulkSelectedIds.clear();
   }
   renderBulkBar();
 }
-function bulkArchive(){ return _bulkApplyOps(id => [{ name: 'ARCHIVE_TASK', args: { id } }]); }
+function bulkDelete(){ return _bulkApplyOps(id => [{ name: 'DELETE_TASK', args: { id } }]); }
 function bulkStar(){ return _bulkApplyOps(id => [{ name: 'TOGGLE_STAR', args: { id } }]); }
 function bulkSetPriority(p){
   if(!['urgent','high','normal','low','none'].includes(p)) return;
@@ -2927,7 +2916,7 @@ function renderBulkBar(){
     return b;
   };
   bar.appendChild(mkBtn('Star', bulkStar));
-  bar.appendChild(mkBtn('Archive', bulkArchive));
+  bar.appendChild(mkBtn('Delete', bulkDelete));
   bar.appendChild(mkBtn('Tag…', bulkAddTagPrompt));
   // Priority dropdown
   const prSel = document.createElement('select');
