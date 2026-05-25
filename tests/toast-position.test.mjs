@@ -1,13 +1,16 @@
 /**
- * Static contract guards on toast positioning. Pre-fix, .export-toast and
- * .action-toast were anchored `left:50%; transform:translateX(-50%)` near
- * the bottom centre — on desktop with the empty Tasks state the pill
- * landed directly over the welcome card / "+ Add your first task" button,
- * blocking taps on the central interaction column. Toasts now anchor
- * bottom-right on desktop and bottom-LEFT on mobile (≤640px) — the FAB
- * owns the bottom-right on mobile, so a centred toast collided with it on
- * narrow viewports. Both anchors lift above the mini-timer when it's
- * visible.
+ * Static contract guards on toast positioning.
+ *
+ * .export-toast (plain auto-dismiss notices) anchors bottom-RIGHT on desktop
+ * and bottom-LEFT on mobile (≤640px) — the FAB owns the bottom-right on
+ * mobile, so a centred toast collided with it. It lifts above the mini-timer
+ * pill and the modal sticky footer when those are present.
+ *
+ * .action-toast (the "Task done" Undo pill) anchors TOP-CENTRE
+ * (top:calc(...); left:50%; transform:translateX(-50%)) on every breakpoint.
+ * It reads as a completion confirmation and stays clear of the bottom-right
+ * FAB / mini-timer stack, so it needs none of the bottom-offset collision
+ * hacks the export-toast carries.
  *
  * Modals (.modal-overlay, .cmdk-overlay, .what-next-overlay) are NOT
  * toasts and must remain centred — the negative-regression block below
@@ -39,30 +42,28 @@ test('.export-toast anchors bottom-right at default breakpoint', () => {
   assert.doesNotMatch(body, /transform:[^;}]*translateX\(-50%\)/, 'must not translateX(-50%) at default breakpoint');
 });
 
-test('.action-toast anchors bottom-right and stacks above .export-toast', () => {
+test('.action-toast anchors top-center', () => {
   const body = ruleBody('.action-toast');
   assert.ok(body, '.action-toast rule not found');
-  assert.match(body, /right:\s*calc\(/, 'must anchor right with safe-area inset');
-  assert.match(body, /left:\s*auto/, 'must clear left');
-  // The action-toast carries the Undo button — it must sit above .export-toast
-  // (bottom:16px) so users can reach Undo without it being occluded.
-  const m = body.match(/bottom:\s*calc\(\s*(\d+)px/);
-  assert.ok(m, 'action-toast must use calc(Npx + safe-area-inset-bottom)');
-  assert.ok(parseInt(m[1], 10) >= 48, `action-toast bottom must be ≥48px (was ${m[1]}px) — should sit above .export-toast`);
+  assert.match(body, /top:\s*calc\(/, 'must anchor top with safe-area inset');
+  assert.match(body, /left:\s*50%/, 'must centre horizontally with left:50%');
+  assert.match(body, /transform:[^;}]*translateX\(-50%\)/, 'must translateX(-50%) to centre');
+  assert.match(body, /bottom:\s*auto/, 'must clear bottom so it does not anchor to the bottom edge');
+  assert.doesNotMatch(body, /bottom:\s*calc\(/, 'must not bottom-anchor (it is top-centre now)');
 });
 
-test('mini-timer presence lifts both toasts above its corner', () => {
-  // body:has(.mini-timer.visible) selectors must exist for both toasts so
-  // the toast doesn't land behind the mini-timer pill.
+test('mini-timer presence lifts the bottom export-toast above its corner', () => {
+  // The export-toast is bottom-anchored, so it must lift above the mini-timer
+  // pill. The action-toast is top-centre and never enters that corner, so it
+  // needs no such lift.
   assert.match(css, /body:has\(\.mini-timer\.visible\)\s*\.export-toast\s*\{[^}]*bottom:/, 'export-toast missing mini-timer lift rule');
-  assert.match(css, /body:has\(\.mini-timer\.visible\)\s*\.action-toast\s*\{[^}]*bottom:/, 'action-toast missing mini-timer lift rule');
+  assert.doesNotMatch(css, /body:has\(\.mini-timer\.visible\)\s*\.action-toast\s*\{/, 'action-toast must not carry a mini-timer bottom lift (it is top-centre)');
 });
 
-test('mobile (max-width:640px) anchors toasts bottom-left (clear of FAB)', () => {
-  // The FAB sits at bottom-right on mobile (56px circle at right:20px). A
-  // centred toast (the previous design) extended into the FAB column on
-  // narrow viewports, blocking taps. Toasts now anchor bottom-LEFT, stacked
-  // above the save indicator dot.
+test('mobile (max-width:640px): export-toast bottom-left (clear of FAB), action-toast top-center', () => {
+  // The FAB sits at bottom-right on mobile (56px circle at right:20px). The
+  // export-toast anchors bottom-LEFT, stacked above the save indicator dot.
+  // The action-toast stays top-centre on mobile too.
   const idx = css.indexOf('@media (max-width:640px)');
   assert.ok(idx > 0, '@media (max-width:640px) block not found');
   assert.match(
@@ -72,19 +73,15 @@ test('mobile (max-width:640px) anchors toasts bottom-left (clear of FAB)', () =>
   );
   assert.match(
     css,
-    /@media \(max-width:640px\)\s*\{[^]*?\.action-toast\s*\{[^}]*left:\s*calc\([^}]*right:\s*auto[^}]*\}[^]*?\}/,
-    'mobile breakpoint must anchor .action-toast bottom-left (left: calc(...); right: auto)'
+    /@media \(max-width:640px\)\s*\{[^]*?\.action-toast\s*\{[^}]*left:\s*50%[^}]*transform:[^;}]*translateX\(-50%\)[^}]*\}[^]*?\}/,
+    'mobile breakpoint must keep .action-toast top-centre (left:50%; translateX(-50%))'
   );
-  // Negative regression: must NOT re-introduce the bottom-middle anchor.
+  // Negative regression: the bottom-anchored export-toast must NOT re-introduce
+  // the bottom-middle anchor that collided with the central interaction column.
   assert.doesNotMatch(
     css,
     /@media \(max-width:640px\)\s*\{[^]*?\.export-toast\s*\{[^}]*left:\s*50%[^}]*\}[^]*?\}/,
     'mobile breakpoint must not centre .export-toast (regression)'
-  );
-  assert.doesNotMatch(
-    css,
-    /@media \(max-width:640px\)\s*\{[^]*?\.action-toast\s*\{[^}]*left:\s*50%[^}]*\}[^]*?\}/,
-    'mobile breakpoint must not centre .action-toast (regression)'
   );
 });
 

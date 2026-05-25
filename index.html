@@ -370,6 +370,7 @@
             <span class="reorder-toggle-ic" aria-hidden="true">↕</span>
             <span>Reorder mode — move &amp; indent tasks</span>
           </button>
+          <div class="sheet-section-lbl">Filter &amp; Sort</div>
           <div class="task-toolbar" id="filtersPanel">
             <fieldset class="task-toolbar-row">
               <legend class="sr-only">Filter tasks</legend>
@@ -401,7 +402,9 @@
                 <option value="impact">Sort: Impact (Pareto 80/20)</option>
                 <option value="due">Sort: Due date</option>
                 <option value="priority">Sort: Priority</option>
-                <option value="created">Sort: Created</option>
+                <option value="created">Sort: Date added (oldest first)</option>
+                <option value="recent">Sort: Recently added</option>
+                <option value="updated">Sort: Recently updated</option>
                 <option value="name">Sort: Name</option>
                 <option value="time">Sort: Time tracked</option>
               </select>
@@ -1081,6 +1084,7 @@
             </button>
             <div class="similar-acc-panel" id="mdSimilarAccordion">
               <div id="mdSimilarTasks" class="md-similar-tasks"></div>
+              <button type="button" class="btn-ghost btn-sm md-cluster-btn" id="mdClusterBtn" data-action="clusterSimilarTasks" hidden>Group similar into a theme</button>
             </div>
           </div>
           <div class="mfield">

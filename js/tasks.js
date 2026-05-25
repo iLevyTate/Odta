@@ -1407,6 +1407,7 @@ async function removeTask(id, ev){
       if(typeof announce === 'function') announce('Restored: ' + _name);
     }, 5000);
   }
+  window._preserveTaskScroll = true;
   renderTaskList();renderBanner();saveState('user')
 }
 
@@ -1498,6 +1499,7 @@ function toggleStar(id, ev){
   t.starred=!t.starred;
   // Star toggles can shift this card to/from the top of the list — animate.
   const list=gid('taskList');
+  window._preserveTaskScroll = true;
   if(list&&typeof flipReorder==='function')flipReorder(list,()=>renderTaskList());
   else renderTaskList();
   saveState('user')
@@ -1854,6 +1856,7 @@ function toggleTaskDoneQuick(id, ev){
   // toggleTask just folded in. Undo rolls back to this — preserving the
   // accrued seconds rather than losing them.
   const backup = JSON.parse(JSON.stringify(t));
+  window._preserveTaskScroll = true;
   renderTaskList();saveState('user');
   if(typeof showActionToast==='function'){
     // Include the first cascade task name so the user sees *what* got
@@ -2703,7 +2706,15 @@ function sortTasks(arr){
       if(!a.dueDate)return 1;if(!b.dueDate)return -1;
       return a.dueDate.localeCompare(b.dueDate);
     }
-    if(by==='created')return a.id-b.id;
+    // created is "YYYY-MM-DD HH:MM" (zero-padded) so string compare is chronological;
+    // id is the monotonic creation counter, used as a tiebreaker / fallback.
+    if(by==='created')return (a.created||'').localeCompare(b.created||'') || (a.id-b.id);
+    if(by==='recent')return (b.created||'').localeCompare(a.created||'') || (b.id-a.id);
+    if(by==='updated'){
+      const ma=(typeof _taskImportRelevanceMs==='function')?_taskImportRelevanceMs(a):(a.lastModified||0);
+      const mb=(typeof _taskImportRelevanceMs==='function')?_taskImportRelevanceMs(b):(b.lastModified||0);
+      return (mb-ma) || (b.id-a.id);
+    }
     if(by==='time')return getRolledUpTime(b.id)-getRolledUpTime(a.id);
     return 0;
   });
@@ -2935,6 +2946,16 @@ if(typeof window !== 'undefined') window.renderDailyMomentum = renderDailyMoment
 function renderTaskList(){
   const list=gid('taskList');
   if(!list)return;
+  // In-place task updates (toggle done, star, chip edits…) rebuild the whole
+  // list, which momentarily empties it; since the page itself scrolls, the
+  // browser clamps scrollY to 0 and never restores it. Callers that mutate an
+  // existing row set window._preserveTaskScroll so we can put the user back
+  // where they were. Context switches (list/smart-view/filter/sort) leave it
+  // unset and intentionally land at the top.
+  const _keepScroll = !!window._preserveTaskScroll;
+  window._preserveTaskScroll = false;
+  const _savedScrollY = _keepScroll ? window.scrollY : 0;
+  const _restoreScroll = () => { if(_keepScroll) requestAnimationFrame(()=>window.scrollTo(0, _savedScrollY)); };
   // Refresh the momentum tile every render — cheap and always correct.
   if(typeof renderDailyMomentum === 'function') renderDailyMomentum();
   // Same for the unified active-filters bar so a smart-view change /
@@ -3109,6 +3130,7 @@ function renderTaskList(){
   if(taskGroupBy!=='none'){
     renderGroupedTasks(visibleTasks);
     if(typeof refreshTaskListProgress==='function') requestAnimationFrame(refreshTaskListProgress);
+    _restoreScroll();
     return;
   }
   function renderNode(parentId,depth,inShownSubtree){
@@ -3134,6 +3156,7 @@ function renderTaskList(){
   renderNode(null,0,false);
   // Long-list affordance: show/hide the scroll-progress bar once DOM commits.
   if(typeof refreshTaskListProgress==='function') requestAnimationFrame(refreshTaskListProgress);
+  _restoreScroll();
 }
 
 // ========== SECTION GROUPING ==========

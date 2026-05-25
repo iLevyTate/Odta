@@ -33,7 +33,7 @@ function makeScope(initial){
   const factory = new Function(
     'getCtx', 'findTask', 'getTaskDescendantIds', '_stopEvt', 'showAppConfirm',
     '_taskIndexRemove', 'rebuildTaskIdIndex', 'showActionToast',
-    'renderTaskList', 'renderBanner', 'saveState', 'announce',
+    'renderTaskList', 'renderBanner', 'saveState', 'announce', 'window',
     `let { tasks, syncTaskDels } = getCtx();
      let activeTaskId = null, taskStartedAt = null;
      ${removeSrc}
@@ -53,6 +53,7 @@ function makeScope(initial){
     () => {},                                   // rebuildTaskIdIndex
     (label, actLabel, fn) => { capture.undo = fn; }, // showActionToast captures undo
     () => {}, () => {}, () => {}, () => {},     // renderTaskList/renderBanner/saveState/announce
+    {},                                         // window stub (removeTask sets window._preserveTaskScroll)
   );
   return { api, capture, getDels: () => api.getDels() };
 }
