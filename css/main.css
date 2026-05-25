@@ -1507,17 +1507,17 @@
   .cal-nav{width:34px;height:34px;border-radius:var(--r-sm);background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);font-size:16px;cursor:pointer;font-family:inherit}
   .cal-nav:hover{background:var(--bg-3);color:var(--text-1)}
   .cal-today-btn{padding:0 14px;height:34px;border-radius:var(--r-sm);background:var(--accent-bg);border:1px solid var(--accent-border);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-  .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px}
+  .cal-weekdays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-bottom:6px}
   .cal-weekday{font-size:11px;color:var(--text-3);text-align:center;font-weight:600;padding:6px 0}
-  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-  .cal-day{min-height:80px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px;display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:.15s;position:relative}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+  .cal-day{min-width:0;min-height:80px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px;display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:.15s;position:relative}
   .cal-day:hover{border-color:var(--border-strong);background:var(--bg-3)}
   .cal-day.other-month{opacity:.35}
   .cal-day.today{border-color:var(--accent);background:linear-gradient(135deg,var(--bg-2),var(--accent-bg))}
   .cal-day.today .cal-daynum{color:var(--accent);font-weight:700}
   .cal-day.drop-target{border-color:var(--accent);background:var(--accent-bg)}
   .cal-daynum{font-size:12px;font-weight:600;color:var(--text-2)}
-  .cal-task{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-3);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;border-left:2px solid var(--accent)}
+  .cal-task{min-width:0;max-width:100%;font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-3);color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;border-left:2px solid var(--accent)}
   .cal-task:hover{background:var(--border-strong)}
   .cal-task.p-urgent{border-left-color:var(--danger)}
   .cal-task.p-high{border-left-color:var(--warning)}
