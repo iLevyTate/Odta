@@ -953,7 +953,10 @@ function renderTaskItem(t,depth){
   let touchStartX=0,touchStartY=0,touchCurrentX=0,swiping=false;
   let _longPressId=null,_longPressFired=false;
   d.addEventListener('touchstart',function(e){
-    if(e.target.closest('button')||e.target.closest('input'))return;
+    // Don't track a swipe (or long-press) when the touch begins on the drag
+    // grip — that gesture belongs to Sortable's reorder, and double-handling
+    // it would also fire move/delete on release.
+    if(e.target.closest('button')||e.target.closest('input')||e.target.closest('.drag-handle'))return;
     touchStartX=e.touches[0].clientX;touchStartY=e.touches[0].clientY;swiping=false;
     _longPressFired=false;
     if(_longPressId){clearTimeout(_longPressId);_longPressId=null}
@@ -1065,8 +1068,11 @@ function renderTaskItem(t,depth){
   // Star pin — shown prominently only if starred (otherwise hidden in hover actions)
   const starPin=t.starred?'<span class="star-pin" title="Pinned" aria-label="Pinned to top">★</span>':'';
 
-  const dragGrip=(typeof taskSortBy==='string'&&taskSortBy==='manual')
-    ?'<span class="drag-handle" title="Drag to reorder" role="img" aria-label="Drag handle">⠿</span>':'';
+  // Always render the grip so drag-to-reorder is available regardless of the
+  // active sort. Dragging from a non-manual sort reorders and then locks the
+  // list to manual (see _initTaskListSortable's onEnd), so the gesture always
+  // sticks — gating the handle on manual sort just made reorder undiscoverable.
+  const dragGrip='<span class="drag-handle" title="Drag to reorder" role="img" aria-label="Drag handle">⠿</span>';
   d.innerHTML=
     '<div class="task-row-primary">'
       +dragGrip

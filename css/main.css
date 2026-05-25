@@ -1203,7 +1203,7 @@
   .qpc--due    {background:var(--accent-bg); border-color:var(--accent-border); color:var(--accent)}
 
   /* Task item — the star of the show */
-  .task-item{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;gap:12px;transition:all .15s}
+  .task-item{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;gap:12px;transition:all .15s;touch-action:pan-y}
   .task-item:hover{background:var(--bg-2);border-color:var(--border-strong)}
   .task-item.active-task{background:linear-gradient(135deg,var(--bg-2),var(--accent-bg));border-color:var(--accent-border);box-shadow:0 0 0 1px var(--accent-border),0 4px 16px rgba(106,168,255,.08)}
   .task-item.overdue{border-left:3px solid var(--danger)!important;padding-left:13px}
@@ -2017,7 +2017,11 @@
 
     /* Task chevron (for collapsible children) - touch size */
     .task-chevron{width:26px;height:26px;min-width:26px;font-size:12px}
-    .drag-handle{display:none}  /* drag not reliable on touch; hide handle */
+    /* Drag grip is a real touch target on mobile: bigger hit area, and
+       touch-action:none so dragging it reorders instead of scrolling the list.
+       Sortable scopes drags to this handle, so swipe-to-move/delete on the rest
+       of the row still works. */
+    .drag-handle{display:flex;width:34px;min-width:34px;height:34px;font-size:18px;touch-action:none;color:var(--text-3)}
 
     /* Subtask indent - less on mobile */
     .task-item.depth-1{margin-left:14px!important}
