@@ -2441,6 +2441,15 @@
   @media (hover:hover){
     .task-row-actions{opacity:0;transition:opacity .15s}
     .task-item:hover .task-row-actions,.task-item:focus-within .task-row-actions{opacity:1}
+    /* Stack the primary row above the secondary metadata line. .task-item is
+       display:flex with the default row direction; on desktop there's no
+       flex-wrap, so the hover-revealed .task-row-secondary would otherwise sit
+       beside the primary and force the centered row to grow/re-center around
+       the pointer — that animated reflow toggles :hover on and off, making the
+       row flicker open/closed. A column keeps the primary fixed at the top so
+       the secondary reveals straight downward. Excludes bulk-select mode, whose
+       leading ::before checkbox relies on the row direction. */
+    body:not(.app-bulk-mode) .task-item{flex-direction:column;align-items:stretch}
   }
 
   /* Tag pills in secondary row: hide by default, show on task hover */
