@@ -24,19 +24,16 @@ test('update + quota: quota lifts above the update banner when both visible (des
   );
 });
 
-test('modal-open: bottom toasts lift above the modal sticky footer', () => {
+test('modal-open: the bottom export-toast lifts above the modal sticky footer', () => {
   // The modal foot is sticky at the viewport bottom inside .modal-overlay; the
-  // toasts at z:9000+ sit ABOVE the modal but in the same screen area, so they
-  // need an extra bottom offset when a modal is open.
+  // bottom-anchored #exportToast at z:9000 sits ABOVE the modal but in the same
+  // screen area, so it needs an extra bottom offset when a modal is open. The
+  // #actionToast is top-center (see toast-position.test.mjs) and no longer
+  // competes for the bottom, so it has no modal-open lift.
   assert.match(
     css,
     /body:has\(\.modal-overlay\.open\)[\s\S]*?#exportToast\s*,[\s\S]*?#exportToast\s*\{[^}]*bottom:\s*calc\(/,
     'modal-open should lift #exportToast',
-  );
-  assert.match(
-    css,
-    /body:has\(\.cmdk-overlay\.open\)[\s\S]*?#actionToast[\s\S]*?bottom:\s*calc\(/,
-    'cmdk-open should lift #actionToast',
   );
 });
 

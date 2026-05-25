@@ -419,9 +419,15 @@
     min-width:0;
     -webkit-user-select:none;user-select:none;
   }
-  .fb-btn:hover,.fb-btn.active{
-    background:var(--bg-3,#142238);color:var(--text-1,#e2e8f0);
-    border-color:var(--border-strong,#2a3a4a);
+  .fb-btn:hover{
+    background:var(--bg-3);color:var(--text-1);
+    border-color:var(--border-strong);
+  }
+  /* .active = this trigger has a filter applied — accent-tinted so an applied
+     filter reads at a glance, clearly distinct from a plain hover. */
+  .fb-btn.active{
+    background:var(--accent-bg);color:var(--accent);
+    border-color:var(--accent-border);
   }
   .fb-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .fb-btn .fb-ic{font-size:14px;opacity:.85;flex-shrink:0}
@@ -957,13 +963,24 @@
      pill — matches the primary-action visual language and makes the
      current view legible at a glance, especially on light theme. */
   .sv-chip.active{
-    background:var(--accent-bg);color:var(--accent);
-    border-color:var(--accent-border);font-weight:600;
+    background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);
+    border-color:var(--accent);font-weight:600;
   }
   .sv-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .sv-icon{font-size:13px}
   .sv-count{font-size:10px;font-weight:600;background:var(--bg-3);color:var(--text-3);padding:1px 6px;border-radius:999px}
   .sv-chip.active .sv-count{background:var(--accent);color:var(--bg-0)}
+
+  /* Category filter chips (#tagsBar) carry their own --sv-cat colour (set
+     inline in refreshClassificationUi) so the active category is unmistakable
+     and colour-matches the row stripes / settings. A colour dot makes the
+     palette legible before selection. The generic smart-view .sv-chip.active
+     is intentionally left on the accent treatment. */
+  .sv-chip--cat::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sv-cat,var(--text-3));flex:0 0 auto;opacity:.55;transition:opacity .12s}
+  .sv-chip--cat:hover::before{opacity:.9}
+  .sv-chip--cat.active{background:color-mix(in srgb,var(--sv-cat) 18%,transparent);border-color:var(--sv-cat);color:var(--sv-cat);font-weight:600}
+  .sv-chip--cat.active::before{opacity:1}
+  .sv-chip--cat.active .sv-count{background:var(--sv-cat);color:var(--bg-0)}
 
   /* Lists bar */
   .lists-bar{background:var(--bg-1);border:1px solid var(--border-subtle);padding:8px 10px;border-radius:12px;}
@@ -978,10 +995,14 @@
   .task-search{background:var(--bg-2);border-color:var(--border);color:var(--text-1);font-size:13px;padding:8px 12px;border-radius:var(--r-sm)}
   .task-search::placeholder{color:var(--text-4)}
   .task-search:focus{border-color:var(--accent-border);background:var(--bg-2)}
-  .task-tb-sel{background:var(--bg-2);border-color:var(--border);color:var(--text-2);font-size:12px;font-weight:500;letter-spacing:0;padding:8px 10px;border-radius:var(--r-sm)}
-  .view-toggle{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm)}
-  .view-toggle button{color:var(--text-3);font-size:11px;font-weight:500;letter-spacing:0;padding:6px 12px}
-  .view-toggle button.active{background:var(--bg-3);color:var(--text-1)}
+  .task-tb-sel{background:var(--bg-2);border-color:var(--border);color:var(--text-1);font-size:var(--fs-13);font-weight:500;letter-spacing:0;padding:8px 12px;border-radius:var(--r-md)}
+  .task-tb-sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-color:var(--accent-border)}
+  .view-toggle{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:2px}
+  .view-toggle button{color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0;padding:6px 12px;border-radius:calc(var(--r-md) - 3px)}
+  .view-toggle button:hover{color:var(--text-1)}
+  /* Current view: solid accent fill — the primary view switch, a step above the
+     smart-view chips (accent tint) in the control hierarchy. */
+  .view-toggle button.active{background:var(--accent);color:var(--bg-0);box-shadow:var(--shadow-1)}
 
   /* Task input */
   .task-form{gap:8px}
@@ -3437,10 +3458,11 @@ body:has(.update-banner) .quota-warning{
 body:has(.mini-timer.visible) .export-toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
 
 /* Action toast — like .export-toast but carries an inline action button
-   (Undo). Stacks above .export-toast in the same bottom-right column. */
+   (Undo). Anchored top-center: a completion confirmation that drops in from
+   the top edge, clear of the bottom-right FAB / mini-timer stack. */
 .action-toast{
-  position:fixed;bottom:calc(72px + env(safe-area-inset-bottom,0px));right:calc(16px + env(safe-area-inset-right,0px));left:auto;
-  transform:translateY(16px);z-index:9100;
+  position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;right:auto;bottom:auto;
+  transform:translateX(-50%) translateY(-16px);z-index:9100;
   display:inline-flex;align-items:center;gap:var(--space-5);
   padding:10px 12px 10px 18px;border-radius:999px;
   background:var(--bg-1);border:1px solid var(--border-strong);color:var(--text-1);
@@ -3451,7 +3473,7 @@ body:has(.mini-timer.visible) .export-toast{bottom:calc(76px + env(safe-area-ins
 /* Stay non-interactive on the host even when visible — only the inline
    .action-toast-btn (Undo) needs to catch taps. Otherwise the pill
    silently swallows clicks on whatever task row sits behind it. */
-.action-toast.show{opacity:1;transform:translateY(0)}
+.action-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .action-toast .action-toast-btn{pointer-events:auto}
 /* Dismiss × — always pointer-events:auto so users can clear the toast even
    when the surrounding pill is non-interactive (action-toast host stays
@@ -3473,7 +3495,6 @@ body:has(.mini-timer.visible) .export-toast{bottom:calc(76px + env(safe-area-ins
 .export-toast{display:flex;align-items:center;gap:8px}
 .export-toast-lbl{flex:1;min-width:0;text-align:inherit}
 .export-toast .toast-dismiss{pointer-events:auto;margin-left:2px}
-body:has(.mini-timer.visible) .action-toast{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
 /* When a modal or command palette is open, lift the bottom-anchored auto-
    dismiss toasts above the modal's sticky footer so feedback isn't hidden
    behind it. Modals are flex-start anchored with a sticky .modal-foot at the
@@ -3482,16 +3503,12 @@ body:has(.modal-overlay.open) #exportToast,
 body:has(.cmdk-overlay.open)  #exportToast{
   bottom:calc(96px + env(safe-area-inset-bottom,0px));
 }
-body:has(.modal-overlay.open) #actionToast,
-body:has(.cmdk-overlay.open)  #actionToast{
-  bottom:calc(152px + env(safe-area-inset-bottom,0px));
-}
 @media (max-width:640px){
   /* On mobile the FAB owns the bottom-right (56px circle at right:20px) and
-     the save indicator owns the bottom-left dot column. Toasts anchor to the
-     bottom-LEFT, stacked above the save indicator, so they never collide with
-     the FAB and never land in the center thumb-zone. max-width is clamped so
-     a long label can't extend into the FAB column. */
+     the save indicator owns the bottom-left dot column. The plain export-toast
+     anchors bottom-LEFT, stacked above the save indicator, so it never collides
+     with the FAB and never lands in the center thumb-zone. The action toast
+     stays top-center (see top-level rule) — it never competes for the bottom. */
   .export-toast{
     left:calc(10px + env(safe-area-inset-left,0px));right:auto;
     bottom:calc(112px + env(safe-area-inset-bottom,0px));
@@ -3501,24 +3518,21 @@ body:has(.cmdk-overlay.open)  #actionToast{
   }
   .export-toast.show{transform:translateY(0)}
   .action-toast{
-    left:calc(10px + env(safe-area-inset-left,0px));right:auto;
-    bottom:calc(116px + env(safe-area-inset-bottom,0px));
-    transform:translateY(16px);
-    max-width:min(calc(100vw - 88px),360px);
+    left:50%;right:auto;
+    top:calc(10px + env(safe-area-inset-top,0px));bottom:auto;
+    transform:translateX(-50%) translateY(-16px);
+    max-width:min(calc(100vw - 24px),420px);
   }
-  .action-toast.show{transform:translateY(0)}
-  /* Re-declare the mini-timer-aware lifts inside the mobile block so the
+  .action-toast.show{transform:translateX(-50%) translateY(0)}
+  /* Re-declare the mini-timer-aware lift inside the mobile block so the
      mobile baseline (above) doesn't get clobbered by the desktop-defaulted
      rule at the top level. FAB lifts to bottom:92px when mini-timer is
-     visible (see .quick-add-fab rule); toasts clear that whole column. */
+     visible (see .quick-add-fab rule); the export-toast clears that column. */
   body:has(.mini-timer.visible) .export-toast{bottom:calc(140px + env(safe-area-inset-bottom,0px))}
-  body:has(.mini-timer.visible) .action-toast{bottom:calc(180px + env(safe-area-inset-bottom,0px))}
   /* When a modal/palette is open the desktop modal-open lifts (above) push
      bottom higher than our mobile baseline; re-declare so they still win. */
   body:has(.modal-overlay.open) #exportToast,
   body:has(.cmdk-overlay.open)  #exportToast{bottom:calc(160px + env(safe-area-inset-bottom,0px))}
-  body:has(.modal-overlay.open) #actionToast,
-  body:has(.cmdk-overlay.open)  #actionToast{bottom:calc(200px + env(safe-area-inset-bottom,0px))}
 }
 .action-toast-lbl{color:var(--text-1);font-weight:500}
 .action-toast-btn{
@@ -3980,9 +3994,12 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
 
 /* ───── G-4 bulk-select edit mode ───── */
 .app-bulk-mode .task-item{cursor:pointer}
-.app-bulk-mode .task-item::before{content:"";display:inline-block;width:14px;height:14px;border:1.5px solid var(--border);border-radius:3px;margin-right:8px;flex-shrink:0;background:var(--card-2,rgba(255,255,255,.05));vertical-align:middle}
-.app-bulk-mode .task-item.task-bulk-selected{background:rgba(72,181,224,.08);border-color:rgba(72,181,224,.4)}
-.app-bulk-mode .task-item.task-bulk-selected::before{background:var(--accent,#48b5e0);border-color:var(--accent,#48b5e0);box-shadow:inset 0 0 0 2px var(--card-2,#0a1320)}
+.app-bulk-mode .task-item::before{content:"";display:inline-block;width:16px;height:16px;border:1.5px solid var(--border-strong);border-radius:5px;margin-right:8px;flex-shrink:0;background:var(--bg-2);vertical-align:middle;transition:background .12s,border-color .12s}
+/* Selected row: subtle accent tint + a solid accent left-bar (overrides the
+   category stripe at .task-cat-stripe while selected — selection wins). All
+   token-based so it adapts to the light theme. */
+.app-bulk-mode .task-item.task-bulk-selected{background:var(--accent-bg);border-color:var(--accent-border);box-shadow:inset 3px 0 0 0 var(--accent)}
+.app-bulk-mode .task-item.task-bulk-selected::before{background:var(--accent);border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--bg-0)}
 /* Anchored to the TOP (Files/Mail-style selection bar) so it never collides
    with the bottom-right FAB + mini-timer stack, and stays put while scrolling. */
 .bulk-bar{position:fixed;left:50%;top:calc(8px + env(safe-area-inset-top,0px));bottom:auto;transform:translateX(-50%);z-index:1200;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;background:var(--card-1,#1a2333);border:1px solid var(--border);border-radius:16px;box-shadow:0 4px 18px rgba(0,0,0,.4);max-width:calc(100vw - 32px);flex-wrap:wrap}
