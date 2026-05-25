@@ -208,21 +208,6 @@
   .btn-danger{background:0 0;color:#c0392b;border:1px solid #3a1a1a;font-size:10px;padding:8px 16px}
 
   .panel{width:100%;border-radius:14px;padding:18px;background:linear-gradient(135deg,#0c1724,#0f1c2e);border:1px solid #1a2840;margin-bottom:14px;box-shadow:0 4px 20px rgba(0,0,0,.3)}
-  .views-accordion{margin-top:20px;margin-bottom:16px;}
-  .views-accordion-summary{
-    font-size:11px;font-weight:600;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;
-    cursor:pointer;list-style:none;padding-bottom:10px;
-    display:flex;align-items:center;
-  }
-  .views-accordion-summary::-webkit-details-marker{display:none}
-  .views-accordion-summary::after{
-    content:"▼";font-size:8px;margin-left:6px;transition:transform 0.2s;
-  }
-  .views-accordion[open] .views-accordion-summary::after{transform:rotate(180deg)}
-  .views-accordion-body{
-    display:flex;flex-direction:column;gap:10px;
-    background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-lg);padding:12px;
-  }
   .shdr{display:flex;align-items:center;gap:8px;margin-bottom:12px}
   .sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
   /* Sdot color semantic variants */
@@ -411,32 +396,6 @@
   .view-toggle{display:flex;gap:0;background:#0d1a28;border:1px solid #1a2838;border-radius:6px;padding:2px}
   .view-toggle button{padding:5px 10px;background:transparent;border:none;color:#5a8ab5;font-size:10px;font-weight:600;letter-spacing:.5px;font-family:inherit;cursor:pointer;border-radius:4px;transition:.15s}
   .view-toggle button.active{background:linear-gradient(135deg,#1a3a5c,#1e4a6e);color:#e2e8f0}
-
-  /* Compact control bar: view toggle + filters button */
-  .task-controlbar{
-    display:flex;align-items:center;justify-content:space-between;gap:8px;
-    margin-bottom:8px;
-  }
-  .filters-toggle{
-    display:flex;align-items:center;gap:6px;
-    padding:6px 12px;min-height:34px;
-    background:var(--bg-2,#0d1a28);
-    border:1px solid var(--border,#1a2838);
-    border-radius:8px;
-    color:var(--text-2,#8a9bae);font-size:12px;font-weight:500;
-    font-family:inherit;cursor:pointer;transition:.15s;
-  }
-  .filters-toggle:hover,.filters-toggle.active{
-    background:var(--bg-3,#142238);color:var(--text-1,#e2e8f0);
-    border-color:var(--border-strong,#2a3a4a);
-  }
-  .filters-toggle .ft-icon{font-size:13px;opacity:.85}
-  .filters-toggle .ft-count{
-    background:var(--accent,#3b82f6);color:#0a1320;
-    font-size:10px;font-weight:700;
-    min-width:18px;height:18px;padding:0 5px;border-radius:9px;
-    display:inline-flex;align-items:center;justify-content:center;
-  }
 
   /* ── Compact filter bar ─────────────────────────────────────────────────
      Replaces the five stacked scroll strips. Four triggers; each opens a
@@ -1389,9 +1348,6 @@
   .panel--tasks{padding:14px}
   /* Tags bar wrap spacing */
   .tags-bar-wrap{margin-bottom:8px}
-  /* Mobile view toggle: full-width row, buttons fill equally */
-  .mobile-view-toggle{width:100%}
-  .mobile-view-toggle button{flex:1}
   /* Fieldset toolbar reset — border/padding/margin browser defaults */
   .task-toolbar-row{border:0;padding:0;margin:0;display:flex;gap:8px;flex-wrap:wrap}
   /* Sdot colour for Tasks panel */
@@ -2466,8 +2422,6 @@
   /* Task rows: even quieter by default */
   .task-item{background:transparent;border:1px solid transparent;transition:all .15s}
   .task-item:hover{background:var(--bg-1);border-color:var(--border)}
-  /* Hide the mobile-only view toggle on desktop (it lives inside filtersPanel) */
-  .mobile-view-toggle{display:none}
   /* Priority stripe: thinner, only prominent for urgent */
   .task-item.priority-urgent{border-left:3px solid var(--danger)!important}
   .task-item.priority-high{border-left:2px solid var(--warning,#e67e22)}
@@ -2499,16 +2453,6 @@
     /* Smart views: always visible on mobile (it's the main navigation) but tighter */
     .smart-views{margin-top:6px;margin-bottom:4px}
     .sv-chip{padding:6px 9px!important;min-height:32px!important;font-size:11px!important}
-
-    /* View toggle hidden by default on mobile — most users use List. Move to menu. */
-    .task-controlbar{padding:2px 0;margin-bottom:4px;justify-content:flex-end;gap:6px}
-    .task-controlbar .view-toggle{display:none!important}
-    .mobile-view-toggle{display:flex!important;width:100%!important}
-    /* Filters button: smaller icon-only on mobile */
-    .filters-toggle{padding:5px 10px;min-height:30px;font-size:11px;opacity:.7}
-    .filters-toggle:hover,.filters-toggle.active{opacity:1}
-    .filters-toggle .ft-label{display:none}
-    .filters-toggle .ft-icon{font-size:14px;margin:0}
 
     /* Today banner: ULTRA-compact, only shown when has meaningful data */
     .today-banner-compact{padding:2px 0!important;gap:10px!important;margin-bottom:4px!important;justify-content:flex-start!important}
@@ -3243,9 +3187,6 @@ body:has(.update-banner) .quota-warning{
 .task-item[data-priority="low"]:not(.starred-task){border-left-color:var(--text-4)}
 .task-sig.sig-streak{background:var(--accent-bg);color:var(--accent);font-weight:600}
 
-.task-controlbar{
-  display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;
-}
 .task-tb-check{
   display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);
   cursor:pointer;user-select:none;white-space:nowrap;
@@ -3307,9 +3248,9 @@ body:has(.update-banner) .quota-warning{
   display:flex;align-items:center;
 }
 .set-section-sum::-webkit-details-marker,.md-section-sum::-webkit-details-marker{display:none}
-/* Disclosure chevron — matches .views-accordion-summary pattern. The native
-   <details> marker was disabled above; without this, the summary read as a
-   static heading rather than a collapsible disclosure. Rotates 180° when open. */
+/* Disclosure chevron for collapsible <details> summaries. The native marker
+   was disabled above; without this the summary reads as a static heading
+   rather than a collapsible disclosure. Rotates 180° when open. */
 .set-section-sum::after,.md-section-sum::after{
   content:"";width:0;height:0;margin-left:auto;
   border-left:4px solid transparent;border-right:4px solid transparent;
@@ -4206,7 +4147,6 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
   .modal-overlay, .cmdk-overlay, .what-next-overlay,
   .update-banner, .sw-precache-banner, .share-in-banner, .sync-incoming-bar,
   .action-toast, .export-toast, .quota-warning,
-  .filters-toggle, .task-controlbar .view-toggle,
   .task-syntax-popover, #shortcutsHelpOverlay,
   .task-form, .task-search-row, .task-search-pills, .active-filters-bar,
   .smart-views, .smart-views-bar, .lists-bar,

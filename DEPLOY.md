@@ -31,7 +31,7 @@ Changing `id` later can make existing installs look like a separate app until ol
 ## Option 3: Vercel (free, fast)
 
 ```bash
-cd /path/to/OdTauLai
+cd /path/to/Odta
 npx vercel
 ```
 
@@ -90,7 +90,7 @@ server {
 ## Option 6: Python one-liner (LAN / local test)
 
 ```bash
-cd /path/to/OdTauLai
+cd /path/to/Odta
 python3 -m http.server 8080
 # Open http://YOUR-LAN-IP:8080 from your phone (same Wi-Fi)
 ```
