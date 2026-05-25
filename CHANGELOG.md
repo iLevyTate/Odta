@@ -1,5 +1,22 @@
 # Changelog
 
+## v53 — 2026-05-25
+
+- **Task delete + undo replaces archive.** The per-task archive ("recycle bin") is gone; tasks are deleted directly with an undo toast. The old `ARCHIVE_TASK` / `RESTORE_TASK` AI ops were removed and duplicate-merge now annotates the kept task and deletes the duplicate. A one-shot migration permanently drops any previously-archived tasks. Day-streak copy clarified.
+- **Mobile swipe gestures reworked**: swipe **right** now opens a list picker to move the task to another list (was "mark done"); swipe **left** deletes (with undo). Membership-aware auto-organize and task clustering added.
+- **Mobile task-list UX wave (P1–P4)**: filter chrome consolidated into a single bar with bottom sheets (P1); decluttered task rows plus a dedicated reorder/indent mode (P2); collapsible parent cards with tap-to-open subtasks on the board (P3); thumb-zone add sheet and a top bulk-action bar (P4).
+- **List-view redesign**: reworked selection, category, and control highlights; list scroll position is preserved across task updates; added "date added" and "recently updated" sorts.
+- **Fixes**: bulk-select toolbar no longer renders as a distorted oval on mobile; calendar month grid no longer overflows its container; calfeeds collapse duplicate calendar occurrences in queries; text selection suppressed on the filter bar and quick-add controls; on-load layout shift, FAB overlap, and an undismissable toast resolved.
+- **Rebrand**: display name OdTauLai → **Odta** (internal storage keys and cache prefix unchanged); prominent live-app launch button in the README; CNAME added.
+- Service worker cache rotated to `odtaulai-v53`.
+
+## v49–v52 — 2026-05-22 → 2026-05-23
+
+- **Offline-first**: every runtime dependency is now vendored and the embedding model weights are committed to the repo, so ambient AI works from the first launch with no network round-trip. A remote fallback still lets fresh installs fetch weights if the bundled copy is unavailable.
+- **Bulk-import routing**: choose how each pasted task is routed — Auto-organize, Same-for-all, or Per-task — with self-audit gaps from the import flow closed.
+- **Model-loader hardening**: vendored module URLs now resolve against the document base (fixes 404s), with improved error handling and logging around model load failures; secret-scanning ignores vendored runtime deps to avoid false positives.
+- Service worker cache rotated through `odtaulai-v49` → `odtaulai-v52` to push these to returning users.
+
 ## v48 — 2026-05-21
 
 - **Removed generative AI (Ask) entirely.** The on-device LLM (SmolLM2 / Qwen2.5 via Transformers.js), the Ask chat sheet, the `?` task-input prefix, the GenAI settings panel, the download ribbon, and all LLM-only surfaces (Daily brief, Weekly review, AI rephrase, AI suggest tags, "Break down with AI", parse-with-LLM smart-add button, AI rationale annotations on harmonize/auto-organize/dedupe/what-next) are gone. Embedding-based ambient intelligence stays — semantic search, kNN metadata prediction, life-area classification, values alignment, duplicate detection, list routing, due-date kNN suggestion — all unchanged.

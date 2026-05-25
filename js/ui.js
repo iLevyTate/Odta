@@ -946,7 +946,8 @@ function renderTaskItem(t,depth){
   if(typeof isBulkMode === 'function' && isBulkMode() && typeof _bulkSelectedIds !== 'undefined' && _bulkSelectedIds.has(t.id)){
     d.classList.add('task-bulk-selected');
   }
-  // Swipe-to-complete + long-press-to-bulk-select for touch. Long-press is
+  // Swipe-right-to-move + swipe-left-to-delete + long-press-to-bulk-select for
+  // touch. Long-press is
   // the standard mobile gesture for "select multiple" (Files, Mail, Photos);
   // hooking it here makes bulk mode discoverable without a desktop palette.
   let touchStartX=0,touchStartY=0,touchCurrentX=0,swiping=false;
