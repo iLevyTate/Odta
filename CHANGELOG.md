@@ -1,5 +1,12 @@
 # Changelog
 
+## v54 — 2026-05-25
+
+- **Fix**: sorting the task list by **Name** no longer throws when a task has no name (e.g. a row imported without a `name` field) — the comparator now treats a missing name as empty instead of crashing the whole list render.
+- **Docs**: corrected the `DEPLOY.md` Content-Security-Policy section, which still described inline `onclick` handlers and an `'unsafe-inline'` policy that no longer exist. It now documents the actual strict shipped CSP (handlers delegated via `data-action`, guarded by `scripts/check-inline-handlers.mjs`) and its per-directive rationale.
+- **Tooling**: `npm run check` now also runs the inline-handler guard (`check:inline`) so local checks match CI.
+- Service worker cache rotated to `odtaulai-v54`.
+
 ## v53 — 2026-05-25
 
 - **Task delete + undo replaces archive.** The per-task archive ("recycle bin") is gone; tasks are deleted directly with an undo toast. The old `ARCHIVE_TASK` / `RESTORE_TASK` AI ops were removed and duplicate-merge now annotates the kept task and deletes the duplicate. A one-shot migration permanently drops any previously-archived tasks. Day-streak copy clarified.
