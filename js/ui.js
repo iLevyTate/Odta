@@ -1332,6 +1332,7 @@ function _commitChipChange(t){
     _taskModalSnapshot[f] = (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : v;
   });
   if(typeof saveState === 'function') saveState('user');
+  window._preserveTaskScroll = true;
   if(typeof renderTaskList === 'function') renderTaskList();
   if(typeof showSaveIndicator === 'function') showSaveIndicator();
 }
@@ -1725,7 +1726,7 @@ async function closeTaskDetail(opts){
   // the next open starts cleanly.
   const _sheet=_modalEl&&_modalEl.querySelector('.modal');
   if(_sheet){_sheet.style.transform='';_sheet.style.transition=''}
-  if(!skipRevert) renderTaskList();
+  if(!skipRevert){ window._preserveTaskScroll = true; renderTaskList(); }
   editingTaskId=null;
   document.removeEventListener('keydown',_taskModalTabTrap,true);
   if(_taskModalPrevFocus&&_taskModalPrevFocus.focus)try{_taskModalPrevFocus.focus()}catch(e){}
@@ -1947,6 +1948,7 @@ function saveTaskDetail(){
   }finally{
     try{ delete t._habitCycledInSession; }catch(e){}
   }
+  window._preserveTaskScroll = true;
   renderTaskList();
   saveState('user');
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
