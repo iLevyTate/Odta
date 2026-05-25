@@ -61,3 +61,41 @@ test('getCalFeedEventsForDate: excludes EXDATE instance on multi-day all-day', (
   assert.equal(f.getCalFeedEventsForDate('2026-06-02').length, 0, 'excluded day');
   assert.equal(f.getCalFeedEventsForDate('2026-06-03').length, 1, 'range continues after exdate');
 });
+
+test('getCalFeedEventsForDate: collapses identical occurrence from two feeds (same UID)', () => {
+  const ev = { uid: 'u-meet', title: 'Tuesday Evening Meeting', dateISO: '2026-06-09', time: '19:00', rrule: null };
+  const _calFeeds = {
+    feeds: [
+      { id: 'a', label: 'A', color: '#111', visible: true, events: [{ ...ev }] },
+      { id: 'b', label: 'B', color: '#222', visible: true, events: [{ ...ev }] },
+    ],
+  };
+  const f = makeApi(_calFeeds);
+  assert.equal(f.getCalFeedEventsForDate('2026-06-09').length, 1, 'duplicate collapsed');
+});
+
+test('getCalFeedEventsForDate: keeps distinct events at same slot (different UID)', () => {
+  const _calFeeds = {
+    feeds: [{
+      id: 'a', label: 'A', color: '#111', visible: true,
+      events: [
+        { uid: 'u1', title: 'Standup', dateISO: '2026-06-09', time: '19:00', rrule: null },
+        { uid: 'u2', title: 'Sync',    dateISO: '2026-06-09', time: '19:00', rrule: null },
+      ],
+    }],
+  };
+  const f = makeApi(_calFeeds);
+  assert.equal(f.getCalFeedEventsForDate('2026-06-09').length, 2, 'distinct events preserved');
+});
+
+test('getCalFeedEventsForDate: dedupes by title when UID absent', () => {
+  const ev = { title: 'No-UID event', dateISO: '2026-06-09', time: '08:00', rrule: null };
+  const _calFeeds = {
+    feeds: [
+      { id: 'a', label: 'A', color: '#111', visible: true, events: [{ ...ev }] },
+      { id: 'b', label: 'B', color: '#222', visible: true, events: [{ ...ev }] },
+    ],
+  };
+  const f = makeApi(_calFeeds);
+  assert.equal(f.getCalFeedEventsForDate('2026-06-09').length, 1, 'title-based dedupe');
+});
