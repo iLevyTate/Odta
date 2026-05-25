@@ -1069,14 +1069,12 @@ function getTaskChildren(parentId){return tasks.filter(t=>(t.parentId||null)===p
 // Whether a child task may render as part of a parent subtree the user has
 // already expanded into. The parent passed the smart-view filter; the child
 // may not have, but it should still appear so the user sees the complete
-// tree. Two hard exceptions remain so users can't accidentally surface
+// tree. One hard exception remains so users can't accidentally surface
 // items they explicitly removed from view:
-//   - Archived children stay hidden unless we're explicitly in archive view.
 //   - hiddenUntil-snoozed children stay hidden unless we're in snooze view.
 function _subtaskAllowedUnderShownParent(t){
   if(!t) return false;
   const today = (typeof todayISO === 'function') ? todayISO() : null;
-  if(t.archived) return false;
   if(today && t.hiddenUntil && t.hiddenUntil > today
      && smartView !== 'snoozed'
      && smartView !== 'completed') return false;
@@ -3301,7 +3299,7 @@ function _initTaskListSortable(){
   const list = document.getElementById('taskList');
   if(!list) return;
   _taskListSortable = new window.Sortable(list, {
-    // Anchor the gesture to the explicit drag-handle so swipe-to-complete
+    // Anchor the gesture to the explicit drag-handle so swipe-to-move/delete
     // and tap-to-open don't fight with reorder. Without this, every touch
     // on a card races between Sortable and our touchstart/end handlers.
     handle: '.drag-handle',

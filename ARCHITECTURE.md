@@ -94,5 +94,5 @@ undo stack (10 deep, 60s extended ring)
 Safety invariants:
 
 - **No auto‑apply, ever** — ops land in the preview UI with per‑field checkboxes and the 10‑deep undo stack.
-- **Destructive ACK** — any `DELETE_TASK`, or ≥5 `ARCHIVE_TASK` / `CHANGE_LIST` in one batch, triggers an additional confirmation before apply.
+- **Destructive ACK** — any `DELETE_TASK`, or a batch of ≥5 mass `CHANGE_LIST` (cross-list moves), triggers an additional confirmation before apply.
 - **No outbound calls** beyond the one‑time embedding model weight fetch from the Hugging Face CDN.

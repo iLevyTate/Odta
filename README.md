@@ -111,7 +111,7 @@ What you actually get from it:
 - **Smart-add suggestions** — type a new task and the app predicts life area, priority, effort, energy, tags, and target list from your existing tasks via kNN.
 - **Harmonize all fields** — one click proposes updates for every task: values (Schwartz), life area, priority, effort, energy, tags (merged, never wiped). Preview diffs. Apply what you want. Undo the last 10 batches.
 - **Auto-organize into lists** — route tasks to the list whose name + description matches best. Preview before apply.
-- **Duplicate detection** — near-duplicate pairs by cosine ≥ 0.9, with archive-and-merge flow.
+- **Duplicate detection** — near-duplicate pairs by cosine ≥ 0.9, with one-click merge (annotates the task you keep, deletes the duplicate — all via the previewable pending-ops stack).
 - **Similar tasks** — top neighbors surface in the task detail drawer.
 - **Suggest due date** — kNN over your task history infers a sensible due date for a new task.
 - **Align values only** — narrow button for Schwartz-only alignment if you don't want other fields touched.
@@ -155,12 +155,12 @@ A derived impact score ranks every active task from signals you already have —
 - **Bulk paste import** — paste multi-line text into the task input, a preview modal opens with one task per line; edit before committing. Skips lines >200 chars. Routing modes: **Auto-organize** (AI picks list + category per task), **Same for all** (one list + category for the whole batch), or **Per task** (preview each row with editable list + category dropdowns, pre-filled by AI suggestions you can override).
 - **Smart-add enhancement** — hit the `✦` button next to the input to prefill life area, priority, tags, and list from embeddings before you submit.
 - **Drag-and-drop reorder**, subtask drop, list drop.
-- **Mobile swipe gestures** — swipe right to complete, swipe left to archive, with haptic feedback.
+- **Mobile swipe gestures** — swipe right to move a task to another list, swipe left to delete (with undo), with haptic feedback.
 
 ### Views & navigation
 
 - **List / Board (kanban) / Calendar** — all three, switchable, keyboard-accessible.
-- **Smart views**: All, Today, Week, Overdue, Unscheduled, Starred, **Impact (Pareto)**, **Habits** (recurring / `~daily` etc.), Completed, Archive.
+- **Smart views**: All, **Inbox** (untriaged), Today, Week, Overdue, Unscheduled, Starred, **Impact (Pareto)**, **Waiting** (blocked on someone else), **Stuck** (untouched 14+ days), **Snoozed** (hidden until a date), **Habits** (recurring / `~daily` etc.), Done.
 - **Hide recurring from main lists** — optional (on by default): daily/weekly habits stay out of All/Today/Week/etc. and show in **Habits**; open **Filters** → **Display** → uncheck **Hide recurring from main** to mix them into main views.
 - **Group by** priority, status, due date, or list.
 - **Command palette** (`Cmd / Ctrl + K`) — fuzzy over tasks, actions, views, lists, AI commands, theme, sort, sync, everything.
