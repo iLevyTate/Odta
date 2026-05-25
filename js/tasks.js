@@ -2941,9 +2941,18 @@ function renderDailyMomentum(){
 }
 if(typeof window !== 'undefined') window.renderDailyMomentum = renderDailyMomentum;
 
+// Set while a Sortable drag is in flight (onChoose→onUnchoose). A re-render
+// during a drag detaches the dragged row from #taskList, which crashes
+// Sortable's fallback path (it dereferences dragEl.parentNode). Background
+// refreshes (duplicate scores, sync patches, day rollover) can fire mid-drag,
+// so we defer any render until the drop completes, then flush exactly once.
+let _taskDragActive = false;
+let _taskDragStarted = false;
+let _taskRenderQueuedDuringDrag = false;
 function renderTaskList(){
   const list=gid('taskList');
   if(!list)return;
+  if(_taskDragActive){ _taskRenderQueuedDuringDrag = true; return; }
   // In-place task updates (toggle done, star, chip edits…) rebuild the whole
   // list, which momentarily empties it; since the page itself scrolls, the
   // browser clamps scrollY to 0 and never restores it. Callers that mutate an
@@ -3312,10 +3321,13 @@ function _initTaskListSortable(){
     ghostClass: 'task-item--ghost',
     chosenClass: 'task-item--chosen',
     dragClass: 'task-item--dragging',
-    // Force fallback mode on touch — uses a synthetic drag image instead of
-    // the broken iOS native one. Mouse continues to use HTML5 native.
-    forceFallback: false,
+    // Use the synthetic-clone fallback for both mouse and touch. Native HTML5
+    // drag never fires from a touchstart, so on phones the only way to drag the
+    // handle is Sortable's pointer-tracked fallback. Forcing it everywhere also
+    // keeps the drag image consistent across input types.
+    forceFallback: true,
     fallbackOnBody: true,
+    fallbackTolerance: 4,
     swapThreshold: 0.65,
     // Auto-scroll while dragging near the top/bottom edges. Sortable's
     // built-in scroll handler is window-scoped (good — task list lives in
@@ -3368,35 +3380,61 @@ function _initTaskListSortable(){
           }
         }
       }catch(e){ console.warn('[sortable] cross-surface drop probe', e); }
-      if(calDropApplied) return;
-      // Read new DOM order, persist as t.order. Force manual sort so the
-      // user-driven order survives across renders that would otherwise
-      // re-sort by smart heuristics.
-      const items = list.querySelectorAll('.task-item');
-      let dirty = false;
-      items.forEach((el, i) => {
-        const id = parseInt(el.dataset.taskId || '', 10);
-        if(!Number.isFinite(id)) return;
-        const t = (typeof findTask === 'function') ? findTask(id) : null;
-        if(!t) return;
-        const newOrder = i * 10;
-        if(t.order !== newOrder){ t.order = newOrder; dirty = true; }
-      });
-      if(dirty){
-        if(typeof taskSortBy !== 'undefined' && taskSortBy !== 'manual'){
-          taskSortBy = 'manual';
-          const sel = document.getElementById('taskSortSel');
-          if(sel) sel.value = 'manual';
+      if(!calDropApplied){
+        // Read new DOM order, persist as t.order. Force manual sort so the
+        // user-driven order survives across renders that would otherwise
+        // re-sort by smart heuristics. The list is still frozen here, so the
+        // DOM reflects exactly where Sortable dropped the row.
+        const items = list.querySelectorAll('.task-item');
+        let dirty = false;
+        items.forEach((el, i) => {
+          const id = parseInt(el.dataset.taskId || '', 10);
+          if(!Number.isFinite(id)) return;
+          const t = (typeof findTask === 'function') ? findTask(id) : null;
+          if(!t) return;
+          const newOrder = i * 10;
+          if(t.order !== newOrder){ t.order = newOrder; dirty = true; }
+        });
+        if(dirty){
+          if(typeof taskSortBy !== 'undefined' && taskSortBy !== 'manual'){
+            taskSortBy = 'manual';
+            const sel = document.getElementById('taskSortSel');
+            if(sel) sel.value = 'manual';
+          }
+          if(typeof saveState === 'function') saveState('user');
         }
-        if(typeof saveState === 'function') saveState('user');
+      }
+      // Order is applied; safe to unfreeze and run the single deferred render
+      // (background refreshes that fired mid-drag, or the cal-drop re-render).
+      _taskDragActive = false;
+      if(_taskRenderQueuedDuringDrag){
+        _taskRenderQueuedDuringDrag = false;
+        if(typeof renderTaskList === 'function') renderTaskList();
       }
     },
     onStart: function(evt){
+      _taskDragStarted = true;
       // Stash the original dueDate so the cross-surface drop's Undo button
       // can restore it without re-querying for a possibly-stale value.
       const id = parseInt((evt.item && evt.item.dataset && evt.item.dataset.taskId) || '', 10);
       const t = Number.isFinite(id) && typeof findTask === 'function' ? findTask(id) : null;
       if(t && evt.item){ evt.item.dataset.prevDue = t.dueDate || ''; }
+    },
+    // Freeze list re-renders for the whole drag so a background refresh can't
+    // detach the row mid-flight (crashes Sortable's fallback) or reset the
+    // order before onEnd persists it. onChoose fires before onStart; onEnd
+    // (which applies the new order) owns the unfreeze+flush for real drags.
+    onChoose: function(){ _taskDragActive = true; _taskDragStarted = false; },
+    onUnchoose: function(){
+      // A real drag's unfreeze+flush is handled by onEnd, which runs around
+      // this event and only after the order is applied. Here we only cover the
+      // tap case — handle pressed but never dragged, so onEnd never fires.
+      if(_taskDragStarted) return;
+      _taskDragActive = false;
+      if(_taskRenderQueuedDuringDrag){
+        _taskRenderQueuedDuringDrag = false;
+        if(typeof renderTaskList === 'function') renderTaskList();
+      }
     },
   });
 }

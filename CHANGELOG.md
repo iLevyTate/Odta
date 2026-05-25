@@ -1,5 +1,13 @@
 # Changelog
 
+## v54 — 2026-05-25
+
+- **Drag-to-reorder works again, on desktop and touch.** The drag grip only rendered in "Manual" sort (default is Smart), so there was nothing to grab — now it always renders, and dragging from any sort reorders and locks the list to manual. On mobile the grip is a real 34px touch target that coexists with swipe (Sortable scopes drags to the handle; the row's swipe handler ignores touches that begin on it).
+- **Reliable touch gestures**: task rows get `touch-action: pan-y` so the browser reserves horizontal swipes for move/delete instead of treating them as scroll/back-nav; Sortable uses its pointer-tracked fallback (`forceFallback`) because native HTML5 drag never fires from a touch.
+- **Drag stability**: task-list re-renders are frozen for the duration of a drag and flushed once on drop. A background refresh (duplicate scores, sync, day rollover) firing mid-drag previously detached the dragged row and crashed Sortable's fallback, or reset the order before it was saved.
+- Docs realigned with the delete+undo / swipe rework (README, ARCHITECTURE) and the CHANGELOG backfilled to v53.
+- Service worker cache rotated to `odtaulai-v54`.
+
 ## v53 — 2026-05-25
 
 - **Task delete + undo replaces archive.** The per-task archive ("recycle bin") is gone; tasks are deleted directly with an undo toast. The old `ARCHIVE_TASK` / `RESTORE_TASK` AI ops were removed and duplicate-merge now annotates the kept task and deletes the duplicate. A one-shot migration permanently drops any previously-archived tasks. Day-streak copy clarified.
