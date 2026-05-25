@@ -165,24 +165,26 @@ Then update `manifest.json` colors to match your brand:
 
 ## Content-Security-Policy (CSP)
 
-Odta ships a permissive meta CSP in `index.html` — practical, not maximalist. The shipped policy allows `'unsafe-inline'` (the app uses inline `onclick` handlers throughout), `'wasm-unsafe-eval'` (Transformers.js needs it), and broad `connect-src http: https:` (calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs). On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this is what gets served and everything works.
-
-If your host wants to enforce a stricter CSP via HTTP headers (overriding the meta tag), the embedding model needs at least these allow-list entries:
+Odta ships a strict meta CSP in `index.html` — no `'unsafe-inline'` in `script-src` or `style-src`. Every event handler is delegated via `data-action` / `data-on*` attributes dispatched by `js/event-delegation.js` (there are no inline `onclick` handlers), and `scripts/check-inline-handlers.mjs` fails CI if one is ever reintroduced. The shipped policy is:
 
 ```
 default-src 'self';
-script-src  'self' https://cdn.jsdelivr.net;
-style-src   'self' 'unsafe-inline';
+base-uri    'self';
+object-src  'none';
+script-src  'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com;
+worker-src  'self' blob:;
+style-src   'self';
 img-src     'self' data: blob:;
-worker-src  'self' blob: https://cdn.jsdelivr.net;
-connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://cdn-lfs.huggingface.co https://*.huggingface.co;
+font-src    'self' data:;
+connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;
 ```
 
-Note: this stricter alternative drops `'unsafe-inline'` from `script-src`, which will break the inline `onclick` handlers in `index.html`. Migrate them to `addEventListener` first if you need this. It also tightens `connect-src` to the inference endpoints only — calendar feeds via user proxies will be blocked.
+On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this meta tag is what gets served and everything works. If you also enforce CSP via HTTP headers (which override the meta tag), mirror these same directives.
 
 Why each entry:
-- `cdn.jsdelivr.net` — Transformers.js ESM module + its WASM/worker assets.
-- `huggingface.co` + `cdn-lfs.huggingface.co` — embedding model weights (`Xenova/bge-small-en-v1.5`).
+- `script-src 'wasm-unsafe-eval'` — Transformers.js compiles WASM for on-device embeddings.
+- `cdn.jsdelivr.net` / `unpkg.com` — Transformers.js ESM module + its WASM/worker assets.
 - `worker-src blob:` — Transformers.js spawns a Web Worker from a blob URL for background inference.
+- `connect-src http: https:` — calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs, so the host list can't be known ahead of time. The `wss://*.peerjs.com` entries cover P2P sync (PeerJS) signalling.
 
-If you enable P2P sync (PeerJS), also add your signalling server (default `wss://*.peerjs.com`) to `connect-src`.
+To tighten `connect-src` (at the cost of features): drop the broad `http: https:` and list only the embedding-model origins (`https://cdn.jsdelivr.net https://huggingface.co https://cdn-lfs.huggingface.co https://*.huggingface.co`) — but note this blocks user-configured calendar-feed proxies. Keep the `wss://*.peerjs.com` entry only if you use P2P sync.

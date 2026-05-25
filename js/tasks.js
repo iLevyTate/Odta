@@ -2697,7 +2697,7 @@ function sortTasks(arr){
       if(a.dueDate&&b.dueDate&&a.dueDate!==b.dueDate) return a.dueDate.localeCompare(b.dueDate);
       return (PRIORITY_ORDER[a.priority||'none']||9)-(PRIORITY_ORDER[b.priority||'none']||9);
     }
-    if(by==='name')return a.name.localeCompare(b.name);
+    if(by==='name')return (a.name||'').localeCompare(b.name||'');
     if(by==='priority')return (PRIORITY_ORDER[a.priority||'none']||9)-(PRIORITY_ORDER[b.priority||'none']||9);
     if(by==='due'){
       if(!a.dueDate&&!b.dueDate)return 0;
