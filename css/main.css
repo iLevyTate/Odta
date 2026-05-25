@@ -458,6 +458,7 @@
     color:var(--text-2,#8a9bae);font-size:12px;font-weight:600;
     font-family:inherit;cursor:pointer;transition:.15s;
     min-width:0;
+    -webkit-user-select:none;user-select:none;
   }
   .fb-btn:hover,.fb-btn.active{
     background:var(--bg-3,#142238);color:var(--text-1,#e2e8f0);
@@ -1064,6 +1065,7 @@
     cursor:pointer;text-decoration:underline;text-decoration-color:var(--border-strong);
     text-underline-offset:3px;text-decoration-thickness:1px;
     transition:color .12s,text-decoration-color .12s;
+    -webkit-user-select:none;user-select:none;
   }
   .qa-hint-reveal:hover{color:var(--text-1);text-decoration-color:var(--accent)}
   .qa-hint-reveal:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
@@ -1074,7 +1076,7 @@
     display:inline-flex;align-items:center;gap:4px;
     background:transparent;border:none;padding:6px 2px;margin:0;
     color:var(--text-3);font-family:inherit;font-size:var(--fs-12);
-    cursor:pointer;
+    cursor:pointer;-webkit-user-select:none;user-select:none;
   }
   .qa-more-toggle:hover{color:var(--text-1)}
   .qa-more-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
