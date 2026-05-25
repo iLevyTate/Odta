@@ -173,6 +173,8 @@ A derived impact score ranks every active task from signals you already have —
 - Parsed entirely in the browser (full VEVENT / VTIMEZONE / RRULE / EXDATE expansion, 180-day window).
 - Events appear alongside your tasks in the Calendar view.
 - Per-feed colour and visibility toggle.
+- **Google secret URL:** Settings → click your calendar → **Integrate calendar** → copy **Secret address in iCal format**. Treat it like a password.
+- **Troubleshooting:** a feed showing `✕ HTTP 404` means the secret address was reset (Google invalidates the old token) — grab a fresh URL and re-add the feed; the proxy stays the same.
 
 ### Optional P2P sync (off by default)
 

@@ -747,6 +747,7 @@ function renderCalFeedsPanel(){
         <div id="cfUrlMode" class="calfeed-mode-panel" hidden>
           <label class="calfeed-lbl">Secret iCal URL</label>
           <input type="url" id="cfUrl" class="calfeed-in" placeholder="https://calendar.google.com/calendar/ical/.../private-.../basic.ics">
+          <p class="calfeed-hint">Google Calendar: ⚙ <strong>Settings</strong> → click your calendar in the left list → <strong>Integrate calendar</strong> → copy <strong>Secret address in iCal format</strong>. Treat it like a password — anyone with it can read your calendar.</p>
 
           <label class="calfeed-lbl">CORS proxy URL (required for direct fetch)</label>
           <input type="url" id="cfProxy" class="calfeed-in" value="${esc(proxyDefault)}" placeholder="https://your-name.workers.dev/?url=">
@@ -800,6 +801,7 @@ function renderCalFeedsPanel(){
         <li>In Odta, paste it in the "CORS proxy URL" field above, appending <code>?url=</code></li>
       </ol>
       <p class="calfeed-worker-note"><strong>Privacy note:</strong> This Worker only forwards requests to <code>calendar.google.com</code>. You're the only one using it. Cloudflare's free tier gives 100k requests/day, more than enough for personal use.</p>
+      <p class="calfeed-worker-note"><strong>Troubleshooting — feed shows <code>✕ HTTP 404</code>:</strong> your secret address was reset. Google invalidates the old <code>private-…</code> token whenever you regenerate it, so the saved URL goes dead. Grab a fresh <strong>Secret address in iCal format</strong> (Settings → Integrate calendar) and re-add the feed. The proxy URL stays the same.</p>
     </div>
   `;
   // Wire per-row buttons via delegated listeners. The row's data-id carries
