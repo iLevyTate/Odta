@@ -523,9 +523,13 @@ function refreshClassificationUi(){
     getActiveCategories().forEach(c => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'sv-chip' + (cur === c.id ? ' active' : '');
+      btn.className = 'sv-chip sv-chip--cat' + (cur === c.id ? ' active' : '');
       btn.textContent = String(c.label || '');
       const id = String(c.id);
+      // Tint the chip with this category's own colour so the active one is
+      // unmistakable and matches the row stripes / settings (--cat-* tokens).
+      const col = c.color || (typeof getCategoryDef === 'function' && getCategoryDef(id) && getCategoryDef(id).color);
+      if(col) btn.style.setProperty('--sv-cat', col);
       btn.addEventListener('click', () => setFilterCategory(id));
       tb.appendChild(btn);
     });
