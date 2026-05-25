@@ -1800,9 +1800,12 @@ function openSheet(id){
   if(!ov) return;
   ov.classList.add('open');
   bindSheetSwipe(ov, ()=>closeSheet(id));
-  // Focus the first focusable control for keyboard users.
+  // Focus the first focusable control for keyboard users. preventScroll + a
+  // deferred frame keep the focus from scroll-correcting the overflow-y overlay
+  // while the entrance animation (modalSlide/fadeIn) is mid-flight — that race
+  // caused a visible jitter on open. Mirrors openCmdK's focus handling.
   const f=ov.querySelector('.modal-close,button,select,input,a[href]');
-  if(f){ try{ f.focus(); }catch(_){} }
+  if(f){ requestAnimationFrame(()=>{ try{ f.focus({preventScroll:true}); }catch(_){ try{ f.focus(); }catch(__){} } }); }
 }
 function closeSheet(id){
   const ov=document.getElementById(id);
