@@ -1,5 +1,12 @@
 # Changelog
 
+## v55 — 2026-05-25
+
+- **Fix**: sorting the task list by **Name** no longer throws when a task has no name (e.g. a row imported without a `name` field) — the comparator now treats a missing name as empty instead of crashing the whole list render.
+- **Docs**: corrected the `DEPLOY.md` Content-Security-Policy section, which still described inline `onclick` handlers and an `'unsafe-inline'` policy that no longer exist. It now documents the actual strict shipped CSP (handlers delegated via `data-action`, guarded by `scripts/check-inline-handlers.mjs`) and its per-directive rationale.
+- **Tooling**: `npm run check` now also runs the inline-handler guard (`check:inline`) so local checks match CI.
+- Service worker cache rotated to `odtaulai-v55`.
+
 ## v54 — 2026-05-25
 
 - **Drag-to-reorder works again, on desktop and touch.** The drag grip only rendered in "Manual" sort (default is Smart), so there was nothing to grab — now it always renders, and dragging from any sort reorders and locks the list to manual. On mobile the grip is a real 34px touch target that coexists with swipe (Sortable scopes drags to the handle; the row's swipe handler ignores touches that begin on it).
