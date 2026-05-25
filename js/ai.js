@@ -280,22 +280,8 @@ function executeIntelOp(op){
       t.starred = !t.starred;
       break;
     }
-    case 'ARCHIVE_TASK':{
-      const t = findTask(a.id); if(!t) return null;
-      snap = { type: 'updated', id: t.id, before: { ...t } };
-      t.archived = true;
-      getTaskDescendantIds(t.id).forEach(did => { const d = findTask(did); if(d) d.archived = true; });
-      break;
-    }
-    case 'RESTORE_TASK':{
-      const t = findTask(a.id); if(!t) return null;
-      snap = { type: 'updated', id: t.id, before: { ...t } };
-      t.archived = false;
-      getTaskDescendantIds(t.id).forEach(did => { const d = findTask(did); if(d) d.archived = false; });
-      break;
-    }
     case 'DELETE_TASK':{
-      const t = findTask(a.id); if(!t || !t.archived) return null;
+      const t = findTask(a.id); if(!t) return null;
       snap = { type: 'deleted', before: { ...t } };
       const desc = getTaskDescendantIds(t.id);
       for(const rid of [t.id, ...desc]){ if(typeof _taskIndexRemove === 'function') _taskIndexRemove(rid); }
@@ -575,9 +561,7 @@ function _describeOpStructured(op){
     case 'MARK_DONE': return { kind: 'simple', title: 'Mark done', taskName, detail: a.completionNote ? String(a.completionNote).slice(0, 72) : '', icon: 'check', danger: false };
     case 'REOPEN': return { kind: 'simple', title: 'Reopen', taskName, detail: '', icon: 'rotateCcw', danger: false };
     case 'TOGGLE_STAR': return { kind: 'simple', title: t?.starred ? 'Unstar' : 'Star', taskName, detail: '', icon: 'star', danger: false };
-    case 'ARCHIVE_TASK': return { kind: 'simple', title: 'Archive', taskName, detail: '', icon: 'archive', danger: false };
-    case 'RESTORE_TASK': return { kind: 'simple', title: 'Restore', taskName, detail: '', icon: 'refresh', danger: false };
-    case 'DELETE_TASK': return { kind: 'simple', title: 'Delete forever', taskName, detail: 'Permanent removal (task must be archived)', icon: 'alertTriangle', danger: true };
+    case 'DELETE_TASK': return { kind: 'simple', title: 'Delete forever', taskName, detail: 'Permanent removal', icon: 'alertTriangle', danger: true };
     case 'DUPLICATE_TASK': return { kind: 'simple', title: 'Duplicate', taskName, detail: '', icon: 'copy', danger: false };
     case 'MOVE_TASK': return { kind: 'simple', title: 'Move in tree', taskName, detail: 'Parent #' + (a.newParentId || 'top'), icon: 'chevronRight', danger: false };
     case 'CHANGE_LIST': {
@@ -778,7 +762,7 @@ function _renderPendingOps(){
   const sourceBadge = _pendingSource ? `<span class="pending-source-badge" title="Proposed via ${esc(_pendingSource)}">via ${esc(_pendingSource)}</span>` : '';
   const massWarn = (_pendingDestructive === 'hard' && !dangerIdx.length) ? `
     <div class="pending-mass-warn" role="note">
-      <strong>Heads up:</strong> this batch contains multiple destructive actions (archive / move across lists). Review carefully before applying — you can undo, but it affects many tasks at once.
+      <strong>Heads up:</strong> this batch contains multiple destructive actions (delete / move across lists). Review carefully before applying — you can undo, but it affects many tasks at once.
     </div>` : '';
 
   wrap.innerHTML = `
@@ -890,7 +874,7 @@ async function intelReclassifyUncategorized(){
 }
 
 /**
- * When Apply should prompt for the hard bulk (archive / move) confirmation.
+ * When Apply should prompt for the hard bulk (delete / move) confirmation.
  * DELETE_TASK uses the checkbox ack in the panel instead of this dialog.
  */
 function intelHardBulkConfirmNeeded(pendingOps, destructiveLevel){
@@ -908,7 +892,7 @@ async function intelApplyPending(){
     return;
   }
   if(intelHardBulkConfirmNeeded(_pendingOps, _pendingDestructive)){
-    const msg = 'Proposed changes include bulk destructive actions (archive/move to list). Apply anyway?';
+    const msg = 'Proposed changes include bulk destructive actions (delete/move to list). Apply anyway?';
     if(typeof showAppConfirm === 'function'){
       if(!(await showAppConfirm(msg))){ _setIntelStatus('ready', 'Cancelled'); return; }
     }else if(typeof window !== 'undefined' && typeof window.confirm === 'function'){
@@ -959,10 +943,6 @@ async function intelApplyPending(){
       }else{
         let reason = 'unknown';
         if(op.args && op.args.id && !findTask(op.args.id)) reason = `task #${op.args.id} not found`;
-        else if(op.name === 'DELETE_TASK' && op.args && op.args.id){
-          const t = findTask(op.args.id);
-          if(t && !t.archived) reason = 'task must be archived before permanent delete';
-        }
         failures.push(`${op.name}: ${reason}`);
       }
     }catch(e){
@@ -1406,7 +1386,7 @@ async function intelFindDuplicatesUI(){
       return `<div class="intel-dup-row">
         <span class="intel-dup-pair">${esc(p.taskA.name.slice(0, 32))} ↔ ${esc(p.taskB.name.slice(0, 32))}</span>
         <span class="intel-dup-sim">${p.sim.toFixed(2)}</span>
-        <button type="button" class="btn-ghost btn-sm" data-action="intelMergeDuplicatePair" data-args='[${p.idA},${p.idB}]'>Archive 2nd</button>
+        <button type="button" class="btn-ghost btn-sm" data-action="intelMergeDuplicatePair" data-args='[${p.idA},${p.idB}]'>Delete 2nd</button>
       </div>`;
     }).join('');
   }catch(e){
@@ -1425,10 +1405,10 @@ function intelMergeDuplicatePair(idA, idB){
   const second = first === ta ? tb : ta;
   _pendingOps = [
     { name: 'ADD_NOTE', args: { id: first.id, text: `Merged duplicate: ${second.name}` } },
-    { name: 'ARCHIVE_TASK', args: { id: second.id } },
+    { name: 'DELETE_TASK', args: { id: second.id } },
   ];
   _renderPendingOps();
-  _setIntelStatus('idle', 'Review merge (archive duplicate)');
+  _setIntelStatus('idle', 'Review merge (delete duplicate)');
 }
 
 async function intelHarmonizeFields(){

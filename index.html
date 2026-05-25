@@ -325,7 +325,6 @@
             <button class="sv-chip" data-view="snoozed" data-action="setSmartView" data-arg="snoozed" title="Tasks hidden until a date (snoozed)"><span class="sv-icon" data-icon="moon"></span>Snoozed<span class="sv-count" id="svcSnoozed">0</span></button>
             <button class="sv-chip" data-view="habits" data-action="setSmartView" data-arg="habits" title="Recurring &amp; habits"><span class="sv-icon" data-icon="refresh"></span>Habits<span class="sv-count" id="svcHabits">0</span></button>
             <button class="sv-chip" data-view="completed" data-action="setSmartView" data-arg="completed"><span class="sv-icon" data-icon="checkCircle"></span>Done<span class="sv-count" id="svcCompleted">0</span></button>
-            <button class="sv-chip" data-view="archived" data-action="setSmartView" data-arg="archived"><span class="sv-icon" data-icon="archive"></span>Archive<span class="sv-count" id="svcArchived">0</span></button>
           </div>
         </div>
       </div>
@@ -451,14 +450,8 @@
     </div>
 
     <div id="swipeTipBanner" class="swipe-tip-banner" hidden role="status">
-      <span class="swipe-tip-msg">Tip: swipe right on a task to mark done · swipe left to archive</span>
+      <span class="swipe-tip-msg">Tip: swipe right on a task to mark done · swipe left to delete</span>
       <button type="button" class="swipe-tip-dismiss" data-action="dismissSwipeTip">Got it</button>
-    </div>
-
-    <!-- Archived notice (only shown in archive view) -->
-    <div class="archived-notice" id="archivedNotice" hidden>
-      <span class="archived-notice-inner"><span class="archived-notice-ic" data-icon="archive"></span>Viewing archived tasks — click the restore button (<span class="archived-notice-restore" data-icon="rotateCcw"></span>) to bring them back</span>
-      <button type="button" data-action="emptyArchiveWithConfirm">Empty Archive</button>
     </div>
 
     <!-- List view (default) -->
