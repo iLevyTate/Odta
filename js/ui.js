@@ -994,7 +994,7 @@ function renderTaskItem(t,depth){
       if(e.cancelable)e.preventDefault();
       d.style.transform='translateX('+dx+'px)';
       d.style.transition='none';
-      d.style.background=dx>0?'linear-gradient(90deg,var(--success-bg),var(--bg-1) 80%)':'linear-gradient(90deg,var(--bg-1) 20%,var(--danger-bg))';
+      d.style.background=dx>0?'linear-gradient(90deg,var(--accent-bg),var(--bg-1) 80%)':'linear-gradient(90deg,var(--bg-1) 20%,var(--danger-bg))';
     }
   },{passive:false});
   d.addEventListener('touchend',function(e){
@@ -1009,8 +1009,8 @@ function renderTaskItem(t,depth){
     }
     if(swiping&&Math.abs(dx)>80){
       haptic(20);
-      if(dx>0){toggleTaskDoneQuick(t.id)}
-      else{removeTask(t.id)}
+      if(dx>0){showTaskListPickerSheet(t.id)}
+      else{removeTask(t.id,null,{force:true})}
     }
     touchStartX=0;touchCurrentX=0;swiping=false;
   },{passive:false});
@@ -1614,7 +1614,9 @@ function renderMdHabitLog(t){
 async function refreshMdSimilarTasks(id){
   const body = gid('mdSimilarTasks');
   const acc = gid('mdSimilarAccordion');
+  const clusterBtn = gid('mdClusterBtn');
   if(!body) return;
+  if(clusterBtn) clusterBtn.hidden = true;
   if(typeof isIntelReady !== 'function' || !isIntelReady()){
     body.textContent='';const m1=document.createElement('span');m1.className='intel-muted';m1.textContent='Load the model (AI chip or Tools → Task understanding) for similar tasks.';body.appendChild(m1);
     if(acc) acc.classList.remove('open');
@@ -1636,12 +1638,87 @@ async function refreshMdSimilarTasks(id){
       const sc=document.createElement('span');sc.className='st-sim';sc.textContent=s.toFixed(2);btn.appendChild(sc);
       body.appendChild(btn);
     });
+    // Offer clustering only when at least one neighbor is similar enough to be
+    // worth grouping under a shared theme.
+    if(clusterBtn) clusterBtn.hidden = !sim.some(x => x.sim >= CLUSTER_SIM_FLOOR);
     if(acc) acc.classList.add('open');
   }catch(e){
     if (editingTaskId !== id) return;
     body.textContent='';const m4=document.createElement('span');m4.className='intel-muted';m4.textContent='Could not load neighbors.';body.appendChild(m4);
   }
 }
+
+// Minimum cosine similarity for a neighbor to be folded into a cluster.
+const CLUSTER_SIM_FLOOR = 0.5;
+
+// Group the current task and its close neighbors under a brand-new parent
+// "theme" task (kept in the current task's list), nesting them as subtasks.
+// Reuses the embedding neighbor search + the app's parentId subtask model.
+async function clusterSimilarTasks(){
+  const id = editingTaskId;
+  if(id == null) return;
+  const anchor = findTask(id);
+  if(!anchor) return;
+  if(typeof isIntelReady !== 'function' || !isIntelReady() || typeof similarTasksFor !== 'function'){
+    if(typeof showActionToast === 'function') showActionToast('Load the model first to group similar tasks','',null,3000);
+    return;
+  }
+  let neighbors = [];
+  try{ neighbors = await similarTasksFor(id, 8); }catch(e){ neighbors = []; }
+  // Keep close-enough, non-archived neighbors. The new theme parent is created
+  // top-level, so re-parenting under it can never form a cycle.
+  const members = neighbors
+    .filter(x => x && x.sim >= CLUSTER_SIM_FLOOR && x.t && !x.t.archived)
+    .map(x => x.t)
+    .filter(ot => ot.id !== id);
+  if(!members.length){
+    if(typeof showActionToast === 'function') showActionToast('No similar tasks close enough to group','',null,3000);
+    return;
+  }
+  const group = [anchor, ...members];
+  const suggested = 'Theme: ' + (anchor.name || '').slice(0, 40);
+  const themeName = (typeof showAppPrompt === 'function')
+    ? await showAppPrompt('Name this theme (groups ' + group.length + ' tasks):', suggested)
+    : prompt('Name this theme:', suggested);
+  if(themeName === null) return;
+  const name = String(themeName).trim();
+  if(!name) return;
+
+  // Snapshot prior parents for Undo before re-parenting.
+  const prevParents = group.map(t => ({ id: t.id, parentId: t.parentId == null ? null : t.parentId }));
+
+  const parent = Object.assign(
+    { id: ++taskIdCtr, name, totalSec: 0, sessions: 0, created: timeNowFull(), parentId: null, collapsed: false },
+    defaultTaskProps(),
+    { listId: anchor.listId == null ? null : anchor.listId },
+  );
+  tasks.push(parent);
+  if(typeof _taskIndexRegister === 'function') _taskIndexRegister(parent);
+  // Captured from prevParents (pre-mutation) so Undo restores the right value.
+  const anchorPrevEntry = prevParents.find(p => p.id === id);
+  const anchorPrevParent = anchorPrevEntry ? anchorPrevEntry.parentId : null;
+  group.forEach(t => { t.parentId = parent.id; });
+  // The detail modal reverts the anchor to its open-time snapshot on close;
+  // sync the new parent into the snapshot so closing doesn't pop it back out.
+  if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = parent.id;
+
+  if(typeof saveState === 'function') saveState('user');
+  if(typeof renderTaskList === 'function') renderTaskList();
+  await refreshMdSimilarTasks(id);
+
+  if(typeof showActionToast === 'function'){
+    const pid = parent.id;
+    showActionToast('Grouped ' + group.length + ' tasks under "' + name + '"', 'Undo', () => {
+      prevParents.forEach(p => { const t = findTask(p.id); if(t) t.parentId = p.parentId; });
+      if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = anchorPrevParent == null ? null : anchorPrevParent;
+      if(typeof _taskIndexRemove === 'function') _taskIndexRemove(pid);
+      tasks = tasks.filter(t => t.id !== pid);
+      if(typeof saveState === 'function') saveState('user');
+      if(typeof renderTaskList === 'function') renderTaskList();
+    }, 6000);
+  }
+}
+window.clusterSimilarTasks = clusterSimilarTasks;
 
 
 function renderEffortChips(t,eChips){
@@ -1891,6 +1968,78 @@ function showTaskActionMenu(id){
 }
 window.showTaskActionMenu=showTaskActionMenu;
 window.closeTaskActionMenu=closeTaskActionMenu;
+
+// ── Swipe-right list picker ─────────────────────────────────────────────────
+// Right-swipe on a task row opens this popover of every OTHER list. Picking one
+// moves the task there with an Undo toast. Reuses the row-overflow menu's
+// element slot + outside-click/Esc handlers so only one popover lives at a time.
+function _moveTaskToList(id,newListId){
+  const t=findTask(id); if(!t) return;
+  const prev = t.listId==null?null:t.listId;
+  if(prev===newListId) return;
+  const before={listId:prev};
+  t.listId=newListId;
+  if(typeof recordTaskActivity==='function') recordTaskActivity(t,before);
+  if(typeof invalidateListVectorCache==='function') invalidateListVectorCache();
+  if(typeof saveState==='function') saveState('user');
+  if(typeof renderTaskList==='function') renderTaskList();
+  const dest=(Array.isArray(lists)?lists.find(l=>l.id===newListId):null);
+  if(typeof showActionToast==='function'){
+    showActionToast('Moved to "'+((dest&&dest.name)||'list')+'"','Undo',()=>{
+      const u=findTask(id); if(!u) return;
+      u.listId=prev;
+      if(typeof invalidateListVectorCache==='function') invalidateListVectorCache();
+      if(typeof saveState==='function') saveState('user');
+      if(typeof renderTaskList==='function') renderTaskList();
+    },5000);
+  }
+}
+function showTaskListPickerSheet(id){
+  const t=findTask(id); if(!t) return;
+  const others=(Array.isArray(lists)?lists:[]).filter(l=>l.id!==t.listId);
+  if(!others.length){
+    if(typeof showActionToast==='function') showActionToast('Create another list to move tasks into','',null,3000);
+    return;
+  }
+  closeTaskActionMenu();
+  const menu=document.createElement('div');
+  menu.className='task-action-menu';
+  menu.setAttribute('role','menu');
+  const hdr=document.createElement('div');
+  hdr.className='tam-hdr';
+  hdr.textContent='Move to list';
+  menu.appendChild(hdr);
+  others.forEach(l=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='tam-item';
+    b.setAttribute('role','menuitem');
+    const ic=document.createElement('span');ic.className='tam-ic';ic.setAttribute('aria-hidden','true');ic.textContent='→';
+    const lb=document.createElement('span');lb.textContent=l.name||'Untitled list';
+    b.append(ic,lb);
+    b.onclick=()=>{ closeTaskActionMenu(); _moveTaskToList(id,l.id); };
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  // No anchor button on a swipe — position against the task row's right edge,
+  // flipping above / clamping to the viewport like showTaskActionMenu does.
+  const row=document.querySelector('.task-item[data-task-id="'+id+'"]');
+  const r=row?row.getBoundingClientRect():{top:80,bottom:120,right:window.innerWidth-12};
+  const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  let top=r.bottom+6, left=r.right-mw;
+  if(left<8) left=8;
+  if(top+mh>window.innerHeight-8) top=Math.max(8,r.top-mh-6);
+  menu.style.top=top+'px';
+  menu.style.left=left+'px';
+  _taskActionMenuEl=menu;
+  setTimeout(()=>{
+    document.addEventListener('mousedown',_tamOutside,true);
+    document.addEventListener('keydown',_tamKey,true);
+  },0);
+  const first=menu.querySelector('.tam-item'); if(first){ try{ first.focus(); }catch(_){} }
+}
+window.showTaskListPickerSheet=showTaskListPickerSheet;
+
 function saveTaskDetail(){
   if(!editingTaskId)return;
   const t=findTask(editingTaskId);if(!t)return;

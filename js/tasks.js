@@ -1354,11 +1354,13 @@ function toggleTask(id, ev){
   if(typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
 }
 
-async function removeTask(id, ev){
+async function removeTask(id, ev, opts){
   _stopEvt(ev);
   const task=findTask(id);if(!task)return;
-  // If viewing archive, this is a permanent delete
-  if(task.archived||smartView==='archived'){
+  // If viewing archive — or the caller forces it (swipe-to-delete) — this is a
+  // permanent delete rather than an archive.
+  const forceDelete=!!(opts&&opts.force);
+  if(task.archived||smartView==='archived'||forceDelete){
     const descendants=getTaskDescendantIds(id);
     if(!(await showAppConfirm('Permanently delete "'+task.name+'"'+(descendants.length>0?' and '+descendants.length+' subtask'+(descendants.length!==1?'s':''):'')+'? Cannot be undone.')))return;
     const toRemove=[id,...descendants];

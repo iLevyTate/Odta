@@ -1095,6 +1095,20 @@ function _listText(l){
   return desc ? `${name}\n${desc}` : name;
 }
 
+function _l2normalize(v){
+  let s = 0;
+  for(let i = 0; i < v.length; i++) s += v[i] * v[i];
+  if(s > 0){
+    const inv = 1 / Math.sqrt(s);
+    for(let i = 0; i < v.length; i++) v[i] *= inv;
+  }
+  return v;
+}
+
+// Weight on the manual-sort centroid vs. the list's name/description vector
+// when both are available. 0 = text-only (legacy), 1 = membership-only.
+const LIST_MEMBER_BLEND = 0.5;
+
 /** @returns {Promise<Map<number, Float32Array>>} */
 async function _getListVectors(){
   if(typeof lists === 'undefined' || !Array.isArray(lists) || !lists.length) return new Map();
@@ -1103,17 +1117,60 @@ async function _getListVectors(){
   const result = new Map();
   let dirty = false;
 
+  // Pull every task embedding once so each list's routing vector can be biased
+  // toward the centroid of the tasks the user has actually filed under it. This
+  // is how auto-organize "learns from manual sorting" instead of relying purely
+  // on the list's name/description.
+  let store = null;
+  try{ store = await embedStore.all(); }catch(e){ store = null; }
+  const membersByList = new Map();
+  if(store){
+    for(const [id, rec] of store){
+      if(!rec || !rec.vec) continue;
+      const t = (typeof findTask === 'function') ? findTask(id) : null;
+      if(!t || t.archived || t.status === 'done' || t.listId == null) continue;
+      let arr = membersByList.get(t.listId);
+      if(!arr){ arr = []; membersByList.set(t.listId, arr); }
+      arr.push({ id, vec: rec.vec, textHash: rec.textHash || '' });
+    }
+  }
+
   for(const l of lists){
-    const h = hashTaskText(l.name, l.description);
+    const members = membersByList.get(l.id) || [];
+    // Fold the member set (ids + their text hashes) into the cache key so the
+    // blended vector recomputes whenever this list's contents change.
+    const memberSig = members.map(m => m.id + ':' + m.textHash).sort().join('|');
+    const h = hashTaskText(l.name, l.description) + '~' + hashTaskText('members', memberSig);
     const cur = cache[l.id];
     if(cur && cur.hash === h && cur.vec){
       result.set(l.id, new Float32Array(cur.vec));
       continue;
     }
-    const vec = await embedText(_listText(l));
-    const buf = vec.buffer
-      ? vec.buffer.slice(vec.byteOffset, vec.byteOffset + vec.byteLength)
-      : vec;
+    const textVec = await embedText(_listText(l));
+    let combined = textVec instanceof Float32Array ? textVec : new Float32Array(textVec);
+    const dim = combined.length;
+    if(members.length && dim){
+      const centroid = new Float32Array(dim);
+      let counted = 0;
+      for(const m of members){
+        const v = m.vec;
+        if(!v || v.length !== dim) continue;
+        for(let i = 0; i < dim; i++) centroid[i] += v[i];
+        counted++;
+      }
+      if(counted){
+        // Normalize the centroid, blend with the list-text vector, then
+        // re-normalize so cosine() (a dot product over unit vectors) stays valid.
+        _l2normalize(centroid);
+        const blended = new Float32Array(dim);
+        for(let i = 0; i < dim; i++) blended[i] = LIST_MEMBER_BLEND * centroid[i] + (1 - LIST_MEMBER_BLEND) * combined[i];
+        _l2normalize(blended);
+        combined = blended;
+      }
+    }
+    const buf = combined.buffer
+      ? combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength)
+      : combined;
     cache[l.id] = { hash: h, vec: buf };
     result.set(l.id, new Float32Array(buf));
     dirty = true;
