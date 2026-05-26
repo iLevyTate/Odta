@@ -256,7 +256,7 @@ function exportFile(format){
   const blob=new Blob([content],{type:'text/plain'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='odtaulai-'+todayKey()+'.'+ext;a.click();URL.revokeObjectURL(a.href);
 }
-function exportClipboard(){const content=buildReport('txt');navigator.clipboard.writeText(content).then(()=>{const btn=gid('exportClipBtn')||document.querySelector('.export-clip');if(!btn)return;const orig=btn.textContent;btn.textContent='Copied!';btn.style.color='#2ecc71';btn.style.borderColor='#1a4a2a';setTimeout(()=>{btn.textContent=orig;btn.style.color='';btn.style.borderColor=''},1500)}).catch(()=>{const ta=document.createElement('textarea');ta.value=content;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta)})}
+function exportClipboard(){const content=buildReport('txt');navigator.clipboard.writeText(content).then(()=>{const btn=gid('exportClipBtn')||document.querySelector('.export-clip');if(!btn)return;const orig=btn.textContent;btn.textContent='Copied!';btn.classList.add('export-btn--copied');setTimeout(()=>{btn.textContent=orig;btn.classList.remove('export-btn--copied')},1500)}).catch(()=>{const ta=document.createElement('textarea');ta.value=content;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta)})}
 
 // One-shot purge of legacy generative-AI keys (v48 dropped the on-device LLM).
 // Wrapped because private-browsing / quota-exceeded modes throw on access.
@@ -519,7 +519,7 @@ setTimeout(() => {
           if(name.endsWith('.ics')){
             // Paste-as-calendar: hand to addCalFeed if available
             if(typeof addCalFeed === 'function'){
-              addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: text, color: '#3d8bcc' });
+              addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: text, color: '#6aa8ff' });
               if(typeof showExportToast === 'function') showExportToast('Calendar feed added: ' + file.name);
             }
           } else if(name.endsWith('.json')){

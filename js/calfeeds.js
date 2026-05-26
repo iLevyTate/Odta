@@ -439,7 +439,7 @@ function addCalFeed({label, url, proxy, content, color}){
   const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   const feed = {
     id, label: label || 'Calendar',
-    color: color || '#3d8bcc',
+    color: color || '#6aa8ff',
     url: url || null,
     proxy: proxy || null,
     content: content || null,
@@ -531,24 +531,14 @@ function _dedupCalEvents(list){
   return out;
 }
 
-function getCalFeedEventsForDate(isoDate, opts){
+function getCalFeedEventsForDate(isoDate){
   _loadCalFeeds();
-  const o = opts || {};
   const out = [];
-  // G-19: optional "hide past" filter — drops timed events that already ended.
-  // Day-agenda / Today strips pass `{ includePast: true }` so a full-day
-  // schedule is visible even when the global toggle is on.
-  const hidePast = !o.includePast && !!(typeof cfg === 'object' && cfg && cfg.calHidePast);
-  const now = Date.now();
   _calFeeds.feeds.forEach(feed => {
     if(!feed.visible) return;
     (feed.events || []).forEach(ev => {
       if(ev.exdateList && ev.exdateList.includes && ev.exdateList.includes(isoDate)) return;
       if(ev.dateISO === isoDate || _alldayRangeCovers(ev, isoDate)){
-        if(hidePast && !ev.allDay){
-          const endMs = _calEventEndMs(ev);
-          if(endMs && endMs < now) return;
-        }
         out.push({ ...ev, feedId: feed.id, feedLabel: feed.label, feedColor: feed.color });
       }
     });
@@ -732,7 +722,9 @@ function renderCalFeedsPanel(){
           : 'Never';
         const status = f.error
           ? `<span class="calfeed-status calfeed-status--error">✕ ${esc(f.error)}</span>`
-          : `<span class="calfeed-status calfeed-status--ok">✓ ${evCount} events · ${lastSync}</span>`;
+          : f.visible
+            ? `<span class="calfeed-status calfeed-status--ok">✓ ${evCount} events · ${lastSync}</span>`
+            : `<span class="calfeed-status calfeed-status--warn">◎ synced (${evCount} events) · <strong>hidden</strong> — tap 👁 to show on calendar</span>`;
         return `
           <div class="calfeed-row" data-id="${escAttr(f.id)}">
             <span class="calfeed-dot"></span>
@@ -757,7 +749,7 @@ function renderCalFeedsPanel(){
         <input type="text" id="cfLabel" class="calfeed-in" placeholder="e.g. Work, Personal">
 
         <label class="calfeed-lbl">Color</label>
-        <input type="color" id="cfColor" class="calfeed-color" value="#3d8bcc">
+        <input type="color" id="cfColor" class="calfeed-color" value="#6aa8ff">
 
         <div class="calfeed-mode-tabs">
           <button class="calfeed-mode active" data-mode="paste" data-action="calFeedModeFromButton">Paste .ics</button>
@@ -852,32 +844,8 @@ function renderCalFeedsPanel(){
     const f = _calFeeds.feeds.find(x => x.id === id);
     if(dot && f) dot.style.background = (typeof sanitizeListColor === 'function') ? sanitizeListColor(f.color) : '#888';
   });
-
-  // G-19: hide-past toggle, prepended via DOM (not template literal) so it
-  // isn't part of any innerHTML interpolation.
-  const hidePast = !!(typeof cfg === 'object' && cfg && cfg.calHidePast);
-  const togWrap = document.createElement('label');
-  togWrap.className = 'task-tb-check';
-  togWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);margin-bottom:10px';
-  const togCb = document.createElement('input');
-  togCb.type = 'checkbox';
-  togCb.id = 'calHidePast';
-  togCb.checked = hidePast;
-  togCb.onchange = function(){ toggleCalHidePast(); };
-  togWrap.append(togCb, document.createTextNode(' Hide past events'));
-  panel.insertBefore(togWrap, panel.firstChild);
 }
 
-function toggleCalHidePast(){
-  const cb = document.getElementById('calHidePast');
-  if(typeof cfg !== 'object' || !cfg) return;
-  cfg.calHidePast = !!(cb && cb.checked);
-  if(typeof saveState === 'function') saveState('user');
-  if(typeof renderTaskList === 'function') renderTaskList();
-}
-window.toggleCalHidePast = toggleCalHidePast;
-
-// Wire up mode tabs in the add-feed form
 function calFeedMode(btn, mode){
   document.querySelectorAll('.calfeed-mode').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
@@ -905,7 +873,7 @@ function _cfActionToast(msg, label, fn){
 // Form submission handler
 async function submitAddCalFeed(){
   const label = document.getElementById('cfLabel').value.trim() || 'Calendar';
-  const color = document.getElementById('cfColor').value || '#3d8bcc';
+  const color = document.getElementById('cfColor').value || '#6aa8ff';
   const pasteActive = document.querySelector('.calfeed-mode.active')?.dataset.mode === 'paste';
 
   let feed;
