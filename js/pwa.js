@@ -5,8 +5,8 @@
   const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
     <rect width="512" height="512" rx="112" fill="#0a1320"/>
     <circle cx="256" cy="256" r="160" stroke="#1a2d44" stroke-width="18"/>
-    <path d="M 256 96 A 160 160 0 1 1 96 256" stroke="#3d8bcc" stroke-width="22" stroke-linecap="round"/>
-    <circle cx="256" cy="96" r="14" fill="#48b5e0"/>
+    <path d="M 256 96 A 160 160 0 1 1 96 256" stroke="#6aa8ff" stroke-width="22" stroke-linecap="round"/>
+    <circle cx="256" cy="96" r="14" fill="#6aa8ff"/>
     <text x="256" y="292" text-anchor="middle" font-family="monospace" font-weight="800" font-size="90" fill="#e2e8f0">28</text>
   </svg>`;
   const iconUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(iconSvg);
@@ -127,7 +127,7 @@
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
       const swBase = (typeof window !== 'undefined' && window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.swCache)
         ? window.ODTAULAI_RELEASE.swCache
-        : 'odtaulai-v57';
+        : 'odtaulai-v58';
       const swCode = `
         const CACHE = '${swBase}-inline';
         self.addEventListener('install', e => self.skipWaiting());
