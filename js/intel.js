@@ -32,6 +32,8 @@ let _intelReady = false;
 let _intelLoading = false;
 let _intelDevice = null;
 let _intelLoadPromise = null;
+/** Serialize inference — ORT WASM throws if two runs overlap on one session. */
+let _embedQueue = Promise.resolve();
 
 function getIntelDevice(){ return _intelDevice; }
 function isIntelReady(){ return _intelReady; }
@@ -134,19 +136,24 @@ async function embedText(text){
   if(!_extractor) throw new Error('Intelligence engine not loaded');
   const t = (text || '').trim();
   if(!t) throw new Error('Empty text');
-  const out = await _extractor(t.slice(0, 8000), { pooling: 'mean', normalize: true });
-  const raw = out && out.data !== undefined ? out.data : out;
-  let data = raw;
-  if(raw && typeof raw === 'object' && typeof raw.length === 'number' && !(raw instanceof Float32Array)){
-    data = new Float32Array(raw);
-  }
-  if(!(data instanceof Float32Array)){
-    throw new Error('Unexpected embedding output');
-  }
-  if(data.length !== EMBED_DIM){
-    throw new Error('[intel] unexpected embedding dim ' + data.length + ' expected ' + EMBED_DIM);
-  }
-  return data;
+  const run = async () => {
+    const out = await _extractor(t.slice(0, 8000), { pooling: 'mean', normalize: true });
+    const raw = out && out.data !== undefined ? out.data : out;
+    let data = raw;
+    if(raw && typeof raw === 'object' && typeof raw.length === 'number' && !(raw instanceof Float32Array)){
+      data = new Float32Array(raw);
+    }
+    if(!(data instanceof Float32Array)){
+      throw new Error('Unexpected embedding output');
+    }
+    if(data.length !== EMBED_DIM){
+      throw new Error('[intel] unexpected embedding dim ' + data.length + ' expected ' + EMBED_DIM);
+    }
+    return data;
+  };
+  const p = _embedQueue.then(run, run);
+  _embedQueue = p.catch(() => {});
+  return p;
 }
 
 /** Unit-normalized vectors → dot product equals cosine similarity */

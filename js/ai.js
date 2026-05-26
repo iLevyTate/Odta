@@ -546,8 +546,14 @@ function _pendingIcon(name){
   return (window.icon && window.icon(name, { size: 14, cls: 'pending-simple-ic-svg' })) || '';
 }
 
+function _listNameById(listId){
+  if(listId == null) return 'Inbox';
+  const l = typeof lists !== 'undefined' ? lists.find(x => x.id === listId) : null;
+  return l ? l.name : ('List #' + listId);
+}
+
 /**
- * @returns {{ kind:'update' } | { kind:'simple', title:string, taskName:string, detail:string, icon:string, danger:boolean }}
+ * @returns {{ kind:'update' } | { kind:'listMove', title:string, fromList:string, toList:string, icon:string, danger:boolean } | { kind:'simple', title:string, taskName:string, detail:string, icon:string, danger:boolean }}
  */
 function _describeOpStructured(op){
   const a = op.args || {};
@@ -565,8 +571,16 @@ function _describeOpStructured(op){
     case 'DUPLICATE_TASK': return { kind: 'simple', title: 'Duplicate', taskName, detail: '', icon: 'copy', danger: false };
     case 'MOVE_TASK': return { kind: 'simple', title: 'Move in tree', taskName, detail: 'Parent #' + (a.newParentId || 'top'), icon: 'chevronRight', danger: false };
     case 'CHANGE_LIST': {
-      const l = typeof lists !== 'undefined' ? lists.find(x => x.id === a.listId) : null;
-      return { kind: 'simple', title: 'Move to list', taskName, detail: l ? l.name : ('List #' + a.listId), icon: 'folder', danger: false };
+      const pv = op._preview && typeof op._preview === 'object' ? op._preview : {};
+      const snapName = pv.taskName ? String(pv.taskName).trim().slice(0, 56) : '';
+      return {
+        kind: 'listMove',
+        title: snapName || taskName || ('Task #' + a.id),
+        fromList: pv.fromList ? String(pv.fromList) : _listNameById(t ? t.listId : null),
+        toList: pv.toList ? String(pv.toList) : _listNameById(a.listId),
+        icon: 'folder',
+        danger: false,
+      };
     }
     case 'ADD_NOTE': return { kind: 'simple', title: 'Add note', taskName, detail: String(a.text || '').slice(0, 72), icon: 'clipboard', danger: false };
     case 'ADD_CHECKLIST': return { kind: 'simple', title: 'Add checklist item', taskName, detail: String(a.text || '').slice(0, 72), icon: 'list', danger: false };
@@ -615,9 +629,129 @@ function _describeOpStructured(op){
   }
 }
 
+function _pendingMasterCheckbox(idx){
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'pending-op-master';
+  cb.setAttribute('data-op-idx', String(idx));
+  cb.checked = true;
+  return cb;
+}
+
+/** Mount a list-move preview row via DOM text nodes (avoids blank innerHTML rows). */
+function _mountPendingListMoveCard(listEl, op, idx){
+  const st = _describeOpStructured(op);
+  if(st.kind !== 'listMove') return false;
+  const card = document.createElement('div');
+  card.className = 'pending-simple-card';
+  const lbl = document.createElement('label');
+  lbl.className = 'pending-simple-row pending-simple-row--route';
+  const icWrap = document.createElement('span');
+  icWrap.className = 'pending-simple-ic-wrap';
+  icWrap.setAttribute('aria-hidden', 'true');
+  if(st.icon) icWrap.innerHTML = _pendingIcon(st.icon);
+  const textWrap = document.createElement('span');
+  textWrap.className = 'pending-simple-text pending-simple-text--route';
+  const titleEl = document.createElement('span');
+  titleEl.className = 'pending-simple-title';
+  titleEl.textContent = st.title;
+  const route = document.createElement('span');
+  route.className = 'pending-route-vals';
+  const fromEl = document.createElement('span');
+  fromEl.className = 'pending-field-val pending-field-from';
+  fromEl.textContent = st.fromList;
+  const arrow = document.createElement('span');
+  arrow.className = 'pending-field-arrow';
+  arrow.setAttribute('aria-hidden', 'true');
+  arrow.textContent = '→';
+  const toEl = document.createElement('span');
+  toEl.className = 'pending-field-val pending-field-to';
+  toEl.textContent = st.toList;
+  route.append(fromEl, arrow, toEl);
+  if(op._rationale){
+    const pill = document.createElement('span');
+    pill.className = 'pending-confidence-pill';
+    pill.title = 'Embedding match';
+    pill.textContent = String(op._rationale);
+    route.appendChild(pill);
+  }
+  textWrap.append(titleEl, route);
+  lbl.setAttribute('aria-label', st.title + ': ' + st.fromList + ' → ' + st.toList);
+  lbl.append(_pendingMasterCheckbox(idx), icWrap, textWrap);
+  card.appendChild(lbl);
+  listEl.appendChild(card);
+  return true;
+}
+
+function _renderPendingListMoveCard(op, idx){
+  const st = _describeOpStructured(op);
+  if(st.kind !== 'listMove') return '';
+  const ic = st.icon ? _pendingIcon(st.icon) : '';
+  const score = op._rationale
+    ? `<span class="pending-confidence-pill" title="Embedding match">${esc(op._rationale)}</span>`
+    : '';
+  return `<div class="pending-simple-card">
+    <label class="pending-simple-row pending-simple-row--route">
+      <input type="checkbox" class="pending-op-master" data-op-idx="${idx}" checked>
+      <span class="pending-simple-ic-wrap" aria-hidden="true">${ic}</span>
+      <span class="pending-simple-text pending-simple-text--route">
+        <span class="pending-simple-title">${esc(st.title)}</span>
+        <span class="pending-route-vals">
+          <span class="pending-field-val pending-field-from">${esc(st.fromList)}</span>
+          <span class="pending-field-arrow" aria-hidden="true">→</span>
+          <span class="pending-field-val pending-field-to">${esc(st.toList)}</span>
+          ${score}
+        </span>
+      </span>
+    </label>
+  </div>`;
+}
+
+function _mountPendingSimpleCard(listEl, op, idx){
+  const st = _describeOpStructured(op);
+  if(st.kind === 'update' || st.kind === 'listMove') return false;
+  const card = document.createElement('div');
+  card.className = 'pending-simple-card' + (st.danger ? ' pending-simple-card--danger' : '');
+  const lbl = document.createElement('label');
+  lbl.className = 'pending-simple-row';
+  const icWrap = document.createElement('span');
+  icWrap.className = 'pending-simple-ic-wrap';
+  icWrap.setAttribute('aria-hidden', 'true');
+  if(st.icon) icWrap.innerHTML = _pendingIcon(st.icon);
+  const textWrap = document.createElement('span');
+  textWrap.className = 'pending-simple-text';
+  const titleEl = document.createElement('span');
+  titleEl.className = 'pending-simple-title';
+  titleEl.textContent = st.title;
+  textWrap.appendChild(titleEl);
+  if(st.taskName){
+    const target = document.createElement('span');
+    target.className = 'pending-simple-target';
+    target.textContent = '"' + st.taskName + '"';
+    textWrap.appendChild(target);
+  }
+  if(st.detail){
+    const det = document.createElement('span');
+    det.className = 'pending-simple-detail';
+    det.textContent = st.detail;
+    textWrap.appendChild(det);
+  }
+  if(op._rationale){
+    const rat = document.createElement('span');
+    rat.className = 'pending-rationale';
+    rat.title = 'Rationale';
+    rat.textContent = String(op._rationale);
+    textWrap.appendChild(rat);
+  }
+  lbl.append(_pendingMasterCheckbox(idx), icWrap, textWrap);
+  card.appendChild(lbl);
+  listEl.appendChild(card);
+  return true;
+}
+
 function _renderPendingSimpleCard(op, idx){
   const st = _describeOpStructured(op);
-  if(st.kind === 'update') return '';
+  if(st.kind === 'update' || st.kind === 'listMove') return '';
   const ic = st.icon ? _pendingIcon(st.icon) : '';
   const rat = op._rationale ? `<span class="pending-rationale" title="Rationale">${esc(op._rationale)}</span>` : '';
   return `<div class="pending-simple-card${st.danger ? ' pending-simple-card--danger' : ''}">
@@ -634,9 +768,112 @@ function _renderPendingSimpleCard(op, idx){
   </div>`;
 }
 
+function _pendingListMoveSummary(ops){
+  const moves = ops.filter(o => o && o.name === 'CHANGE_LIST');
+  if(moves.length < 4) return '';
+  const destCounts = new Map();
+  moves.forEach(o => {
+    const lid = o.args && o.args.listId;
+    if(lid == null) return;
+    destCounts.set(lid, (destCounts.get(lid) || 0) + 1);
+  });
+  const parts = [...destCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([lid, n]) => `${n} → ${_listNameById(lid)}`);
+  const extra = destCounts.size > 5 ? ` · +${destCounts.size - 5} more lists` : '';
+  return `<div class="pending-list-summary" role="note">${moves.length} list moves — ${parts.join(' · ')}${extra}</div>`;
+}
+
+function _mountPendingUpdateCard(listEl, op, idx){
+  const t = findTask(op.args.id);
+  const rawName = t && t.name ? String(t.name).trim() : '';
+  const nm = rawName ? rawName.slice(0, 56) : ('Task #' + op.args.id);
+  const changes = _updateTaskFieldChanges(t, op.args, op._fieldConfidence);
+  if(!changes.length) return false;
+
+  const card = document.createElement('div');
+  card.className = 'pending-task-card';
+  const head = document.createElement('div');
+  head.className = 'pending-card-head';
+  const headLbl = document.createElement('label');
+  headLbl.className = 'pending-card-head-lbl';
+  const titleEl = document.createElement('span');
+  titleEl.className = 'pending-card-title';
+  titleEl.textContent = nm;
+  headLbl.append(_pendingMasterCheckbox(idx), titleEl);
+  const badge = document.createElement('span');
+  badge.className = 'pending-card-badge';
+  badge.textContent = changes.length + ' field update' + (changes.length !== 1 ? 's' : '');
+  head.append(headLbl, badge);
+  card.appendChild(head);
+  if(op._rationale){
+    const rat = document.createElement('div');
+    rat.className = 'pending-rationale pending-rationale--card';
+    rat.title = 'Rationale';
+    rat.textContent = String(op._rationale);
+    card.appendChild(rat);
+  }
+  const changeList = document.createElement('div');
+  changeList.className = 'pending-change-list';
+  changes.forEach(ch => {
+    if(ch.field === '_missing'){
+      const row = document.createElement('div');
+      row.className = 'pending-change-row pending-change-row--warn';
+      const lblEl = document.createElement('span');
+      lblEl.className = 'pending-field-lbl';
+      lblEl.textContent = 'Issue';
+      const val = document.createElement('span');
+      val.className = 'pending-field-val';
+      val.textContent = ch.note || '';
+      row.append(lblEl, val);
+      changeList.appendChild(row);
+      return;
+    }
+    const row = document.createElement('label');
+    row.className = 'pending-change-row';
+    if(ch.note) row.title = ch.note;
+    const fc = document.createElement('input');
+    fc.type = 'checkbox';
+    fc.className = 'pending-field-check';
+    fc.setAttribute('data-op-idx', String(idx));
+    fc.setAttribute('data-field', ch.field);
+    fc.checked = true;
+    const fieldLbl = document.createElement('span');
+    fieldLbl.className = 'pending-field-lbl';
+    fieldLbl.textContent = _humanizeFieldKey(ch.field);
+    const vals = document.createElement('span');
+    vals.className = 'pending-field-vals';
+    const fromEl = document.createElement('span');
+    fromEl.className = 'pending-field-val pending-field-from';
+    fromEl.textContent = _formatFieldDisplay(ch.field, ch.fromVal);
+    const arrow = document.createElement('span');
+    arrow.className = 'pending-field-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.textContent = '→';
+    const toEl = document.createElement('span');
+    toEl.className = 'pending-field-val pending-field-to';
+    toEl.textContent = _formatFieldDisplay(ch.field, ch.toVal);
+    vals.append(fromEl, arrow, toEl);
+    row.append(fc, fieldLbl, vals);
+    if(ch.confidence != null && typeof ch.confidence === 'number'){
+      const pill = document.createElement('span');
+      pill.className = 'pending-confidence-pill';
+      pill.title = 'Model vote confidence';
+      pill.textContent = Math.round(Math.max(0, Math.min(1, ch.confidence)) * 100) + '%';
+      row.appendChild(pill);
+    }
+    changeList.appendChild(row);
+  });
+  card.appendChild(changeList);
+  listEl.appendChild(card);
+  return true;
+}
+
 function _renderPendingUpdateCard(op, idx){
   const t = findTask(op.args.id);
-  const nm = t ? t.name.slice(0, 56) : ('Task #' + op.args.id);
+  const rawName = t && t.name ? String(t.name).trim() : '';
+  const nm = rawName ? rawName.slice(0, 56) : ('Task #' + op.args.id);
   const changes = _updateTaskFieldChanges(t, op.args, op._fieldConfidence);
   if(!changes.length) return '';
   const rows = changes.map(ch => {
@@ -726,38 +963,34 @@ function _renderUndoBtn(){
   }
 }
 
+function _mountPendingOpCard(listEl, op, idx){
+  if(!op || !listEl) return false;
+  if(op.name === 'UPDATE_TASK') return _mountPendingUpdateCard(listEl, op, idx);
+  if(op.name === 'CHANGE_LIST') return _mountPendingListMoveCard(listEl, op, idx);
+  return _mountPendingSimpleCard(listEl, op, idx);
+}
+
+/** True when the pending preview already has readable row copy (not empty shells). */
+function _pendingListHasVisibleText(wrap){
+  if(!wrap) return false;
+  const nodes = wrap.querySelectorAll(
+    '.pending-simple-title, .pending-card-title, .pending-field-lbl, .pending-field-val, .pending-route-vals'
+  );
+  for(let i = 0; i < nodes.length; i++){
+    if(String(nodes[i].textContent || '').trim()) return true;
+  }
+  return false;
+}
+
 function _renderPendingOps(){
   const wrap = document.getElementById('intelPendingOps');
   if(!wrap) return;
   if(!_pendingOps.length){ wrap.innerHTML = ''; wrap.hidden = true; return; }
   wrap.hidden = false;
 
-  const normalParts = [];
   const dangerIdx = [];
-  _pendingOps.forEach((op, i) => {
-    if(op.name === 'DELETE_TASK') dangerIdx.push(i);
-    else if(op.name === 'UPDATE_TASK') normalParts.push(_renderPendingUpdateCard(op, i));
-    else normalParts.push(_renderPendingSimpleCard(op, i));
-  });
-
-  let dangerHtml = '';
-  if(dangerIdx.length){
-    dangerHtml = `
-    <div class="pending-section-danger">
-      <div class="pending-section-danger-hdr">
-        <span class="pending-section-danger-ic" aria-hidden="true">${_pendingIcon('alertTriangle')}</span>
-        <span class="pending-section-danger-title">Destructive actions</span>
-      </div>
-      <p class="pending-section-danger-copy">Permanent delete cannot be undone. Confirm to enable applying those rows.</p>
-      <label class="pending-danger-ack-lbl">
-        <input type="checkbox" id="pendingDangerAck" autocomplete="off">
-        <span>I understand — allow permanent delete</span>
-      </label>
-      <div class="pending-danger-list">
-        ${dangerIdx.map(i => _renderPendingSimpleCard(_pendingOps[i], i)).join('')}
-      </div>
-    </div>`;
-  }
+  _pendingOps.forEach((op, i) => { if(op && op.name === 'DELETE_TASK') dangerIdx.push(i); });
+  const listMoveSummary = _pendingListMoveSummary(_pendingOps);
 
   const sourceBadge = _pendingSource ? `<span class="pending-source-badge" title="Proposed via ${esc(_pendingSource)}">via ${esc(_pendingSource)}</span>` : '';
   const massWarn = (_pendingDestructive === 'hard' && !dangerIdx.length) ? `
@@ -771,12 +1004,47 @@ function _renderPendingOps(){
       <button type="button" class="pending-toggle-all" data-action="intelToggleAllPending">Toggle all</button>
     </div>
     ${massWarn}
-    <div class="pending-list">${normalParts.join('')}</div>
-    ${dangerHtml}
+    ${listMoveSummary}
+    <div class="pending-list"></div>
+    <div class="pending-danger-mount"></div>
     <div class="pending-actions">
       <button type="button" class="btn-ghost btn-sm" data-action="intelRejectPending">Reject all</button>
       <button type="button" class="btn-primary btn-sm" data-action="intelApplyPending">Apply selected</button>
     </div>`;
+
+  const listEl = wrap.querySelector('.pending-list');
+  let rendered = 0;
+  _pendingOps.forEach((op, i) => {
+    if(!op || op.name === 'DELETE_TASK') return;
+    if(_mountPendingOpCard(listEl, op, i)) rendered++;
+  });
+  if(!rendered){
+    const hint = document.createElement('div');
+    hint.className = 'pending-empty-hint';
+    hint.setAttribute('role', 'note');
+    hint.textContent = 'Preview rows could not be built for these proposals. Reject all and try the action again.';
+    listEl.appendChild(hint);
+  }
+
+  if(dangerIdx.length){
+    const dangerMount = wrap.querySelector('.pending-danger-mount');
+    dangerMount.innerHTML = `
+      <div class="pending-section-danger">
+        <div class="pending-section-danger-hdr">
+          <span class="pending-section-danger-ic" aria-hidden="true">${_pendingIcon('alertTriangle')}</span>
+          <span class="pending-section-danger-title">Destructive actions</span>
+        </div>
+        <p class="pending-section-danger-copy">Permanent delete cannot be undone. Confirm to enable applying those rows.</p>
+        <label class="pending-danger-ack-lbl">
+          <input type="checkbox" id="pendingDangerAck" autocomplete="off">
+          <span>I understand — allow permanent delete</span>
+        </label>
+        <div class="pending-danger-list"></div>
+      </div>`;
+    const dangerList = dangerMount.querySelector('.pending-danger-list');
+    dangerIdx.forEach(i => { _mountPendingSimpleCard(dangerList, _pendingOps[i], i); });
+  }
+
   _setIntelStatus('idle', 'Review proposed changes below');
 }
 
@@ -1067,9 +1335,7 @@ async function aiAlign(){
       _setIntelStatus('ready', 'No alignment suggestions');
       return;
     }
-    _pendingOps = ops;
-    _renderPendingOps();
-    _setIntelStatus('ready', `Review ${ops.length} proposed updates`);
+    await acceptProposedOps(ops, { source: 'align-values', destructiveLevel: 'none' });
   }catch(err){
     console.warn('[aiAlign]', err);
     _setIntelStatus('error', (err.message || String(err)).slice(0, 80));
@@ -1159,6 +1425,11 @@ function _renderValuesGrid(){
 function renderAIPanel(){
   const panel = document.getElementById('intelPanel');
   if(!panel) return;
+  const livePending = document.getElementById('intelPendingOps');
+  const keepPending = (livePending && _pendingOps.length > 0 && _pendingListHasVisibleText(livePending))
+    ? livePending
+    : null;
+  if(keepPending) keepPending.remove();
   _loadCfg();
   const ready = typeof isIntelReady === 'function' && isIntelReady();
   const failed = !ready && _embedChipState === 'error';
@@ -1270,6 +1541,14 @@ function renderAIPanel(){
     syncHeaderAIChip('loading', 'Loading model…');
   }
   syncSemanticSearchUi();
+  // renderAIPanel replaces the whole Tools card — reattach a good preview or rebuild.
+  const pendingSlot = document.getElementById('intelPendingOps');
+  if(keepPending && pendingSlot){
+    pendingSlot.replaceWith(keepPending);
+    keepPending.hidden = false;
+  }else if(_pendingOps.length){
+    _renderPendingOps();
+  }
 }
 
 /**
@@ -1426,9 +1705,7 @@ async function intelHarmonizeFields(){
       _setIntelStatus('ready', 'No changes suggested — fields already match the model');
       return;
     }
-    _pendingOps = ops;
-    _renderPendingOps();
-    _setIntelStatus('ready', `Review ${ops.length} proposed update${ops.length === 1 ? '' : 's'}`);
+    await acceptProposedOps(ops, { source: 'harmonize', destructiveLevel: 'none' });
   }catch(err){
     console.warn('[harmonize]', err);
     _setIntelStatus('error', 'Harmonize failed');
@@ -1463,10 +1740,31 @@ async function intelAutoOrganize(){
       _setIntelStatus('ready', 'Every task is already in its best list');
       return;
     }
-    const ops = proposals.map(p => ({ name: 'CHANGE_LIST', args: { id: p.id, listId: p.toListId } }));
-    _pendingOps = ops;
-    _renderPendingOps();
-    _setIntelStatus('idle', `Proposed ${proposals.length} move${proposals.length === 1 ? '' : 's'} — review & apply`);
+    const rawOps = proposals.map(p => {
+      const t = findTask(p.id);
+      const fromList = _listNameById(t ? t.listId : null);
+      const toList = _listNameById(p.toListId);
+      return {
+        name: 'CHANGE_LIST',
+        args: { id: p.id, listId: p.toListId },
+        _rationale: Math.round(p.sim * 100) + '% match',
+        _preview: {
+          taskName: t ? String(t.name || '').trim() : '',
+          fromList,
+          toList,
+        },
+      };
+    });
+    let ops = rawOps;
+    let destructiveLevel = rawOps.length >= 5 ? 'hard' : rawOps.length ? 'warn' : 'none';
+    if(typeof validateOps === 'function'){
+      const tasksById = new Map((tasks || []).map(t => [t.id, t]));
+      const listsById = new Map((lists || []).map(l => [l.id, l]));
+      const v = validateOps(rawOps, { tasksById, listsById });
+      ops = v.valid;
+      destructiveLevel = v.destructiveLevel;
+    }
+    await acceptProposedOps(ops, { source: 'auto-organize', destructiveLevel });
   }catch(err){
     console.warn('[auto-organize]', err);
     _setIntelStatus('error', 'Auto-organize failed');

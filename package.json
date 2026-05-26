@@ -18,6 +18,8 @@
     "fetch-models": "node scripts/fetch-models.mjs"
   },
   "devDependencies": {
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "puppeteer": "^24.15.0",
+    "wait-on": "^8.0.3"
   }
 }

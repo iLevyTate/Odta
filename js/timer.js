@@ -50,7 +50,7 @@ let taskSortBy='smart',taskView='list',editingTaskId=null,smartView='all';
 // the task header compact; users can expand to switch via the "All views ▾"
 // toggle (auto-collapses again after selecting a view).
 let smartViewsExpanded=false;
-let taskGroupBy='none',calMonth=null,theme='dark';
+let taskGroupBy='none',calMonth=null,_calFocusDate=null,theme='dark';
 let collapsedSections={};
 let timeLog=[],goals=[],goalIdCtr=0,logIdCtr=0;
 let swRunning=false,swStartTime=0,swElapsed=0,swPausedEl=0,swTickId=null,swLapList=[];
@@ -124,7 +124,7 @@ function _syncRingState(){
 
 // ========== TIMER ==========
 function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function pauseTimer(){running=false;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+function pauseTimer(){running=false;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function tick(){
   if(!running)return;
@@ -168,7 +168,7 @@ function onPhaseComplete(){
   // Show in-app summary toast after work phase completes
   if(phase==='work'&&typeof window.showPomodoroSummary==='function')window.showPomodoroSummary();
   gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
-  renderStats();renderCtrls();_syncRingState();renderTaskList();updateTitle();saveState('auto');
+  renderStats();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();updateTitle();saveState('auto');
   _scheduleAutoAdvance();
 }
 // Single-pending-timer guard. Without this, rapid Skip → Skip queues two
@@ -234,7 +234,7 @@ function skipPhase(){
   if(cfg.sound && !_silentSkip)(phase==='work'?playTransition:playBreakEnd)();
   if(!_silentSkip) notify(getPL(phase)+' Skipped','Moving to next phase.');
   finished=true;gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
-  renderStats();renderCtrls();renderTaskList();updateTitle();saveState('user');
+  renderStats();renderCtrls();window._preserveTaskScroll=true;renderTaskList();updateTitle();saveState('user');
   if(_skippedTaskId && typeof refreshOpenTaskModalIfMatches === 'function'){
     refreshOpenTaskModalIfMatches(_skippedTaskId);
   }
