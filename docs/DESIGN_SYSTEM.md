@@ -15,7 +15,7 @@ This document serves as the canonical reference for:
 
 ## Part 1: Design Tokens
 
-All design tokens are defined in `:root` block in `css/main.css` (lines 48–140).
+All design tokens live in the first `:root` block in `css/main.css`; light-theme overrides ship in `body.light-theme { … }`.
 
 ### Animation Easing Language
 
@@ -74,6 +74,25 @@ Phase-specific color system tied to timer modes:
 ```
 
 **Glow tokens** are used in timer ring pulse animations — matching the phase color creates visual unity.
+
+### Semantic aliases (priority, buttons, dots)
+
+| Token | Maps to / use |
+|-------|------------------|
+| `--prio-urgent` | `var(--danger)` — priority stripes + modal chips |
+| `--prio-high` | `var(--warning)` |
+| `--prio-normal` | `var(--accent)` |
+| `--prio-low` | `var(--text-3)` (light theme: `--prio-low` → `--text-4`) |
+| `--accent-hover` | Brighter accent fill for hover (`:root` / `body.light-theme`) |
+| `--starred` | `var(--warning)` — starred task stripe |
+| `--panel-dot-tasks` | `var(--pink)` — Tasks session / nav dot |
+| `--quick-accent` | `var(--accent)` — quick-timer / session log dot |
+| `--text-on-accent` | Dark readable text on saturated accent/success/warning controls |
+| `--text-on-inverse` | High-contrast text on deep danger / saturated banner backgrounds |
+
+**Button primitives:** `.btn-primary`, `.btn-secondary`, `.btn-success`, and `.btn-danger` in `css/main.css` consolidate solid, outline, and destructive actions. Prefer these (or matching token fills) instead of one-off gradients.
+
+**Regression guard:** `tests/css-no-stray-hex.test.mjs` rejects new `#hex` literals outside the token blocks so the palette stays centralized.
 
 ### Radius Tokens
 
