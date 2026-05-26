@@ -19,9 +19,9 @@ Most findings have been resolved by subsequent feature waves. Each section below
 | M-3 | Medium | ✅ Fixed | `setHeaderDate()` wrapper added |
 | M-4 | Medium | ✅ Fixed | Same migration as H-1 |
 | M-5 | Medium | ✅ Fixed | Day-rollover decision logic extracted to `planDayRollover`; covered by `tests/day-rollover.test.mjs` |
-| L-1 | Low | 🟡 Open | `pwa.js` install-state polling still has layered timeouts |
+| L-1 | Low | ✅ Fixed | Dual install-timeouts removed; single 1.5s re-sync after `DOMContentLoaded`; `beforeinstallprompt` / `refreshPWAInstallUI` still cover races |
 | L-2 | Low | 🔵 Obsolete | The `escAttr`-in-inline antipattern can no longer exist (H-2 removed all inline handlers) |
-| L-3 | Low | 🟡 Open | Dynamic icon-only buttons still rely on `title` for screen readers |
+| L-3 | Low | ✅ Fixed | Dynamic icon controls: calendar feed row buttons and `cal-agenda-mk` "+Task" use `aria-label`; spot-check any new glyph-only buttons |
 
 ---
 
@@ -159,13 +159,9 @@ This is the single largest untested coordinator in the project. A regression her
 
 ### L-1 — `pwa.js` polls install state with two layered timeouts
 
-```
-js/pwa.js:174-175
-setTimeout(_syncInstallButtonForPlatform, 800);
-setTimeout(_syncInstallButtonForPlatform, 2500);
-```
+> ✅ **Fixed / simplified.** The former dual `800ms + 2500ms` timeouts are now a single **1.5s** delayed `_syncInstallButtonForPlatform()` after DOM ready (`js/pwa.js:321–324`). `beforeinstallprompt` listeners still toggle the install button immediately; the delay covers deferred platform detection only.
 
-These exist to compensate for `beforeinstallprompt` racing with platform detection. Working today but smelly — a `MutationObserver` on the document or a single delayed call gated on `_deferredInstallPrompt` would be cleaner. Low priority.
+_(Historical: the audit originally cited duplicate `setTimeout` calls compensating for `beforeinstallprompt` racing platform detection.)_
 
 ---
 
@@ -188,9 +184,11 @@ Today this is **not exploitable** because feed IDs are generated internally (`'c
 
 ### L-3 — Inline icon-only buttons rely on `title` for screen readers
 
-Several dynamically-rendered icon-only buttons carry only `title="..."` (e.g., `js/calfeeds.js:640-642`: 👁/↻/×). `title` is not reliably announced by screen readers. Pair each with `aria-label`.
+> ✅ **Fixed** for audited surfaces **where still relevant after H-2**: calendar-feed row controls (`js/calfeeds.js`), day-agenda `+Task`, and related patterns now pair `aria-label` with glyphs. **Residual risk:** future dynamic glyph-only `<button>`s must repeat the same pairing — smoke does not lint a11y.
 
-The static `index.html` markup is generally good — 67 ARIA attributes, skip-link, polite live region, `role="tablist"` with `aria-selected`. The gap is in dynamically-generated buttons.
+Several dynamically-rendered icon-only buttons used to rely on `title` alone. `title` is not reliably announced.
+
+The static `index.html` markup is generally good — 67 ARIA attributes, skip-link, polite live region, `role="tablist"` with `aria-selected`. The gap remains **policy** on new dynamic buttons.
 
 ---
 
@@ -218,7 +216,7 @@ Modules ranked by **untested user-facing surface area** (lines × user-impact):
 
 - **Stash present** — `stash@{0}: WIP on fix/ui-audit-reactive-buttons-and-ribbon — fix: reactive tool buttons, ribbon safety nets, model version sync`. Belongs to a different branch but is unfinished work. Either pop on its origin branch or `git stash drop`.
 - **`peerjs.min.js` is vendored** — sync feature uses PeerJS for WebRTC. The CSP allows `wss://*.peerjs.com` connections. Out of scope for this audit; worth a separate review for the sync trust model.
-- **Accessibility on the static index.html is in good shape**. The gap is dynamic — every render path that produces icon-only buttons needs an `aria-label` audit pass.
+- **Accessibility** — Static `index.html` is solid; pair `aria-label` with glyph-only buttons in JS render paths. CI smoke exercises nav/DOM handlers, not VoiceOver parity.
 
 ---
 
@@ -228,6 +226,6 @@ Modules ranked by **untested user-facing surface area** (lines × user-impact):
 
 **Status as of v48 (May 2026):** H-1, H-2, M-1, M-2, M-3, M-4, M-5 (day-rollover slice), L-2 are all closed (see annotations above). Open items, ordered by remaining risk:
 
-1. **L-3** — accessibility sweep on dynamically-rendered icon-only buttons (`title` is not screen-reader reliable; pair with `aria-label`).
-2. **L-1** — replace `pwa.js` install-state dual `setTimeout` polling with a `MutationObserver` or single gated call. Working today, smell.
-3. **M-5 follow-up** — share-target / file-handler IIFEs in `js/app.js` still untested. Lower risk than day-rollover; revisit if a regression slips through.
+1. **Regression triage** — file issues for any new icon-only controls without `aria-label` (see L-3 audit history).
+2. **M-5 follow-up** — share-target / file-handler IIFEs in `js/app.js` still untested end-to-end.
+3. Smoke / CI — `npm run smoke` runs in GitHub Actions; run `smoke:deep` / `smoke:exhaustive` locally for deeper coverage.

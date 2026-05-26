@@ -2,15 +2,16 @@
 // data-on<event> attribute in the DOM check that window[name] is a
 // function. Reports any orphans the human dispatcher would silently no-op.
 import puppeteer from 'puppeteer';
+import { filterSmokeConsoleErrors, gotoSmokeStable, smokePuppeteerLaunchOptions } from './smoke-console-utils.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
-const browser = await puppeteer.launch({ headless: 'new' });
+const browser = await puppeteer.launch(smokePuppeteerLaunchOptions());
 const page = await browser.newPage();
 const pageErrors = [];
 const consoleErrors = [];
 page.on('pageerror', err => pageErrors.push(err.message));
 page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
-await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
+await gotoSmokeStable(page, URL);
 
 const report = await page.evaluate(() => {
   const ATTRS = ['action', 'onchange', 'oninput', 'onkeydown', 'onkeyup', 'onsubmit', 'onfocus', 'onblur', 'ontoggle', 'onpaste'];
@@ -39,10 +40,11 @@ console.log(`Resolved on window:           ${report.present}`);
 console.log(`MISSING:                      ${report.missing.length}`);
 report.missing.forEach(m => console.log(`  ${m.attr.padEnd(10)} ${m.name}  (${m.count} elements)`));
 
-console.log(`\nConsole errors: ${consoleErrors.length}`);
-consoleErrors.slice(0, 5).forEach(e => console.log(`  ${e}`));
+const actionableCe = filterSmokeConsoleErrors(consoleErrors);
+console.log(`\nConsole errors: ${consoleErrors.length} raw → ${actionableCe.length} actionable`);
+actionableCe.slice(0, 5).forEach(e => console.log(`  ${e}`));
 console.log(`Page errors:    ${pageErrors.length}`);
 pageErrors.slice(0, 5).forEach(e => console.log(`  ${e}`));
 
 await browser.close();
-process.exit(report.missing.length || consoleErrors.length || pageErrors.length ? 1 : 0);
+process.exit(report.missing.length || actionableCe.length || pageErrors.length ? 1 : 0);

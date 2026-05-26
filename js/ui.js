@@ -138,7 +138,7 @@ function _renderCalDayAgendaHtml(isoDate, byDate){
   feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
     const uid = String(ev.uid || '');
     const mk = uid && typeof createTaskFromCalEvent === 'function'
-      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
       : '';
     rows += '<div class="cal-agenda-row cal-agenda-feed">'
       + '<span class="cal-agenda-dot" data-feed-color="'+escAttr(sanitizeListColor(ev.feedColor))+'"></span>'
