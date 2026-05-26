@@ -1,5 +1,13 @@
 # Changelog
 
+## v57 — 2026-05-26
+
+- **CI**: Puppeteer browser smoke (`npm run smoke`) on push/PR; `npm ci` with static server + wait-on after unit checks.
+- **Tooling**: `puppeteer`, `serve`, `wait-on`; `serve:smoke`; shared `smoke-console-utils.mjs` (SW reload settle, headless ONNX/intel noise filter, CI Chromium flags); smoke scripts hardened (`gotoSmokeStable`, exhaustive view toggles, responsive widths 360/640/960 px).
+- **A11y**: calendar day-agenda “+ Task” button gets `aria-label` alongside `title`.
+- **Docs**: `docs/MANUAL_QA_MATRIX.md`; AUDIT / README / CONTRIBUTING updates for smoke workflow.
+- Service worker cache rotated to `odtaulai-v57`.
+
 ## v55 — 2026-05-25
 
 - **Fix**: sorting the task list by **Name** no longer throws when a task has no name (e.g. a row imported without a `name` field) — the comparator now treats a missing name as empty instead of crashing the whole list render.
