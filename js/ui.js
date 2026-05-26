@@ -129,7 +129,7 @@ function renderCalendar(visibleTasks){
 function _renderCalDayAgendaHtml(isoDate, byDate){
   const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
   const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
-    ? getCalFeedEventsForDate(isoDate, { includePast: true }) : [];
+    ? getCalFeedEventsForDate(isoDate) : [];
   const today = (typeof todayISO === 'function') ? todayISO() : '';
   const label = (typeof prettyDate === 'function') ? prettyDate(isoDate) : isoDate;
   const heading = isoDate === today ? 'Today — ' + label : label;
@@ -621,8 +621,7 @@ function showShortcutsHelp(){
   const close = () => { ov.classList.remove('open'); setTimeout(() => ov.remove(), 200); };
   ov.addEventListener('click', (e) => { if(e.target === ov) close(); });
   const m = document.createElement('div');
-  m.className = 'modal';
-  m.style.maxWidth = '640px';
+  m.className = 'modal shortcuts-help-modal';
   const head = document.createElement('div');
   head.className = 'modal-head';
   const h = document.createElement('strong');
@@ -636,27 +635,21 @@ function showShortcutsHelp(){
   x.onclick = close;
   head.appendChild(x);
   const body = document.createElement('div');
-  body.className = 'modal-body';
-  body.style.display = 'grid';
-  body.style.gap = '18px';
+  body.className = 'modal-body shortcuts-help-body';
   for(const g of groups){
     const sec = document.createElement('div');
     const st = document.createElement('div');
-    st.style.cssText = 'font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;font-weight:600';
+    st.className = 'shortcuts-help-group-title';
     st.textContent = g.title;
     sec.appendChild(st);
     const tbl = document.createElement('div');
-    tbl.style.display = 'grid';
-    tbl.style.gridTemplateColumns = 'minmax(140px, max-content) 1fr';
-    tbl.style.gap = '6px 14px';
-    tbl.style.fontSize = '13px';
-    tbl.style.lineHeight = '1.55';
+    tbl.className = 'shortcuts-help-grid';
     for(const [k, v] of g.items){
       const kEl = document.createElement('kbd');
-      kEl.style.cssText = 'font-family:var(--font-mono,monospace);background:var(--bg-2);border:1px solid var(--border-subtle);padding:2px 8px;border-radius:6px;color:var(--text-1);font-size:12px;white-space:nowrap';
+      kEl.className = 'shortcuts-help-kbd';
       kEl.textContent = k;
       const vEl = document.createElement('span');
-      vEl.style.color = 'var(--text-2)';
+      vEl.className = 'shortcuts-help-val';
       vEl.textContent = v;
       tbl.appendChild(kEl);
       tbl.appendChild(vEl);
@@ -1509,7 +1502,7 @@ function openTaskDetail(id){
     b.setAttribute('aria-checked', (t.priority||'none')===pr ? 'true' : 'false');
     // Use a CSS-token-driven color so "low" hits AA contrast in both themes —
     // hard-coded #7f8c8d was ~3.6:1 on the dark modal bg (#22 in UX audit).
-    b.style.color=pr!=='none'?({urgent:'var(--prio-urgent, #ff6b6b)',high:'var(--prio-high, #ffb86c)',normal:'var(--prio-normal, #6aa8ff)',low:'var(--prio-low, #b3c2d6)'}[pr]):'';
+    b.style.color=pr!=='none'?({urgent:'var(--prio-urgent)',high:'var(--prio-high)',normal:'var(--prio-normal)',low:'var(--prio-low)'}[pr]):'';
     b.textContent=PRIORITIES[pr].label;
     b.onclick=function(){t.priority=pr;_setRadioGroupSelection(pChips, b);_commitChipChange(t)};
     pChips.appendChild(b)
@@ -1574,13 +1567,13 @@ function openTaskDetail(id){
   const catList=(typeof getActiveCategories==='function')?getActiveCategories():[];
   catList.forEach(row=>{
     const key=row.id,lbl=row.label||row.id;
-    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.category||null)===key?' active':'');
+    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn mfield-chip-btn--cat'+((t.category||null)===key?' active':'');
     b.setAttribute('aria-pressed', (t.category||null)===key ? 'true' : 'false');
-    b.textContent=lbl;
+    const chipLbl = (typeof getCategoryChipLabel === 'function') ? getCategoryChipLabel(key) : (lbl.slice(0, 40));
+    b.textContent=chipLbl;
     const cdef=(typeof getCategoryDef==='function')?getCategoryDef(key):null;
     if(cdef&&cdef.color){
-      b.style.borderColor='color-mix(in srgb, '+cdef.color+' 40%, var(--border))';
-      b.style.color=cdef.color;
+      b.style.setProperty('--md-cat', cdef.color);
     }
     if(cdef){
       const tip=((cdef.label||key)+(cdef.focus?': '+(cdef.focus):'')+((cdef.examples&&cdef.examples.length)?' · e.g. '+cdef.examples.slice(0,3).join(', '):'')).slice(0,280);
@@ -2311,17 +2304,11 @@ function showImportConfirm(summary){
     }
     m.replaceChildren();
     const h = document.createElement('div');
-    h.style.fontWeight = '700';
-    h.style.marginBottom = '8px';
+    h.className = 'import-delta-title';
     h.textContent = 'Restore from backup?';
     m.appendChild(h);
     const tbl = document.createElement('div');
-    tbl.style.display = 'grid';
-    tbl.style.gridTemplateColumns = 'auto auto auto';
-    tbl.style.columnGap = '14px';
-    tbl.style.rowGap = '4px';
-    tbl.style.fontSize = '13px';
-    tbl.style.margin = '4px 0 10px';
+    tbl.className = 'import-delta-grid';
     const rows = [
       ['', 'Current', 'After import'],
       ['Tasks',    summary.current.tasks,    summary.incoming.tasks],
@@ -2331,26 +2318,24 @@ function showImportConfirm(summary){
       row.forEach((cell, j) => {
         const c = document.createElement('div');
         c.textContent = String(cell);
-        if(i === 0){ c.style.fontWeight = '600'; c.style.color = 'var(--text-3)'; c.style.fontSize = '11px'; c.style.textTransform = 'uppercase'; c.style.letterSpacing = '.4px'; }
-        else if(j > 0){ c.style.fontVariantNumeric = 'tabular-nums'; }
+        if(i === 0){
+          c.className = 'import-delta-colhead';
+        }
+        else if(j > 0){
+          c.className = 'import-delta-num';
+        }
         tbl.appendChild(c);
       });
     });
     m.appendChild(tbl);
     if(summary.archiveDays != null){
       const a = document.createElement('div');
-      a.style.fontSize = '12px';
-      a.style.color = 'var(--text-3)';
-      a.style.marginBottom = '8px';
+      a.className = 'import-delta-note';
       a.textContent = `Plus ${summary.archiveDays} archived day${summary.archiveDays === 1 ? '' : 's'}.`;
       m.appendChild(a);
     }
     const w = document.createElement('div');
-    w.style.fontSize = '12px';
-    w.style.color = 'var(--warning)';
-    w.style.padding = '8px 10px';
-    w.style.background = 'color-mix(in srgb, var(--warning) 10%, transparent)';
-    w.style.borderRadius = '6px';
+    w.className = 'import-delta-warn';
     w.textContent = '⚠ This replaces all current tasks, lists, and settings. Cannot be undone.';
     m.appendChild(w);
     _appConfirmResolve = resolve;
@@ -2445,7 +2430,7 @@ document.addEventListener('keydown',e=>{
 // ========== LOG ==========
 function addLog(name,durSec,type){timeLog.unshift({id:++logIdCtr,name,durSec,type,time:timeNow()});renderLog();saveState('user')}
 function removeLog(id){timeLog=timeLog.filter(l=>l.id!==id);renderLog();saveState('user')}
-function renderLog(){const list=gid('logList');list.querySelectorAll('.log-item').forEach(e=>e.remove());if(!timeLog.length){gid('logEmpty').hidden = false;return}gid('logEmpty').hidden = true;timeLog.slice(0,40).forEach(l=>{const d=document.createElement('div');d.className='log-item';const col=l.type==='work'?'var(--work)':l.type==='short'?'var(--short)':l.type==='quick'?'#48b5e0':'var(--long)';const lid=l.id||0;const dot=document.createElement('div');dot.className='log-dot';dot.style.background=col;d.appendChild(dot);const nm=document.createElement('span');nm.className='log-name';nm.textContent=l.name;d.appendChild(nm);const dur=document.createElement('span');dur.className='log-dur';dur.textContent=fmtShort(l.durSec);d.appendChild(dur);const tm=document.createElement('span');tm.className='log-time';tm.textContent=l.time;d.appendChild(tm);if(lid){const del=document.createElement('button');del.className='log-del';del.title='Remove';del.textContent='×';del.setAttribute('aria-label','Remove log entry');del.onclick=function(){removeLog(lid)};d.appendChild(del)}list.appendChild(d)})}
+function renderLog(){const list=gid('logList');list.querySelectorAll('.log-item').forEach(e=>e.remove());if(!timeLog.length){gid('logEmpty').hidden = false;return}gid('logEmpty').hidden = true;timeLog.slice(0,40).forEach(l=>{const d=document.createElement('div');d.className='log-item';const col=l.type==='work'?'var(--work)':l.type==='short'?'var(--short)':l.type==='quick'?'var(--quick-accent)':'var(--long)';const lid=l.id||0;const dot=document.createElement('div');dot.className='log-dot';dot.style.background=col;d.appendChild(dot);const nm=document.createElement('span');nm.className='log-name';nm.textContent=l.name;d.appendChild(nm);const dur=document.createElement('span');dur.className='log-dur';dur.textContent=fmtShort(l.durSec);d.appendChild(dur);const tm=document.createElement('span');tm.className='log-time';tm.textContent=l.time;d.appendChild(tm);if(lid){const del=document.createElement('button');del.className='log-del';del.title='Remove';del.textContent='×';del.setAttribute('aria-label','Remove log entry');del.onclick=function(){removeLog(lid)};d.appendChild(del)}list.appendChild(d)})}
 async function clearLog(){
   if(!timeLog.length) return;
   const msg = 'Clear ' + timeLog.length + ' time-log entr' + (timeLog.length===1?'y':'ies') + '? This cannot be undone.';
@@ -2882,7 +2867,7 @@ function renderTodayCalEvents(){
   const todayK = (typeof todayKey === 'function') ? todayKey() : (typeof todayISO === 'function' ? todayISO() : new Date().toISOString().slice(0,10));
   let evs = [];
   if(sv === 'today'){
-    try{ evs = getCalFeedEventsForDate(todayK, { includePast: true }) || []; }catch(_){}
+    try{ evs = getCalFeedEventsForDate(todayK) || []; }catch(_){}
   } else if(typeof getUpcomingEvents === 'function'){
     try{ evs = getUpcomingEvents(8, 24, { strictFuture: false }) || []; }catch(_){}
   }

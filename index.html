@@ -63,7 +63,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/main.css?v=v58">
 <!-- Preconnect hints — speeds up first-load of the on-device embedding model (jsDelivr for Transformers.js, huggingface.co for model weights) -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://huggingface.co" crossorigin>
@@ -267,7 +267,7 @@
       </button>
       <button type="button" class="fb-btn" id="fbTags" data-action="openTagsSheet" aria-haspopup="dialog" title="Filter by tag / category">
         <span class="fb-ic" aria-hidden="true">#</span>
-        <span class="fb-lbl" id="fbTagsLabel">Tags</span>
+        <span class="fb-lbl" id="fbTagsLabel">Life areas</span>
       </button>
       <button type="button" class="fb-btn fb-btn--icon" id="fbSearch" data-action="toggleSearchBar" aria-label="Search tasks" title="Search">
         <span class="fb-ic" aria-hidden="true">🔍</span>
@@ -420,18 +420,22 @@
               </select>
             </fieldset>
             <div class="task-toolbar-row task-toolbar-display">
-              <span class="filter-display-lbl">Display</span>
-              <div class="density-seg" role="radiogroup" aria-label="Card density">
-                <button type="button" class="density-seg-btn" data-density="comfortable" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="comfortable" title="Roomy padding, easier scanning">Comfortable</button>
-                <button type="button" class="density-seg-btn" data-density="cozy" role="radio" aria-checked="true" data-action="setCardDensity" data-arg="cozy" title="Default — balanced">Cozy</button>
-                <button type="button" class="density-seg-btn" data-density="compact" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="compact" title="Tight rows — fit more on screen">Compact</button>
+              <div class="task-toolbar-display-head">
+                <span class="filter-display-lbl">Display</span>
+                <div class="density-seg" role="radiogroup" aria-label="Card density">
+                  <button type="button" class="density-seg-btn" data-density="comfortable" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="comfortable" title="Roomy padding, easier scanning">Comfortable</button>
+                  <button type="button" class="density-seg-btn" data-density="cozy" role="radio" aria-checked="true" data-action="setCardDensity" data-arg="cozy" title="Default — balanced">Cozy</button>
+                  <button type="button" class="density-seg-btn" data-density="compact" role="radio" aria-checked="false" data-action="setCardDensity" data-arg="compact" title="Tight rows — fit more on screen">Compact</button>
+                </div>
               </div>
-              <label class="task-tb-check" title="When on, recurring tasks only appear in the Habits view">
-                <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide recurring from main
-              </label>
-              <label class="task-tb-check" title="Include completed tasks in the All view">
-                <input type="checkbox" id="showCompletedAll" data-onchange="onShowCompletedToggle"> Show completed
-              </label>
+              <div class="task-toolbar-display-checks">
+                <label class="task-tb-check" title="When on, recurring tasks only appear in the Habits view">
+                  <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide recurring from main
+                </label>
+                <label class="task-tb-check" title="Include completed tasks in the All view">
+                  <input type="checkbox" id="showCompletedAll" data-onchange="onShowCompletedToggle"> Show completed
+                </label>
+              </div>
             </div>
             <span class="filters-summary" id="filtersSummary"></span>
           </div>
