@@ -78,13 +78,32 @@ function getPL(p){return p==='work'?'Focus':p==='short'?'Short Break':'Long Brea
 function switchPhase(p){if(running)return;phase=p;finished=false;fireCounts={};setPhaseTime();renderTimerChrome()}
 function setPhaseTime(){totalDuration=getPS(phase);remaining=totalDuration;pausedRemaining=totalDuration}
 function renderTimerChrome(){
-  gid('mainCard').style.background=getPBg(phase);gid('mainCard').style.borderColor=getPBd(phase);
-  gid('ringFg').setAttribute('stroke',getPC(phase));gid('ringFg').setAttribute('stroke-dashoffset','0');
-  gid('display').textContent=fmt(remaining);gid('display').style.color=getPC(phase);gid('display').className='ring-time';
-  gid('phaseLabel').textContent=getPL(phase);gid('phaseLabel').style.color=getPC(phase);
-  document.querySelectorAll('.tab').forEach(t=>t.className='tab');
-  document.querySelectorAll('.tab')[phase==='work'?0:phase==='short'?1:2].classList.add('active',phase==='work'?'work':phase==='short'?'short':'long');
-  renderPips();renderCtrls();updateTitle();updateMiniTimer();
+  const mainCard = gid('mainCard');
+  mainCard.classList.remove('card--work-phase','card--short-phase','card--long-phase');
+  mainCard.classList.add(
+    phase === 'work' ? 'card--work-phase' : phase === 'short' ? 'card--short-phase' : 'card--long-phase'
+  );
+
+  gid('ringFg').setAttribute('stroke', getPC(phase));
+  gid('ringFg').setAttribute('stroke-dashoffset', '0');
+  const display = gid('display');
+  display.textContent = fmt(remaining);
+  display.className = 'ring-time';
+
+  gid('phaseLabel').textContent = getPL(phase);
+
+  document.querySelectorAll('.tabs .tab').forEach((el) =>
+    el.classList.remove('active', 'work', 'short', 'long'),
+  );
+  const tabs = document.querySelectorAll('.tabs .tab');
+  const idx = phase === 'work' ? 0 : phase === 'short' ? 1 : 2;
+  if (tabs[idx]) {
+    tabs[idx].classList.add('active', phase === 'work' ? 'work' : phase === 'short' ? 'short' : 'long');
+  }
+  renderPips();
+  renderCtrls();
+  updateTitle();
+  updateMiniTimer();
 }
 function renderAll(){
   renderTimerChrome();
