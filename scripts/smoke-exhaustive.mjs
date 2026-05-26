@@ -14,9 +14,10 @@
  */
 
 import puppeteer from 'puppeteer';
+import { gotoSmokeStable, isKnownSmokeNoise, smokePuppeteerLaunchOptions } from './smoke-console-utils.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
-const browser = await puppeteer.launch({ headless: 'new', protocolTimeout: 120000 });
+const browser = await puppeteer.launch(smokePuppeteerLaunchOptions({ protocolTimeout: 120000 }));
 const page = await browser.newPage();
 page.setDefaultTimeout(15000);
 await page.setViewport({ width: 1100, height: 1600 });
@@ -26,19 +27,10 @@ const consoleErrors = [];
 const cspViolations = [];
 const pageErrors = [];
 
-// Pre-existing noise from the embedding model loading under fast clicks —
-// not related to CSP or our wiring. Filter out so the smoke gives a clean
-// PASS when production is healthy.
-const KNOWN_NOISE = [
-  /onnxruntime.*VerifyEachNodeIsAssignedToAnEp/,
-  /Session already started/,
-  /Session mismatch/,
-  /Inputs given to model/,
-];
 page.on('console', m => {
   const t = m.text();
   consoleAll.push({ type: m.type(), text: t });
-  if (m.type() === 'error' && !KNOWN_NOISE.some(re => re.test(t))) consoleErrors.push(t);
+  if (m.type() === 'error' && !isKnownSmokeNoise(t)) consoleErrors.push(t);
   if (/Refused to|Content Security Policy|violated/i.test(t)) cspViolations.push(t);
 });
 page.on('pageerror', err => pageErrors.push(err.message));
@@ -51,8 +43,7 @@ await page.evaluateOnNewDocument(() => {
 });
 
 console.log(`Loading ${URL}...`);
-await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
-await new Promise(r => setTimeout(r, 600));
+await gotoSmokeStable(page, URL);
 
 const issues = [];
 
@@ -287,9 +278,15 @@ else if (semToggled.before === semToggled.after) issues.push(`Semantic checkbox 
 
 // ─── 11. VIEW MODE SWITCH (list/board/cal) ────────────────────────────────
 for (const mode of ['list', 'board', 'calendar']) {
-  const btn = await page.$(`[data-action="setTaskView"][data-arg="${mode}"]`);
-  if (btn) {
-    await btn.click();
+  const clicked = await page.evaluate((m) => {
+    const el = document.querySelector(`[data-action="setTaskView"][data-arg="${m}"]`);
+    if (!el) return false;
+    el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    el.click();
+    return true;
+  }, mode);
+  if (!clicked) issues.push(`View mode ${mode}: button not found`);
+  else {
     await new Promise(r => setTimeout(r, 300));
     const ok = await page.evaluate((m) => {
       if (m === 'list') return !document.getElementById('taskList').hidden;
@@ -327,6 +324,27 @@ if (!classOk.found) issues.push('Classification manager not in DOM');
 else if (!classOk.taFound) issues.push('Classification Focus textarea (idx=0) not found — data-onchange may be misnamed');
 else if (!classOk.changed) issues.push(`Classification Focus change handler did NOT update cfg (after="${classOk.after}")`);
 else console.log(`[CLASSIFICATION]  Focus change handler fires correctly`);
+
+// ─── 11.7 RESPONSIVE VIEWPORTS ─────────────────────────────────────────────
+console.log('\n[RESPONSIVE]');
+for (const w of [960, 640, 360]) {
+  await page.setViewport({ width: w, height: Math.min(2200, Math.max(920, Math.round(w * 2))) });
+  await page.click('[data-navtab="tasks"]');
+  await new Promise(r => setTimeout(r, 350));
+  const ok = await page.evaluate((tab) => {
+    const el = document.querySelector(`[data-tab="${tab}"]`);
+    return !!(el && getComputedStyle(el).display !== 'none');
+  }, 'tasks');
+  if (!ok) issues.push(`Responsive ${w}px wide: Tasks tab pane not visible`);
+  try {
+    await page.screenshot({ path: `tests/screenshots/exhaustive-w${w}.png`, fullPage: false, timeout: 5000 });
+  } catch (e) {
+    issues.push(`Responsive ${w}px: screenshot failed: ${String(e.message).slice(0, 80)}`);
+  }
+}
+await page.setViewport({ width: 1100, height: 1600 });
+await page.click('[data-navtab="tasks"]');
+await new Promise(r => setTimeout(r, 200));
 
 // ─── 12. FINAL DOM CENSUS ─────────────────────────────────────────────────
 const final = await page.evaluate(() => {

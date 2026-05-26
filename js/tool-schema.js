@@ -285,6 +285,13 @@ function validateOps(raw, ctx){
     if(typeof rawRat === 'string' && rawRat.trim()){
       validated._rationale = rawRat.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, 240);
     }
+    if(rawOp._preview && typeof rawOp._preview === 'object' && !Array.isArray(rawOp._preview)){
+      validated._preview = {
+        taskName: String(rawOp._preview.taskName || '').trim().slice(0, 120),
+        fromList: String(rawOp._preview.fromList || '').trim().slice(0, 80),
+        toList: String(rawOp._preview.toList || '').trim().slice(0, 80),
+      };
+    }
     out.valid.push(validated);
 
     if(name === 'CREATE_TASK'){

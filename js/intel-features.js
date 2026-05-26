@@ -517,7 +517,7 @@ function refreshClassificationUi(){
     const allBtn = document.createElement('button');
     allBtn.type = 'button';
     allBtn.className = 'sv-chip' + (cur === 'all' ? ' active' : '');
-    allBtn.textContent = 'All Tags';
+    allBtn.textContent = 'All life areas';
     allBtn.addEventListener('click', () => setFilterCategory('all'));
     tb.appendChild(allBtn);
     getActiveCategories().forEach(c => {
@@ -533,6 +533,38 @@ function refreshClassificationUi(){
       btn.addEventListener('click', () => setFilterCategory(id));
       tb.appendChild(btn);
     });
+  }
+  const ttb = document.getElementById('taskTagsBar');
+  if(ttb){
+    const activeTags = (typeof parseTaskSearchQuery === 'function' && typeof gid === 'function')
+      ? (parseTaskSearchQuery((gid('taskSearch') || {}).value || '').ops.tag || [])
+      : [];
+    ttb.replaceChildren();
+    const tagHdr = document.createElement('div');
+    tagHdr.className = 'tags-sheet-lbl';
+    tagHdr.textContent = 'Task tags';
+    ttb.appendChild(tagHdr);
+    const tagRow = document.createElement('div');
+    tagRow.className = 'smart-views';
+    const tags = (typeof _collectTaskTags === 'function') ? _collectTaskTags() : [];
+    if(!tags.length){
+      const empty = document.createElement('p');
+      empty.className = 'tags-sheet-empty';
+      empty.textContent = 'Add tags with #name in the task input or in task details.';
+      ttb.appendChild(empty);
+    } else {
+      tags.forEach(tg => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sv-chip' + (activeTags.includes(tg) ? ' active' : '');
+        btn.textContent = '#' + tg;
+        btn.addEventListener('click', () => {
+          if(typeof setFilterTag === 'function') setFilterTag(tg);
+        });
+        tagRow.appendChild(btn);
+      });
+      ttb.appendChild(tagRow);
+    }
   }
   if(document.getElementById('classificationManager')){
     renderClassificationSettings();

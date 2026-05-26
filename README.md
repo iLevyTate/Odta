@@ -460,7 +460,7 @@ Pull requests welcome. Keep it:
 - **small** (every feature earns its kilobytes),
 - **accessible** (keyboard and screen reader).
 
-Before committing, run `node --check` on the same file list as [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (or copy the one-liner from that workflow), then **`npm test`** (runs [`scripts/run-tests.mjs`](scripts/run-tests.mjs) so tests behave the same on Windows, macOS, and CI). Full verification is still manual: 360 / 390 / 640 / 960 widths, both themes, `file://` and HTTPS, first-load embedding progress visible, PWA install still works.
+Before committing, run `node --check` on the same file list as [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (or copy the one-liner from that workflow), then **`npm test`**. **`npm ci`** installs Puppeteer once; **`npm run serve:smoke`** in another terminal and **`npm run smoke`** catches nav/wiring regressions locally (same flow as CI). See [docs/MANUAL_QA_MATRIX.md](docs/MANUAL_QA_MATRIX.md) for widths, themes, `file://` vs HTTPS, embedding load UI, and PWA install checks.
 
 See also: **[CONTRIBUTING.md](CONTRIBUTING.md)** · **[ARCHITECTURE.md](ARCHITECTURE.md)** · **[SECURITY.md](SECURITY.md)** · **[DEPLOY.md](DEPLOY.md)**.
 

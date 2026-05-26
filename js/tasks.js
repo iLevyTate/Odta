@@ -205,10 +205,10 @@ function parseQuickAdd(raw){
   // Priority @urgent @high @normal @low
   const prMatch=text.match(/\s@(urgent|high|normal|low)\b/i);
   if(prMatch){props.priority=prMatch[1].toLowerCase();text=text.replace(prMatch[0],'')}
-  // Tags #tag  (multiple)
-  const tagRe=/\s#(\w+)/g;const tags=[];let m;
+  // Tags #tag  (multiple) — allow hyphens/underscores/dots, not only \w
+  const tagRe=/\s#([^\s#]+)/g;const tags=[];let m;
   while((m=tagRe.exec(text))!==null)tags.push(m[1]);
-  if(tags.length){props.tags=tags;text=text.replace(/\s#\w+/g,'')}
+  if(tags.length){props.tags=tags;text=text.replace(/\s#[^\s#]+/g,'')}
   // Star !star !pin
   if(/\s!(star|pin)\b/i.test(text)){props.starred=true;text=text.replace(/\s!(star|pin)\b/i,'')}
   // Recurrence ~daily ~weekdays ~weekly ~monthly
@@ -500,6 +500,9 @@ function taskInputPaste(e){
   openBulkImportModal(items, skippedLong);
 }
 
+/** Last routing mode applied — per-row preview re-renders only on mode switch. */
+let _bulkAppliedRoutingMode = null;
+
 function openBulkImportModal(items, skippedLong){
   const ov = gid('bulkImportModal');
   const ta = gid('bulkImportTextarea');
@@ -509,6 +512,7 @@ function openBulkImportModal(items, skippedLong){
   // captured signal — we don't reach in and abort it here, because that
   // would interrupt a confirm() the user explicitly initiated.
   _bulkImportAbort = new AbortController();
+  _bulkAppliedRoutingMode = null;
   ta.value = items.join('\n');
   let hintHtml = 'Each line becomes one task. Quick-add tokens work per line (<code>@urgent</code>, <code>#tag</code>, <code>tomorrow</code>, etc.).';
   if(skippedLong > 0){
@@ -687,8 +691,12 @@ function _applyBulkRoutingMode(){
   if(batchPanel) batchPanel.hidden = mode !== 'batch';
   if(perRows){
     perRows.hidden = mode !== 'per';
-    if(mode === 'per') _renderBulkPerTaskRows();
+    // Only build the preview when entering "per" — not on every sync call.
+    // Re-rendering on each textarea keystroke (via _syncBulkRoutingControls)
+    // wiped manual dropdown picks and re-fired N parallel embedding calls.
+    if(mode === 'per' && _bulkAppliedRoutingMode !== 'per') _renderBulkPerTaskRows();
   }
+  _bulkAppliedRoutingMode = mode;
 }
 
 /**
@@ -701,9 +709,10 @@ function _applyBulkRoutingMode(){
 function _onBulkRoutingTextareaChanged(){
   const ta = gid('bulkImportTextarea');
   const ul = gid('bulkRoutePerRows');
-  _syncBulkRoutingControls();
+  const fs = gid('bulkRouteFieldset');
+  const lineCount = ta ? ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length : 0;
+  if(fs) fs.hidden = lineCount === 0;
   if(_bulkRoutingMode() !== 'per' || !ta || !ul) return;
-  const lineCount = ta.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean).length;
   const rowCount  = ul.querySelectorAll('li.bulk-route-row').length;
   if(lineCount !== rowCount) _renderBulkPerTaskRows();
 }
@@ -771,6 +780,9 @@ function _renderBulkPerTaskRows(){
       catSel.appendChild(o);
     }
 
+    listSel.addEventListener('change', () => { listSel.dataset.userTouched = '1'; });
+    catSel.addEventListener('change',  () => { catSel.dataset.userTouched  = '1'; });
+
     li.appendChild(name);
     li.appendChild(listSel);
     li.appendChild(catSel);
@@ -784,11 +796,11 @@ function _renderBulkPerTaskRows(){
   // `intelOk` is hoisted from earlier in this function — when false, the
   // dropdowns still render (manual routing works without AI) but we skip
   // the prediction pass entirely.
+  // Run one row at a time — ORT WASM rejects concurrent inference on the
+  // same session ("Session already started") and N parallel rows froze UI.
   if(!intelOk) return;
-  rows.forEach((row, i) => {
-    row.listSel.addEventListener('change', () => { row.listSel.dataset.userTouched = '1'; });
-    row.catSel.addEventListener('change',  () => { row.catSel.dataset.userTouched  = '1'; });
-    (async () => {
+  void (async () => {
+    for(const row of rows){
       try{
         if(typeof predictListId === 'function'){
           const lid = await predictListId(row.name, { minScore: 0.30, minMargin: 0 });
@@ -804,8 +816,9 @@ function _renderBulkPerTaskRows(){
           }
         }
       }catch(_){ /* per-row prediction is best-effort */ }
-    })();
-  });
+      await new Promise(r => setTimeout(r, 0));
+    }
+  })();
 }
 
 /**
@@ -1102,10 +1115,22 @@ function getRolledUpTime(taskId){
   getTaskDescendantIds(taskId).forEach(id=>{const d=findTask(id);if(d)total+=getTaskElapsed(d)});
   return total;
 }
+function getTaskSessionEntries(t){
+  if(!t) return [];
+  if(Array.isArray(t.sessionEntries)) return t.sessionEntries;
+  if(t._ext && Array.isArray(t._ext.sessionEntries)) return t._ext.sessionEntries;
+  return [];
+}
+if(typeof window !== 'undefined') window.getTaskSessionEntries = getTaskSessionEntries;
+
 function getRolledUpSessions(taskId){
   const t=findTask(taskId);if(!t)return 0;
-  let total=t.sessions||0;
-  getTaskDescendantIds(taskId).forEach(id=>{const d=findTask(id);if(d)total+=d.sessions||0});
+  const countFromEntries = (task) => getTaskSessionEntries(task).length;
+  let total = countFromEntries(t) || (t.sessions || 0);
+  getTaskDescendantIds(taskId).forEach(id=>{
+    const d=findTask(id);
+    if(d) total += countFromEntries(d) || (d.sessions || 0);
+  });
   return total;
 }
 const _TASK_PATH_MAX=64;
@@ -1456,6 +1481,41 @@ function setFilterCategory(catId) {
 }
 window.setFilterCategory = setFilterCategory;
 
+/** Toggle a task-tag filter via the search box (tag:foo operator). */
+function setFilterTag(tag){
+  const inp = gid('taskSearch');
+  if(!inp || !tag) return;
+  const want = String(tag).trim().toLowerCase();
+  if(!want) return;
+  const parsed = parseTaskSearchQuery(inp.value);
+  const tags = parsed.ops.tag || [];
+  if(tags.includes(want)){
+    inp.value = inp.value.replace(new RegExp('(?:^|\\s)(?:tag:)?#?' + want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'), ' ').replace(/\s+/g, ' ').trim();
+  } else {
+    inp.value = (inp.value.trim() + ' tag:' + want).trim();
+  }
+  updateTaskFilters();
+  if(typeof refreshClassificationUi === 'function') refreshClassificationUi();
+}
+window.setFilterTag = setFilterTag;
+
+function _collectTaskTags(){
+  const seen = new Set();
+  const out = [];
+  (tasks || []).forEach(t => {
+    if(!t || t.archived) return;
+    (t.tags || []).forEach(raw => {
+      const tg = String(raw || '').trim().toLowerCase();
+      if(!tg || seen.has(tg)) return;
+      seen.add(tg);
+      out.push(tg);
+    });
+  });
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+if(typeof window !== 'undefined') window._collectTaskTags = _collectTaskTags;
+
 // Smart Views
 function setSmartView(v){
   smartView=v;
@@ -1574,13 +1634,18 @@ function checkReminders(){
       t.reminderFired=true;fired=true;
       const late=(now-remindTime)>5*60*1000;
       const title=(late?'Missed: ':(reminderSrc === 'dueDate' ? 'Due now: ' : 'Task reminder: '))+t.name;
+      let body = t.dueDate ? ('Due ' + fmtDue(t.dueDate)) : 'No due date';
+      if(t.category && typeof getCategoryDef === 'function'){
+        const catDef = getCategoryDef(t.category);
+        if(catDef && catDef.label) body = 'Life area: ' + catDef.label + ' · ' + body;
+      }
       if('Notification' in window&&Notification.permission==='granted'){
         try{
           if(typeof notify === 'function'){
-            notify(title, t.dueDate?'Due '+fmtDue(t.dueDate):'No due date', {
+            notify(title, body, {
               tag: 'task-'+t.id,
               requireInteraction: true,
-              data: { action: 'openTask', taskId: t.id },
+              data: { action: 'openTask', taskId: t.id, category: t.category || null },
             });
           } else {
             const n=new Notification(title,{
@@ -2131,11 +2196,15 @@ function syncFilterBar(){
   const tagLbl=gid('fbTagsLabel');
   if(tagLbl){
     const cat=(gid('filterCategory')||{}).value||'all';
-    let label='Tags';
+    let label='Life areas';
     if(cat&&cat!=='all'&&typeof getCategoryDef==='function'){
       const def=getCategoryDef(cat);
       if(def&&def.label) label=def.label;
     }
+    const activeTags = (typeof parseTaskSearchQuery === 'function')
+      ? (parseTaskSearchQuery((gid('taskSearch')||{}).value||'').ops.tag||[])
+      : [];
+    if(activeTags.length) label = '#' + activeTags[0] + (activeTags.length > 1 ? ' +' + (activeTags.length - 1) : '');
     tagLbl.textContent=label;
     const btn=gid('fbTags');
     if(btn) btn.classList.toggle('active', cat&&cat!=='all');
@@ -2426,6 +2495,7 @@ function updateTaskFilters(){
   window._taskSearchSemantic=sem?sem.checked:false;
   updateFiltersActiveBadge();
   updateFiltersSummary();
+  if(typeof syncFilterBar === 'function') syncFilterBar();
   const clr=gid('taskSearchClear');
   if(clr) clr.hidden = !(gid('taskSearch').value.trim());
   const semPill=gid('taskSearchSemanticPill');
@@ -2478,6 +2548,7 @@ function setTaskView(v){
   gid('boardView').hidden = v !== 'board';
   if(gid('calendarView'))gid('calendarView').hidden = !(v==='calendar');
   document.body.classList.toggle('cal-active-mobile',v==='calendar');
+  if(v==='calendar' && !_calFocusDate && typeof todayISO==='function') _calFocusDate=todayISO();
   renderTaskList();
   saveState('user')
 }
@@ -3328,6 +3399,10 @@ function _initTaskListSortable(){
     forceFallback: true,
     fallbackOnBody: true,
     fallbackTolerance: 4,
+    // Hold ~400ms on the grip before drag starts (Google Tasks–style) so
+    // horizontal swipes on the row still win when the finger moves first.
+    delay: 400,
+    delayOnTouchOnly: true,
     swapThreshold: 0.65,
     // Auto-scroll while dragging near the top/bottom edges. Sortable's
     // built-in scroll handler is window-scoped (good — task list lives in

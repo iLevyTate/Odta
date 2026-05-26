@@ -1,4 +1,22 @@
 // ========== CALENDAR VIEW ==========
+function _calEffectiveFocusDate(){
+  if(_calFocusDate) return _calFocusDate;
+  return (typeof todayISO === 'function') ? todayISO() : new Date().toISOString().slice(0, 10);
+}
+
+/** Focus a day in the calendar: highlight cell + show full event list below. */
+function calFocusDay(iso){
+  if(!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+  _calFocusDate = iso;
+  window._calSelectedDate = iso;
+  const wantMonth = iso.slice(0, 7);
+  const anchor = _calMonthAnchor();
+  const visibleMonth = anchor.getFullYear() + '-' + String(anchor.getMonth() + 1).padStart(2, '0');
+  if(wantMonth !== visibleMonth) calMonth = wantMonth;
+  renderTaskList();
+}
+window.calFocusDay = calFocusDay;
+
 function _calMonthAnchor(){
   if(!calMonth) return new Date();
   if(/^\d{4}-\d{2}$/.test(calMonth)){
@@ -16,6 +34,7 @@ function renderCalendar(visibleTasks){
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
   const today=todayISO();
+  const focusIso=_calEffectiveFocusDate();
   const monthName=now.toLocaleDateString(undefined,{month:'long',year:'numeric'});
   // Group tasks by due date
   const byDate={};
@@ -47,13 +66,13 @@ function renderCalendar(visibleTasks){
   for(let i=startDay-1;i>=0;i--){
     const day=prevDays-i;const d=new Date(year,month-1,day);
     const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    html+='<div class="cal-day other-month" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
+    html+='<div class="cal-day other-month'+(iso===focusIso?' selected':'')+'" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
   }
   // Current month
   for(let day=1;day<=daysInMonth;day++){
     const iso=year+'-'+String(month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
     const isToday=iso===today;
-    html+='<div class="cal-day'+(isToday?' today':'')+'" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
+    html+='<div class="cal-day'+(isToday?' today':'')+(iso===focusIso?' selected':'')+'" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
   }
   // Next month leading
   const totalCells=startDay+daysInMonth;
@@ -61,14 +80,24 @@ function renderCalendar(visibleTasks){
   for(let day=1;day<=rem;day++){
     const d=new Date(year,month+1,day);
     const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-    html+='<div class="cal-day other-month" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
+    html+='<div class="cal-day other-month'+(iso===focusIso?' selected':'')+'" data-date="'+iso+'"><div class="cal-daynum">'+day+'</div>'+renderCalTasks(byDate[iso], iso)+'</div>';
   }
-  html+='</div></div>';
+  html+='</div>'+_renderCalDayAgendaHtml(focusIso, byDate)+'</div>';
   container.innerHTML=html;
   // Apply per-event border-left-color via DOM API — inline style is blocked
   // by CSP, but el.style.X writes are allowed.
   container.querySelectorAll('.cal-feed-event[data-feed-color]').forEach(el=>{
     el.style.borderLeftColor = el.dataset.feedColor;
+  });
+  container.querySelectorAll('.cal-agenda-dot[data-feed-color]').forEach(el=>{
+    el.style.background = el.dataset.feedColor;
+  });
+  container.querySelectorAll('.cal-agenda-task[data-task-id]').forEach(el=>{
+    el.onclick = function(e){
+      e.stopPropagation();
+      const tid = parseInt(el.dataset.taskId, 10);
+      if(tid) openTaskDetail(tid);
+    };
   });
   // Click handlers - click day background opens new task with that date, click task opens detail
   container.querySelectorAll('.cal-task').forEach(el=>{
@@ -82,13 +111,58 @@ function renderCalendar(visibleTasks){
       const srcId=parseInt(e.dataTransfer.getData('text/plain'));const src=findTask(srcId);
       if(src){src.dueDate=el.dataset.date;renderTaskList();saveState('user')}
     };
-    el.onclick=function(e){if(e.target.closest('.cal-task')||e.target.closest('[data-action]'))return;
-      const inp=gid('taskInput');if(inp){inp.value='';inp.focus();}
-      // Pre-set the date when user presses Enter
+    el.onclick=function(e){
+      if(e.target.closest('.cal-task')||e.target.closest('[data-action]')||e.target.closest('.cal-task-more'))return;
       const date=el.dataset.date;
-      window._calSelectedDate=date;
+      if(date && typeof calFocusDay === 'function') calFocusDay(date);
+      const inp=gid('taskInput');if(inp){inp.value='';inp.focus();}
     };
   });
+  container.querySelectorAll('.cal-task-more').forEach(el=>{
+    el.onclick=function(e){
+      e.stopPropagation();
+      const date=el.dataset.date;
+      if(date && typeof calFocusDay === 'function') calFocusDay(date);
+    };
+  });
+}
+function _renderCalDayAgendaHtml(isoDate, byDate){
+  const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
+  const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
+    ? getCalFeedEventsForDate(isoDate, { includePast: true }) : [];
+  const today = (typeof todayISO === 'function') ? todayISO() : '';
+  const label = (typeof prettyDate === 'function') ? prettyDate(isoDate) : isoDate;
+  const heading = isoDate === today ? 'Today — ' + label : label;
+  let rows = '';
+  const sortKey = (ev) => ev.allDay ? '00:00' : String(ev.time || '99:99');
+  feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
+    const uid = String(ev.uid || '');
+    const mk = uid && typeof createTaskFromCalEvent === 'function'
+      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+      : '';
+    rows += '<div class="cal-agenda-row cal-agenda-feed">'
+      + '<span class="cal-agenda-dot" data-feed-color="'+escAttr(sanitizeListColor(ev.feedColor))+'"></span>'
+      + '<span class="cal-agenda-time">'+(ev.allDay ? 'All day' : esc(String(ev.time || '').slice(0, 5)))+'</span>'
+      + '<span class="cal-agenda-title">'+esc(ev.title || '(no title)')+'</span>'
+      + '<span class="cal-agenda-src">'+esc(ev.feedLabel || '')+'</span>'
+      + mk
+      + '</div>';
+  });
+  tasks.slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(t => {
+    rows += '<div class="cal-agenda-row cal-agenda-task p-'+(t.priority||'none')+(t.status==='done'?' done':'')+'" data-task-id="'+t.id+'">'
+      + '<span class="cal-agenda-dot"></span>'
+      + '<span class="cal-agenda-time">Due</span>'
+      + '<span class="cal-agenda-title">'+esc(t.name)+'</span>'
+      + '<span class="cal-agenda-src">Task</span>'
+      + '</div>';
+  });
+  const empty = !rows
+    ? '<div class="cal-agenda-empty">No tasks or calendar events on this day.</div>'
+    : rows;
+  return '<div class="cal-day-agenda" id="calDayAgenda" data-date="'+escAttr(isoDate)+'">'
+    + '<div class="cal-agenda-head">'+esc(heading)+'</div>'
+    + '<div class="cal-agenda-list">'+empty+'</div>'
+    + '</div>';
 }
 function renderCalTasks(arr, isoDate){
   // Merge local tasks with external calendar feed events for this date
@@ -123,7 +197,7 @@ function renderCalTasks(arr, isoDate){
   const totalCount = (arr ? arr.length : 0) + feedEvents.length;
   const shownCount = Math.min(arr ? arr.length : 0, 2) + Math.min(feedEvents.length, 2);
   if(totalCount > shownCount){
-    html += '<div class="cal-task-more">+'+(totalCount-shownCount)+' more</div>';
+    html += '<button type="button" class="cal-task-more" data-date="'+escAttr(isoDate)+'">+'+(totalCount-shownCount)+' more</button>';
   }
   return html;
 }
@@ -133,7 +207,14 @@ function calNav(dir){
   calMonth=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   renderTaskList();
 }
-function calToday(){calMonth=null;renderTaskList()}
+function calToday(){
+  calMonth=null;
+  _calFocusDate=(typeof todayISO==='function')?todayISO():null;
+  window._calSelectedDate=_calFocusDate;
+  renderTaskList();
+}
+window.calNav=calNav;
+window.calToday=calToday;
 
 // ========== COMMAND PALETTE (Cmd+K) ==========
 let cmdkActiveIdx=0,cmdkFilteredItems=[];
@@ -978,7 +1059,7 @@ function renderTaskItem(t,depth){
       }
       if(typeof bulkToggleSelect === 'function') bulkToggleSelect(t.id);
       d.classList.toggle('task-bulk-selected', _bulkSelectedIds && _bulkSelectedIds.has(t.id));
-    }, 500);
+    }, 600);
   },{passive:true});
   d.addEventListener('touchmove',function(e){
     if(!touchStartX)return;
@@ -1547,10 +1628,21 @@ function renderMdSessions(t){
   const el = gid('mdSessions');
   const wrap = gid('mdSessionsWrap');
   if(!el) return;
-  const entries = (t && Array.isArray(t.sessionEntries)) ? t.sessionEntries : [];
+  const entries = (typeof getTaskSessionEntries === 'function')
+    ? getTaskSessionEntries(t)
+    : (t && Array.isArray(t.sessionEntries) ? t.sessionEntries : []);
   if(!entries.length){
     el.replaceChildren();
     if(wrap) wrap.hidden = true;
+    const sessCount = (typeof getRolledUpSessions === 'function') ? getRolledUpSessions(t.id) : (t.sessions || 0);
+    if(sessCount > 0 && wrap){
+      wrap.hidden = false;
+      const hint = document.createElement('p');
+      hint.className = 'md-sessions-legacy-hint';
+      hint.textContent = sessCount + ' session' + (sessCount !== 1 ? 's' : '')
+        + ' tracked before per-session history was saved. New timer rounds will appear here.';
+      el.appendChild(hint);
+    }
     return;
   }
   if(wrap) wrap.hidden = false;
@@ -1892,7 +1984,10 @@ window.closeSheet=closeSheet;
 // Named triggers wired from the .filter-bar buttons (data-action).
 window.openListsSheet=()=>openSheet('listsSheet');
 window.closeListsSheet=()=>closeSheet('listsSheet');
-window.openTagsSheet=()=>openSheet('tagsSheet');
+window.openTagsSheet=()=>{
+  if(typeof refreshClassificationUi==='function') refreshClassificationUi();
+  openSheet('tagsSheet');
+};
 window.closeTagsSheet=()=>closeSheet('tagsSheet');
 window.openViewSheet=()=>openSheet('viewSheet');
 window.closeViewSheet=()=>closeSheet('viewSheet');
@@ -1932,6 +2027,7 @@ function showTaskActionMenu(id){
   menu.className='task-action-menu';
   menu.setAttribute('role','menu');
   const rows=[
+    {ic:'→', label:'Move to list…', run:()=>showTaskListPickerSheet(id)},
     {ic:t.starred?'★':'☆', label:t.starred?'Unpin':'Pin to top', run:()=>toggleStar(id)},
     {ic:'+', label:'Add subtask', run:()=>addSubtaskPrompt(id)},
     {ic:'×', label:'Delete', danger:true, run:()=>removeTask(id)},
@@ -1979,6 +2075,7 @@ function _moveTaskToList(id,newListId){
   if(typeof recordTaskActivity==='function') recordTaskActivity(t,before);
   if(typeof invalidateListVectorCache==='function') invalidateListVectorCache();
   if(typeof saveState==='function') saveState('user');
+  window._preserveTaskScroll = true;
   if(typeof renderTaskList==='function') renderTaskList();
   const dest=(Array.isArray(lists)?lists.find(l=>l.id===newListId):null);
   if(typeof showActionToast==='function'){
@@ -2599,7 +2696,9 @@ function renderStatsByArea(){
     const pct = Math.round((sec/total)*100);
     const mins = Math.round(sec/60);
     const row = document.createElement('div'); row.className = 'sba-row';
-    const dot = document.createElement('span'); dot.className = 'sba-dot'; dot.style.background = colorFor(id);
+    const dot = document.createElement('span'); dot.className = 'sba-dot';
+    dot.style.background = colorFor(id);
+    dot.style.color = colorFor(id);
     const lbl = document.createElement('span'); lbl.className = 'sba-lbl'; lbl.textContent = labelFor(id);
     const bar = document.createElement('span'); bar.className = 'sba-bar';
     const fill = document.createElement('span'); fill.className = 'sba-bar-fill';
@@ -2777,13 +2876,20 @@ window.suggestDueDateForTask = suggestDueDateForTask;
 function renderTodayCalEvents(){
   const host = gid('todayCalEvents');
   if(!host) return;
-  if(typeof smartView !== 'string' || smartView !== 'today'){ host.hidden = true; host.replaceChildren(); return; }
+  const sv = (typeof smartView === 'string') ? smartView : 'all';
+  if(sv !== 'today' && sv !== 'week'){ host.hidden = true; host.replaceChildren(); return; }
   if(typeof getCalFeedEventsForDate !== 'function'){ host.hidden = true; return; }
-  const todayK = (typeof todayKey === 'function') ? todayKey() : (new Date()).toISOString().slice(0,10);
+  const todayK = (typeof todayKey === 'function') ? todayKey() : (typeof todayISO === 'function' ? todayISO() : new Date().toISOString().slice(0,10));
   let evs = [];
-  try{ evs = getCalFeedEventsForDate(todayK) || []; }catch(_){}
+  if(sv === 'today'){
+    try{ evs = getCalFeedEventsForDate(todayK, { includePast: true }) || []; }catch(_){}
+  } else if(typeof getUpcomingEvents === 'function'){
+    try{ evs = getUpcomingEvents(8, 24, { strictFuture: false }) || []; }catch(_){}
+  }
   if(!evs.length){ host.hidden = true; host.replaceChildren(); return; }
   evs.sort((a,b)=>{
+    const da = a.dateISO || todayK, db = b.dateISO || todayK;
+    if(da !== db) return da.localeCompare(db);
     if(a.allDay && !b.allDay) return -1;
     if(!a.allDay && b.allDay) return 1;
     return String(a.time||'').localeCompare(String(b.time||''));
@@ -2791,11 +2897,13 @@ function renderTodayCalEvents(){
   host.replaceChildren();
   const head = document.createElement('div');
   head.className = 'tce-head';
-  head.textContent = evs.length === 1 ? '1 event today' : evs.length + ' events today';
+  head.textContent = sv === 'week'
+    ? (evs.length === 1 ? '1 event this week' : evs.length + ' events this week')
+    : (evs.length === 1 ? '1 event today' : evs.length + ' events today');
   host.appendChild(head);
   const wrap = document.createElement('div');
   wrap.className = 'tce-list';
-  evs.slice(0, 8).forEach(ev => {
+  evs.slice(0, 12).forEach(ev => {
     const row = document.createElement('div');
     row.className = 'tce-row';
     const dot = document.createElement('span');
@@ -2803,10 +2911,14 @@ function renderTodayCalEvents(){
     dot.style.background = ev.feedColor || 'var(--accent)';
     const tm = document.createElement('span');
     tm.className = 'tce-time';
-    tm.textContent = ev.allDay ? 'All day' : (ev.time || '').slice(0, 5);
+    if(sv === 'week' && ev.dateISO && ev.dateISO !== todayK){
+      tm.textContent = ev.dateISO.slice(5) + ' ' + (ev.allDay ? 'All day' : (ev.time || '').slice(0, 5));
+    } else {
+      tm.textContent = ev.allDay ? 'All day' : (ev.time || '').slice(0, 5);
+    }
     const title = document.createElement('span');
     title.className = 'tce-title';
-    title.textContent = ev.summary || '(no title)';
+    title.textContent = ev.title || '(no title)';
     if(ev.location){ title.title = ev.location; }
     const feed = document.createElement('span');
     feed.className = 'tce-feed';

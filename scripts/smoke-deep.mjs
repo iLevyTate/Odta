@@ -3,14 +3,15 @@
 // each rendered surface has a window function. Reports total handlers seen
 // (initial + after-dynamic-render) and any orphans.
 import puppeteer from 'puppeteer';
+import { filterSmokeConsoleErrors, gotoSmokeStable, smokePuppeteerLaunchOptions } from './smoke-console-utils.mjs';
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
-const browser = await puppeteer.launch({ headless: 'new' });
+const browser = await puppeteer.launch(smokePuppeteerLaunchOptions());
 const page = await browser.newPage();
 const pageErrors = [], consoleErrors = [];
 page.on('pageerror', e => pageErrors.push(e.message));
 page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
-await page.goto(URL, { waitUntil: 'networkidle0', timeout: 30000 });
+await gotoSmokeStable(page, URL);
 
 async function audit(label){
   const r = await page.evaluate(() => {
@@ -78,10 +79,11 @@ await page.keyboard.press('Escape');
 await page.screenshot({ path: 'tests/screenshots/smoke-deep.png', fullPage: true });
 
 console.log(`\n=== Errors ===`);
-console.log(`Console: ${consoleErrors.length}`);
-consoleErrors.slice(0, 8).forEach(e => console.log(`  ${e}`));
+const actionableCe = filterSmokeConsoleErrors(consoleErrors);
+console.log(`Console: ${actionableCe.length} actionable (${consoleErrors.length} raw)`);
+actionableCe.slice(0, 8).forEach(e => console.log(`  ${e}`));
 console.log(`Page:    ${pageErrors.length}`);
 pageErrors.slice(0, 8).forEach(e => console.log(`  ${e}`));
 
 await browser.close();
-process.exit((consoleErrors.length || pageErrors.length) ? 1 : 0);
+process.exit((actionableCe.length || pageErrors.length) ? 1 : 0);

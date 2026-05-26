@@ -531,12 +531,14 @@ function _dedupCalEvents(list){
   return out;
 }
 
-function getCalFeedEventsForDate(isoDate){
+function getCalFeedEventsForDate(isoDate, opts){
   _loadCalFeeds();
+  const o = opts || {};
   const out = [];
   // G-19: optional "hide past" filter — drops timed events that already ended.
-  // Read from cfg if present; otherwise no-op so callers get the unfiltered set.
-  const hidePast = !!(typeof cfg === 'object' && cfg && cfg.calHidePast);
+  // Day-agenda / Today strips pass `{ includePast: true }` so a full-day
+  // schedule is visible even when the global toggle is on.
+  const hidePast = !o.includePast && !!(typeof cfg === 'object' && cfg && cfg.calHidePast);
   const now = Date.now();
   _calFeeds.feeds.forEach(feed => {
     if(!feed.visible) return;

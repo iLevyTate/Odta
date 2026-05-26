@@ -334,19 +334,21 @@
     <div class="modal-overlay sheet" id="tagsSheet" role="dialog" aria-modal="true" aria-label="Filter by tag or category" data-action="closeTagsSheetOnBackdrop">
       <div class="modal">
         <div class="modal-head">
-          <h2 class="modal-title">Tags &amp; Categories</h2>
+          <h2 class="modal-title">Life areas &amp; tags</h2>
           <button type="button" class="modal-close" data-action="closeTagsSheet" aria-label="Close">✕</button>
         </div>
         <div class="modal-body">
+          <div class="tags-sheet-lbl">Life areas</div>
           <div class="tags-bar-wrap" id="tagsBarWrap">
-            <label class="sr-only" for="filterCategory">Filter by category</label>
+            <label class="sr-only" for="filterCategory">Filter by life area</label>
             <select class="task-tb-sel" id="filterCategory" data-onchange="updateTaskFilters" hidden>
-              <option value="all">Any category</option>
+              <option value="all">Any life area</option>
             </select>
             <div class="smart-views" id="tagsBar">
-              <button class="sv-chip active" data-action="setFilterCategory" data-arg="all">All Tags</button>
+              <button class="sv-chip active" data-action="setFilterCategory" data-arg="all">All life areas</button>
             </div>
           </div>
+          <div id="taskTagsBar" class="task-tags-bar-wrap"></div>
         </div>
       </div>
     </div>

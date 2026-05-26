@@ -151,6 +151,24 @@ test('per-task preview pre-fills AI suggestions but respects user edits', () => 
   );
 });
 
+test('per-task textarea edits must not re-sync full routing controls on every keystroke', () => {
+  // _syncBulkRoutingControls → _applyBulkRoutingMode used to re-render all
+  // per rows on every input event, wiping manual picks and re-firing N
+  // parallel embedding calls.
+  const fn = tasks.match(/function _onBulkRoutingTextareaChanged\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(fn, '_onBulkRoutingTextareaChanged must exist');
+  assert.doesNotMatch(fn[1], /_syncBulkRoutingControls\(\)/, 'must not call _syncBulkRoutingControls on textarea input');
+});
+
+test('_applyBulkRoutingMode only renders per rows when entering per mode', () => {
+  assert.match(tasks, /_bulkAppliedRoutingMode/, 'must track last applied routing mode');
+  assert.match(
+    tasks,
+    /mode\s*===\s*['"]per['"]\s*&&\s*_bulkAppliedRoutingMode\s*!==\s*['"]per['"]/,
+    'must render per rows only on mode transition into "per"'
+  );
+});
+
 test('AI mode is disabled in the UI when embeddings are not loaded', () => {
   // Without this, the "Auto-organize" radio would be selectable but
   // confirmBulkImport would silently fall back to no-op enrichment.

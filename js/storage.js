@@ -86,6 +86,21 @@ function _repairTask(t){
     estimateMin:  _int(t.estimateMin, 0),
     totalSec:     _int(t.totalSec, 0),
     sessions:     _int(t.sessions, 0),
+    // Per-session timer log (detail modal). Hoist from legacy _ext on load.
+    sessionEntries: (function(){
+      const raw = Array.isArray(t.sessionEntries) ? t.sessionEntries
+        : (t._ext && Array.isArray(t._ext.sessionEntries) ? t._ext.sessionEntries : []);
+      return raw.map(s => {
+        if(!s || typeof s !== 'object') return null;
+        const entry = {
+          ts: _str(s.ts, ''),
+          durationSec: Math.max(0, _int(s.durationSec, 0)),
+          type: _str(s.type, 'work'),
+        };
+        if(s.phase != null) entry.phase = _str(s.phase, 'work');
+        return entry.ts ? entry : null;
+      }).filter(Boolean).slice(-200);
+    })(),
     // Flags
     starred:      _bool(t.starred, false),
     // Arrays
@@ -290,7 +305,7 @@ function saveState(reason){
         'starred','archived','completedAt','effort','energyLevel','category',
         'valuesAlignment','parentId','listId','url','estimateMin','recur','remindAt','type','blockedBy',
         'completions','habitLastRecordedTotalSec',
-        'totalSec','sessions','checklist','notes','_ext'];
+        'totalSec','sessions','sessionEntries','checklist','notes','_ext'];
       let changed = false;
       for (const f of fieldsToCompare){
         const a = JSON.stringify(t[f]);

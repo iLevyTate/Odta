@@ -15,9 +15,13 @@
     "verify:inline": "node scripts/find-inline.mjs",
     "bump:version": "node scripts/bump-version.mjs",
     "build:icons": "node scripts/build-icons.mjs",
-    "fetch-models": "node scripts/fetch-models.mjs"
+    "fetch-models": "node scripts/fetch-models.mjs",
+    "serve:smoke": "node ./node_modules/serve/build/main.js -l 8080 -s ."
   },
   "devDependencies": {
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "puppeteer": "^24.15.0",
+    "serve": "^14.2.6",
+    "wait-on": "^8.0.3"
   }
 }

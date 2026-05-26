@@ -14,8 +14,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies (tests + Puppeteer smoke)
+        run: npm ci
       - name: Syntax check all JS
-        run: node --check js/ai.js js/app.js js/audio.js js/calfeeds.js js/embed-store.js js/event-delegation.js js/icons.js js/intel-features.js js/intel.js js/nlparse.js js/pwa.js js/storage.js js/sync.js js/tasks.js js/timer.js js/tool-schema.js js/ui-flip.js js/ui.js js/utils.js js/version.js scripts/run-tests.mjs sw.js
+        run: node --check js/ai.js js/app.js js/audio.js js/calfeeds.js js/embed-store.js js/event-delegation.js js/icons.js js/intel-features.js js/intel.js js/nlparse.js js/pwa.js js/storage.js js/sync.js js/tasks.js js/timer.js js/tool-schema.js js/ui-flip.js js/ui.js js/utils.js js/version.js scripts/run-tests.mjs scripts/smoke-console-utils.mjs scripts/smoke-check.mjs scripts/smoke-deep.mjs scripts/smoke-exhaustive.mjs scripts/verify-handlers.mjs sw.js
       - name: Version sync (version.js ↔ sw.js ↔ pwa.js)
         run: node scripts/check-version-sync.mjs
       - name: Asset references
@@ -24,3 +27,10 @@ jobs:
         run: node scripts/check-inline-handlers.mjs
       - name: Tests
         run: node scripts/run-tests.mjs
+      - name: Browser smoke (tasks → settings nav, CSP-safe handlers)
+        env:
+          CI: 'true'
+        run: |
+          node ./node_modules/serve/build/main.js -l 8080 -s . &
+          npx wait-on http://127.0.0.1:8080 -t 120000 -i 500
+          npm run smoke
