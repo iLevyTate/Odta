@@ -1265,6 +1265,24 @@ function renderTaskItem(t,depth){
       +(tagsVisible?'<span class="task-tags-inline">'+tagsVisible+'</span>':'')
       +descPrev
     +'</div></div>';
+  // Surface a small "Xh Ym" pill next to the task name when the user is
+  // currently filtering or sorting by duration/completion - so they can see
+  // why a task survived the filter without opening the detail modal. Built
+  // via DOM APIs (createElement / appendChild) after the row is in place,
+  // so the production esc() escapes the name and the pill text comes from
+  // fmtHMS (digits + unit letters, no metachars).
+  const _showDurPill = (window._activeDurationFilter || window._activeCompletedFilter
+                        || taskSortBy === 'time') && rolledTime > 0;
+  if(_showDurPill){
+    const _nameEl = d.querySelector('.task-name');
+    if(_nameEl){
+      const _pill = document.createElement('span');
+      _pill.className = 'task-duration-pill';
+      _pill.title = 'Time tracked';
+      _pill.textContent = fmtHMS(rolledTime);
+      _nameEl.insertAdjacentElement('afterend', _pill);
+    }
+  }
   list.appendChild(d)
 }
 

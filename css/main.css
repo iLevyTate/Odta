@@ -531,6 +531,10 @@
   .task-item.completed .task-name{text-decoration:line-through}
   .task-item.overdue{border-left-color:var(--danger)!important}
   .task-meta-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
+  /* Time-tracked pill — inline after the task name when the user is
+     filtering or sorting by duration / completion. Tabular figures so
+     digits line up across rows. */
+  .task-duration-pill{display:inline-flex;align-items:center;margin-left:6px;padding:1px 6px;font-size:10px;color:var(--text-3);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:999px;font-variant-numeric:tabular-nums;white-space:nowrap}
   /* .task-checkbox is defined further below in the themed component block —
      the legacy 18px/hex-bordered rule that used to live here was dead code
      (shadowed by source order) and has been removed. */

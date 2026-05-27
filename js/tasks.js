@@ -2626,6 +2626,10 @@ function updateTaskFilters(){
   // / semantic-search code paths; parsed.ops drives the new operator filters.
   taskFilters.search = parsed.text;
   taskFilters.ops    = parsed.ops;
+  // Track which time-related filters are active so renderTaskItem can decide
+  // whether to surface the duration pill on each card.
+  window._activeDurationFilter = !!(parsed.ops.duration && parsed.ops.duration.length);
+  window._activeCompletedFilter = !!(parsed.ops.completed && parsed.ops.completed.length);
   taskFilters.status=gid('filterStatus').value;
   taskFilters.priority=gid('filterPriority').value;
   taskFilters.category=(gid('filterCategory')||{}).value||'all';
@@ -2834,6 +2838,33 @@ function matchesFilters(t){
         }
       };
       if(!ops.is.every(matchOne)) return false;
+    }
+    // duration: filters — AND across declared comparisons (e.g. duration:>1h
+    // duration:<3h means "between 1 and 3 hours"). Uses getRolledUpTime for
+    // consistency with the existing 'time' sort, so a parent task's time
+    // includes its subtasks.
+    if(ops.duration && ops.duration.length){
+      const sec = (typeof getRolledUpTime === 'function') ? getRolledUpTime(t.id) : (t.totalSec || 0);
+      for(const d of ops.duration){
+        switch(d.op){
+          case '>':  if(!(sec >  d.seconds)) return false; break;
+          case '>=': if(!(sec >= d.seconds)) return false; break;
+          case '<':  if(!(sec <  d.seconds)) return false; break;
+          case '<=': if(!(sec <= d.seconds)) return false; break;
+          case '=':  if(sec !== d.seconds)   return false; break;
+        }
+      }
+    }
+    // completed: filter — OR across declared ranges. Task must have a
+    // completedAt and its date portion must fall in at least one range.
+    if(ops.completed && ops.completed.length){
+      if(!t.completedAt) return false;
+      const k = (typeof completionDateKey === 'function')
+        ? completionDateKey(t.completedAt)
+        : String(t.completedAt).slice(0, 10);
+      if(!k) return false;
+      const inAnyRange = ops.completed.some(r => k >= r.start && k <= r.end);
+      if(!inAnyRange) return false;
     }
   }
   if(!habitVisibilityOk(t))return false;
