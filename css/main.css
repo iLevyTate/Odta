@@ -2050,14 +2050,14 @@
        right edge so users SEE that more chips exist beyond the viewport;
        without it, "Fo..." cut-offs read as visual bugs rather than scroll
        affordances. */
-    .smart-views{padding:4px;overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;-webkit-overflow-scrolling:touch;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
+    .smart-views{padding:4px;overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
     .smart-views::-webkit-scrollbar{display:none}
     .sv-chip{white-space:nowrap;flex-shrink:0;padding:10px 12px;min-height:40px;font-size:13px}
     .sv-icon{font-size:14px}
     .sv-count{font-size:11px;padding:1px 7px}
 
     /* Lists bar - horizontal scroll, same fade affordance as smart-views. */
-    .lists-bar{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;gap:6px;padding:8px;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
+    .lists-bar{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;gap:6px;padding:8px;-webkit-overflow-scrolling:touch;touch-action:pan-x;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
     .lists-bar::-webkit-scrollbar{display:none}
     .list-chip{white-space:nowrap;flex-shrink:0;padding:8px 12px;min-height:40px;font-size:13px}
     .list-add{flex-shrink:0;padding:8px 12px;min-height:40px;font-size:13px}

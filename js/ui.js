@@ -1128,8 +1128,11 @@ function renderTaskItem(t,depth){
   d.addEventListener('touchstart',function(e){
     // Don't track a swipe (or long-press) when the touch begins on the drag
     // grip — that gesture belongs to Sortable's reorder, and double-handling
-    // it would also fire move/delete on release.
+    // it would also fire move/delete on release. Also short-circuit when the
+    // touch begins inside a horizontally-scrollable selection bar so its
+    // native overflow-x scroll wins.
     if(e.target.closest('button')||e.target.closest('input')||e.target.closest('.drag-handle'))return;
+    if(e.target.closest('.smart-views, .lists-bar, .tags-bar, .bulk-route-row, select, .task-action-menu'))return;
     touchStartX=e.touches[0].clientX;touchStartY=e.touches[0].clientY;swiping=false;
     _longPressFired=false;
     if(_longPressId){clearTimeout(_longPressId);_longPressId=null}
@@ -1186,6 +1189,17 @@ function renderTaskItem(t,depth){
     }
     touchStartX=0;touchCurrentX=0;swiping=false;
   },{passive:false});
+  // Defensive: if the touch is cancelled (system gesture preempted us, screen
+  // recognised a long-press for context menu, etc.) the touchend handler
+  // never fires and any active translateX stays applied, leaving the card
+  // visually shoved off-screen. Reset on touchcancel too.
+  d.addEventListener('touchcancel',function(){
+    if(_longPressId){ clearTimeout(_longPressId); _longPressId = null; }
+    d.style.transition='transform .2s,background .2s';
+    d.style.transform='';
+    d.style.background='';
+    touchStartX=0;touchCurrentX=0;swiping=false;_longPressFired=false;
+  },{passive:true});
 
   // At rest: due chip (overdue / today / soon only) + subtask progress. Habits view: ↻ + streak. Rest on hover.
   const chevron=kids
@@ -2232,9 +2246,16 @@ function showTaskListPickerSheet(id){
   const row=document.querySelector('.task-item[data-task-id="'+id+'"]');
   const r=row?row.getBoundingClientRect():{top:80,bottom:120,right:window.innerWidth-12};
   const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  const vw=window.innerWidth, vh=window.innerHeight;
   let top=r.bottom+6, left=r.right-mw;
-  if(left<8) left=8;
-  if(top+mh>window.innerHeight-8) top=Math.max(8,r.top-mh-6);
+  // Clamp horizontally to the viewport - the previous code only clamped the
+  // LEFT edge, so on narrow mobile viewports a menu wider than r.right (a
+  // long list name etc.) could have its RIGHT side cut off, leaving only
+  // the leftmost part of the column reachable.
+  if(left + mw > vw - 8) left = vw - mw - 8;
+  if(left < 8) left = 8;
+  if(top+mh>vh-8) top=Math.max(8, r.top-mh-6);
+  if(top < 8) top = 8;
   menu.style.top=top+'px';
   menu.style.left=left+'px';
   _taskActionMenuEl=menu;
