@@ -987,7 +987,14 @@
         <div class="md-block-title">When</div>
         <div class="mfield">
           <div class="mfield-lbl" id="mdRecurLbl">Repeat</div>
-          <div class="recur-options" id="mdRecur" role="group" aria-labelledby="mdRecurLbl"></div>
+          <button type="button" id="mdRecurTrigger" class="dropdown-trigger" data-action="openRecurDropdown" aria-haspopup="listbox" aria-labelledby="mdRecurLbl mdRecurLabel">
+            <span class="dropdown-trigger-label" id="mdRecurLabel">No repeat</span>
+            <span class="dropdown-trigger-caret" aria-hidden="true">▾</span>
+          </button>
+          <!-- mdRecur preserved as a hidden state element. JS keeps it in sync
+               with the dropdown selection so existing data-attribute lookups
+               and any future consumers continue to work. -->
+          <input type="hidden" id="mdRecur" value="none">
           <p class="md-hint">Calendar schedule (daily, every 2 days…) vs “After Nd” schedules from completion day.</p>
         </div>
         <div class="mfield-row">

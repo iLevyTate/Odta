@@ -1668,30 +1668,27 @@ function openTaskDetail(id){
     };
     enChips.appendChild(b)
   });
-  // Recurrence — calendar-relative (daily/weekly/...) plus C-5 after-completion variants
-  const rc=gid('mdRecur');if(rc){rc.replaceChildren();
-    rc.setAttribute('role','radiogroup');
-    [
-      ['none','No repeat'],
-      ['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],['weekly','Weekly'],['monthly','Monthly'],
-      ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
-    ].forEach(([key,lbl])=>{
-      const b=document.createElement('button');b.type='button';b.className='recur-opt'+((t.recur||'none')===key?' active':'');
-      b.setAttribute('role','radio');
-      b.setAttribute('aria-checked', (t.recur||'none')===key ? 'true' : 'false');
-      b.textContent=lbl;
-      if(key && key.startsWith('after')) b.title='Schedule next due ' + key.replace(/^after(\d+)d$/, '$1 day(s)') + ' AFTER completion (won\'t pile up if you finish late)';
-      b.onclick=function(){
-        t.recur=key==='none'?null:key;
-        _setRadioGroupSelection(rc, b);
-        // First-time recurrence on a task with no due date defaults to today
-        // so it actually shows up in Today / Habits views immediately.
-        if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
-        _commitChipChange(t);
-      };
-      rc.appendChild(b)
-    })
+  // Recurrence — moved from an 11-chip radiogroup to a single dropdown
+  // trigger. The 11 options were dominating the modal on narrow viewports
+  // (multiple chip rows). The trigger button shows the current selection;
+  // clicking it opens a Dropdown popover (or bottom-sheet on mobile). The
+  // hidden #mdRecur input keeps a syncable DOM reference for any consumers.
+  const _recurOptions = [
+    ['none','No repeat'],
+    ['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],['weekly','Weekly'],['monthly','Monthly'],
+    ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
+  ];
+  window._recurOptions = _recurOptions;  // openRecurDropdown reads this
+  const _recurKey = t.recur || 'none';
+  const _recurLabel = gid('mdRecurLabel');
+  const _recurHidden = gid('mdRecur');
+  if(_recurLabel){
+    const _row = _recurOptions.find(r => r[0] === _recurKey);
+    _recurLabel.textContent = _row ? _row[1] : 'No repeat';
   }
+  if(_recurHidden) _recurHidden.value = _recurKey;
+  // The dropdown's onSelect (in openRecurDropdown below) mutates t.recur,
+  // syncs the trigger label + hidden input, and calls _commitChipChange.
   // Tags
   renderTagsEditor(id);
   // Category chips (toggle)
@@ -2266,6 +2263,38 @@ function showTaskListPickerSheet(id){
   const first=menu.querySelector('.tam-item'); if(first){ try{ first.focus(); }catch(_){} }
 }
 window.showTaskListPickerSheet=showTaskListPickerSheet;
+
+// Recurrence dropdown - opens a Dropdown popover (or bottom-sheet on
+// mobile) for the 11 recurrence options. Replaces the previous chip-row
+// pattern that wrapped onto multiple lines on narrow viewports. The
+// onSelect callback mutates the live task object the modal is editing.
+function openRecurDropdown(){
+  if(typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  const trigger = gid('mdRecurTrigger');
+  const label = gid('mdRecurLabel');
+  const hidden = gid('mdRecur');
+  if(!trigger || editingTaskId == null) return;
+  const t = findTask(editingTaskId);
+  if(!t) return;
+  const rows = window._recurOptions || [];
+  const options = rows.map(function(r){ return { value: r[0], label: r[1] }; });
+  Dropdown.open(trigger, {
+    options: options,
+    selected: t.recur || 'none',
+    onSelect: function(key){
+      t.recur=key==='none'?null:key;
+      const row = rows.find(function(r){ return r[0] === key; });
+      if(label) label.textContent = row ? row[1] : 'No repeat';
+      if(hidden) hidden.value = key;
+      // First-time recurrence on a task with no due date defaults to today
+      // so it actually shows up in Today / Habits views immediately.
+      // Mirrors the same behaviour the old chip-click handler had.
+      if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
+      if(typeof _commitChipChange === 'function') _commitChipChange(t);
+    },
+  });
+}
+window.openRecurDropdown = openRecurDropdown;
 
 function saveTaskDetail(){
   if(!editingTaskId)return;
