@@ -45,3 +45,11 @@ test('pending row styles use explicit readable text colors', () => {
   assert.match(cssSrc, /\.pending-simple-title\{[^}]*color:var\(--text-1,#e8edf5\)/, 'title color fallback');
   assert.match(cssSrc, /\.pending-route-vals\{[^}]*color:var\(--text-1,#e8edf5\)/, 'route color fallback');
 });
+
+test('pending list cards do not flex-shrink (large batches must scroll, not collapse)', () => {
+  // .pending-list is a height-capped flex column and .pending-simple-card sets
+  // overflow:hidden, which zeroes a flex item's automatic min-size. Without an
+  // explicit flex-shrink:0, a 20-row batch crushes every card to a hairline
+  // that clips the task name/route. Guard the fix so it can't silently regress.
+  assert.match(cssSrc, /\.pending-list>\*\{[^}]*flex-shrink:0/, 'pending list children pin flex-shrink:0');
+});

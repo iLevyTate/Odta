@@ -1,5 +1,10 @@
 # Changelog
 
+## v57 — 2026-05-27
+
+- **Fix**: the Tools-tab **Proposed changes** preview no longer collapses every row to a thin sliver on large batches (e.g. auto-organize with 20 list moves). The list is a height-capped flex column and the cards set `overflow:hidden`, which zeroed their automatic flex min-size and let flexbox shrink each card to a hairline that clipped the task name, route, and checkbox. Cards now pin `flex-shrink:0` so the list scrolls instead of crushing its rows.
+- Service worker cache rotated to `odtaulai-v57`.
+
 ## v55 — 2026-05-25
 
 - **Fix**: sorting the task list by **Name** no longer throws when a task has no name (e.g. a row imported without a `name` field) — the comparator now treats a missing name as empty instead of crashing the whole list render.
