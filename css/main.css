@@ -3,13 +3,21 @@
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   /* Kill the default mobile tap overlay (a black rectangle that ignores
      border-radius) so press feedback follows each component's own shape. */
-  html{-webkit-tap-highlight-color:transparent}
+  /* Reserve scrollbar space at all times so locking body scroll (when a
+     modal opens) does NOT cause the page to shift horizontally as the
+     scrollbar disappears. Paired with body.modal-locked below. */
+  html{-webkit-tap-highlight-color:transparent;scrollbar-gutter:stable}
   /* Soft-keyboard inset variables live in `:root` with design tokens below;
      utils.js keeps them in sync via VisualViewport. */
   /* M5: 100vh on mobile Safari reports the *maximum* visible area including the
      address bar, which pushes content behind the toolbar. Prefer 100dvh (dynamic
      viewport) and fall back to 100vh for browsers that don't support dvh. */
   body{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;padding:24px 16px 88px;background:var(--bg-0);color:var(--text-1);font-family:var(--font-sans);font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  /* Modal-open body lock — set by Modal.open() in js/modal.js. position:fixed
+     is the iOS-safe pattern (overflow:hidden alone doesn't stop scroll on
+     iOS Safari). The Modal utility writes top:-scrollY inline so the page
+     visually stays put; on unlock it restores scrollY via window.scrollTo. */
+  body.modal-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden}
   button{cursor:pointer;font-family:inherit;border:none;-webkit-tap-highlight-color:transparent}button:hover{filter:brightness(1.12)}
   /* Keyboard-focus outline. Modern browsers render `outline` so it follows
      the focused element's own `border-radius` automatically — no need (or

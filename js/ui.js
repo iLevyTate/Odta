@@ -218,25 +218,21 @@ window.calToday=calToday;
 
 // ========== COMMAND PALETTE (Cmd+K) ==========
 let cmdkActiveIdx=0,cmdkFilteredItems=[];
-let _cmdkPrevFocus=null;
 function openCmdK(){
   const ov=gid('cmdkOverlay');if(!ov)return;
-  _cmdkPrevFocus=document.activeElement;
-  ov.classList.add('open');
+  // Render content BEFORE delegating to Modal so the panel is fully built
+  // by the time the open transition runs (no mid-fade DOM growth).
   _applyCmdkMode();
   const inp=gid('cmdkInput');
   if(inp)inp.value='';
   cmdkActiveIdx=0;renderCmdK();
-  if(inp){
-    try{inp.focus({preventScroll:true})}catch(_){inp.focus()}
-  }
-  if(typeof installTabTrap==='function') installTabTrap(ov);
+  // Modal utility owns prev-focus capture/restore, ESC, and Tab-trap.
+  // skipInitialFocus + focus:'#cmdkInput' = the trap watches Tab but we
+  // pick the focus target ourselves (the input, not the first focusable).
+  Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true });
 }
 function closeCmdK(){
-  if(typeof removeTabTrap==='function') removeTabTrap();
-  gid('cmdkOverlay').classList.remove('open');
-  if(_cmdkPrevFocus&&_cmdkPrevFocus.focus)try{_cmdkPrevFocus.focus()}catch(_){}
-  _cmdkPrevFocus=null;
+  Modal.close('cmdkOverlay');
 }
 function _cmdkTouchOrNarrowUI(){
   return typeof matchMedia==='function' && (matchMedia('(max-width: 640px)').matches || matchMedia('(pointer: coarse)').matches);
@@ -1602,19 +1598,21 @@ function openTaskDetail(id){
   if(typeof renderEstimateVariance === 'function') renderEstimateVariance(t);
   renderMdHabitLog(t);
   renderMdSessions(t);
-  gid('taskModal').classList.add('open');
-  _taskModalPrevFocus=document.activeElement;
-  document.addEventListener('keydown',_taskModalTabTrap,true);
-  setTimeout(()=>gid('mdName').focus(),50);
-  // Defer similar-tasks fetch + accordion expansion until AFTER the slide-up
-  // transition is fully complete. The accordion goes from display:none to
-  // display:block when neighbors land — if that flip happens mid-slide, the
-  // modal's height changes; on mobile (.modal-overlay is align-items:flex-end)
-  // the bottom stays anchored and the TOP jolts upward — the historical
-  // "jitter at the top" report. Coupled to --dur-modal in css/main.css
-  // (240ms) with a small safety margin. editingTaskId guard cancels stale
-  // fetches if the user closes the modal or switches task in the meantime.
-  setTimeout(()=>{ if(editingTaskId===id) refreshMdSimilarTasks(id); }, 260);
+  // 'sheet' variant: body scroll lock + bottom-sheet swipe.
+  // onRequestClose routes ESC through closeTaskDetail so the
+  // "discard unsaved text edits?" confirmation runs before tear-down.
+  // onOpen runs when the slide-up transition completes (transitionend),
+  // so the similar-tasks accordion never expands mid-slide — that
+  // expansion would change the modal's height; on mobile (align-items:
+  // flex-end) the bottom stays anchored and the TOP would jolt upward
+  // ("jitter at the top"). editingTaskId guard cancels stale fetches.
+  Modal.open('taskModal', {
+    variant: 'sheet',
+    focus: '#mdName',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeTaskDetail(),
+    onOpen: ()=>{ if(editingTaskId===id) refreshMdSimilarTasks(id); }
+  });
 }
 
 /**
@@ -1831,18 +1829,8 @@ function renderTagsEditor(id){
 function addTag(id,tag){const t=findTask(id);if(!t)return;if(!t.tags)t.tags=[];if(!t.tags.includes(tag))t.tags.push(tag);renderTagsEditor(id);_commitChipChange(t)}
 function removeTag(id,idx){const t=findTask(id);if(!t||!t.tags)return;t.tags.splice(idx,1);renderTagsEditor(id);_commitChipChange(t)}
 
-let _taskModalPrevFocus=null;
-function _taskModalTabTrap(e){
-  const modal=gid('taskModal');
-  if(!modal||!modal.classList.contains('open')||e.key!=='Tab')return;
-  const panel=modal.querySelector('.modal');
-  if(!panel)return;
-  const f=[...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&el.offsetParent!==null);
-  if(f.length<2)return;
-  const first=f[0],last=f[f.length-1];
-  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}
-  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
-}
+// _taskModalPrevFocus and _taskModalTabTrap removed in Stage 2 — Modal.open
+// owns focus capture/restore (via openFocusTrap) and Tab cycling for taskModal.
 // Snapshot-vs-form-fields divergence check. Only the *text/number* form
 // fields gate the discard-confirm — chip edits already committed via
 // _commitChipChange aren't considered "unsaved". Returns true when the user
@@ -1886,16 +1874,14 @@ async function closeTaskDetail(opts){
   }
   _taskModalSnapshot=null;
   const _modalEl=gid('taskModal');
-  _modalEl.classList.remove('open');
   // Reset any leftover swipe-drag transform from the bottom-sheet gesture so
-  // the next open starts cleanly.
+  // the next open starts cleanly. Do this BEFORE Modal.close so the transform
+  // reset doesn't fight the close transition.
   const _sheet=_modalEl&&_modalEl.querySelector('.modal');
   if(_sheet){_sheet.style.transform='';_sheet.style.transition=''}
+  Modal.close('taskModal');
   if(!skipRevert){ window._preserveTaskScroll = true; renderTaskList(); }
   editingTaskId=null;
-  document.removeEventListener('keydown',_taskModalTabTrap,true);
-  if(_taskModalPrevFocus&&_taskModalPrevFocus.focus)try{_taskModalPrevFocus.focus()}catch(e){}
-  _taskModalPrevFocus=null;
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
   // If midnight rolled over while the modal was open, the day-rollover
   // handler deferred (see app.js _isTaskModalOpen). Retry now that the
@@ -1964,15 +1950,18 @@ window._initTaskModalSwipeDismiss=_initTaskModalSwipeDismiss;
 function openSheet(id){
   const ov=document.getElementById(id);
   if(!ov) return;
-  ov.classList.add('open');
-  bindSheetSwipe(ov, ()=>closeSheet(id));
-  // Focus the first focusable control for keyboard users.
-  const f=ov.querySelector('.modal-close,button,select,input,a[href]');
-  if(f){ try{ f.focus(); }catch(_){} }
+  // 'sheet' variant: body scroll lock + bottom-sheet swipe (bindSheetSwipe).
+  // onRequestClose ensures ESC routes through closeSheet so sheet-specific
+  // cleanup (e.g. _restoreQuickAddHost) always runs.
+  Modal.open(id, {
+    variant: 'sheet',
+    focus: '.modal-close,button,select,input,a[href]',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeSheet(id)
+  });
 }
 function closeSheet(id){
-  const ov=document.getElementById(id);
-  if(ov) ov.classList.remove('open');
+  Modal.close(id);
   // The quick-add sheet borrows the inline add-task cluster — put it back so
   // the DOM is left as found (and the inline copy reappears on desktop).
   if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function') _restoreQuickAddHost();
@@ -2182,11 +2171,8 @@ function saveTaskDetail(){
   // C-2: record diffs into task.activity[] (cap at 50 entries)
   if(typeof recordTaskActivity === 'function') recordTaskActivity(t, _activityBefore);
   _taskModalSnapshot=null;
-  gid('taskModal').classList.remove('open');
+  Modal.close('taskModal');
   editingTaskId=null;
-  document.removeEventListener('keydown',_taskModalTabTrap,true);
-  if(_taskModalPrevFocus&&_taskModalPrevFocus.focus)try{_taskModalPrevFocus.focus()}catch(e){}
-  _taskModalPrevFocus=null;
   }finally{
     try{ delete t._habitCycledInSession; }catch(e){}
   }
@@ -2270,20 +2256,11 @@ window._updateActiveTaskTickSchedule=_updateActiveTaskTickSchedule;
 
 // ========== APP DIALOGS (replace native confirm/prompt) ==========
 let _appConfirmResolve=null;
-let _appConfirmReturnFocus=null;
-function _restoreFocus(el){
-  if(!el || typeof el.focus !== 'function') return;
-  try{ if(document.contains(el)) el.focus(); }catch(_){}
-}
 function closeAppConfirm(ok){
-  const ov=gid('appConfirmModal');
-  if(ov) ov.classList.remove('open');
   const fn=_appConfirmResolve;
-  const ret=_appConfirmReturnFocus;
   _appConfirmResolve=null;
-  _appConfirmReturnFocus=null;
+  Modal.close('appConfirmModal');
   if(fn) fn(!!ok);
-  _restoreFocus(ret);
 }
 function showAppConfirm(message){
   return new Promise(resolve=>{
@@ -2291,9 +2268,10 @@ function showAppConfirm(message){
     if(!ov||!m){ resolve(confirm(message)); return; }
     m.textContent=message;
     _appConfirmResolve=resolve;
-    _appConfirmReturnFocus=document.activeElement;
-    ov.classList.add('open');
-    setTimeout(()=>{const b=gid('appConfirmOk');if(b)b.focus()},30);
+    // Modal.open captures prev-focus via openFocusTrap and restores on close.
+    // skipInitialFocus + focus:'#appConfirmOk' = trap watches Tab; we pick
+    // the OK button as the initial target (matches the original 30ms focus).
+    Modal.open('appConfirmModal', { variant:'dialog', focus:'#appConfirmOk', skipInitialFocus:true, onRequestClose:()=>closeAppConfirm(false) });
   });
 }
 
@@ -2345,13 +2323,11 @@ function showImportConfirm(summary){
     w.textContent = '⚠ This replaces all current tasks, lists, and settings. Cannot be undone.';
     m.appendChild(w);
     _appConfirmResolve = resolve;
-    _appConfirmReturnFocus = document.activeElement;
-    ov.classList.add('open');
-    setTimeout(() => { const b = gid('appConfirmOk'); if(b) b.focus(); }, 30);
+    Modal.open('appConfirmModal', { variant:'dialog', focus:'#appConfirmOk', skipInitialFocus:true, onRequestClose:()=>closeAppConfirm(false) });
   });
 }
 if(typeof window !== 'undefined') window.showImportConfirm = showImportConfirm;
-let _appPromptResolve=null,_appPromptMultiline=false,_appPromptReturnFocus=null;
+let _appPromptResolve=null,_appPromptMultiline=false;
 function _appPromptTextareaKeydown(e){
   if(!_appPromptMultiline) return;
   if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){
@@ -2365,15 +2341,11 @@ function closeAppPrompt(val){
     multi.removeEventListener('keydown', multi._appPromptKd);
     multi._appPromptKd=null;
   }
-  const ov=gid('appPromptModal');
-  if(ov) ov.classList.remove('open');
   const fn=_appPromptResolve;
-  const ret=_appPromptReturnFocus;
   _appPromptResolve=null;
   _appPromptMultiline=false;
-  _appPromptReturnFocus=null;
+  Modal.close('appPromptModal');
   if(fn) fn(val);
-  _restoreFocus(ret);
 }
 function submitAppPrompt(){
   const single=gid('appPromptInput'), multi=gid('appPromptTextarea');
@@ -2402,9 +2374,8 @@ function showAppPrompt(label, defaultValue, opts){
       }
     }
     _appPromptResolve=resolve;
-    _appPromptReturnFocus=document.activeElement;
-    ov.classList.add('open');
-    setTimeout(()=>{(useMulti?multi:single)?.focus()},30);
+    const focusSel = useMulti ? '#appPromptTextarea' : '#appPromptInput';
+    Modal.open('appPromptModal', { variant:'dialog', focus:focusSel, skipInitialFocus:true, onRequestClose:()=>closeAppPrompt(null) });
   });
 }
 window.closeAppConfirm=closeAppConfirm;
@@ -2413,24 +2384,16 @@ window.submitAppPrompt=submitAppPrompt;
 window.showAppConfirm=showAppConfirm;
 window.showAppPrompt=showAppPrompt;
 
+// Legacy ESC handler — bubble phase. Stage 2 moved app-confirm, app-prompt,
+// cmdk, bulk-import, task-modal, and all filter sheets onto js/modal.js,
+// whose own capture-phase ESC listener invokes each modal's onRequestClose
+// and calls stopPropagation, so those branches never reach here anyway.
+// What-next still uses the .hidden attribute pattern (Stage 3 will fold it
+// into the Modal utility), so it stays in this chain until then.
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape') return;
-  const ac=gid('appConfirmModal');
-  if(ac&&ac.classList.contains('open')){ e.preventDefault(); closeAppConfirm(false); return }
-  const ap=gid('appPromptModal');
-  if(ap&&ap.classList.contains('open')){ e.preventDefault(); closeAppPrompt(null); return }
-  const cmdk=gid('cmdkOverlay');
-  if(cmdk&&cmdk.classList.contains('open')){ e.preventDefault(); if(typeof closeCmdK==='function') closeCmdK(); return }
   const wno=gid('whatNextOverlay');
   if(wno && !wno.hidden){ e.preventDefault(); if(typeof closeWhatNext==='function') closeWhatNext(); return }
-  const bulk=gid('bulkImportModal');
-  if(bulk&&bulk.classList.contains('open')){ e.preventDefault(); if(typeof closeBulkImportModal==='function') closeBulkImportModal(); return }
-  const tm=gid('taskModal');
-  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); return }
-  for(const sid of ['quickAddSheet','listsSheet','tagsSheet','viewSheet']){
-    const sh=gid(sid);
-    if(sh&&sh.classList.contains('open')){ e.preventDefault(); closeSheet(sid); return }
-  }
 });
 
 // ========== LOG ==========

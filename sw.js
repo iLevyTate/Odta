@@ -32,6 +32,7 @@ const ASSETS = [
   './js/icons.js',
   './js/utils.js',
   './js/ui-flip.js',
+  './js/modal.js',
   './js/storage.js',
   './js/audio.js',
   './js/timer.js',

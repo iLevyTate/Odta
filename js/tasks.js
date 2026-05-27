@@ -522,22 +522,20 @@ function openBulkImportModal(items, skippedLong){
   _updateBulkImportButtonState();
   _syncBulkRoutingControls();
   ta.oninput = () => { _updateBulkImportButtonState(); _onBulkRoutingTextareaChanged(); };
-  ov.classList.add('open');
   // Pre-warm the chrono CDN module while the user is reviewing — without this
   // the first parseQuickAddAsync call inside confirmBulkImport blocks on the
   // dynamic import (1-3s cold), which read as a UI freeze for users pasting
   // a batch and immediately clicking Add.
   if(typeof loadChrono === 'function'){ try { loadChrono().catch(()=>{}); } catch(_){} }
-  setTimeout(() => ta.focus(), 30);
-  // Modal focus management — trap Tab/Shift+Tab inside the dialog so users
-  // can't accidentally tab back to the page behind it.
-  if(typeof installTabTrap === 'function') setTimeout(() => installTabTrap(ov), 40);
-  if(typeof openFocusTrap !== 'function' && typeof installTabTrap !== 'function'){
-    // Both utils unavailable — leave focus management to the user agent.
-  }
-  // Capture previous focus manually so we can restore on close even if the
-  // trap util chose skipPrevFocus mode.
-  ov._prevFocus = document.activeElement;
+  // Modal utility owns focus trap + prev-focus restore + body lock.
+  // onRequestClose ensures ESC routes through closeBulkImportModal so the
+  // "discard unsaved routing edits?" confirmation runs before tear-down.
+  Modal.open('bulkImportModal', {
+    variant: 'dialog',
+    focus: '#bulkImportTextarea',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeBulkImportModal()
+  });
 }
 
 function _updateBulkImportButtonState(){
@@ -569,10 +567,8 @@ async function closeBulkImportModal(){
     const ok = await showAppConfirm('Discard ' + n + ' routing edit' + (n === 1 ? '' : 's') + '? They will not be saved.');
     if(!ok) return;
   }
-  if(ov) ov.classList.remove('open');
   const ta = gid('bulkImportTextarea');
   if(ta) ta.oninput = null;
-  if(typeof removeTabTrap === 'function') removeTabTrap();
   // Cancel any confirmBulkImport that's still running. Dismissing the modal
   // is the user saying "stop" — without this they'd close the modal and a
   // few seconds later watch tasks they didn't expect appear in their list.
@@ -581,11 +577,9 @@ async function closeBulkImportModal(){
     _bulkImportAbort = null;
   }
   _setBulkProgress(null);
-  // Restore focus to whatever launched the modal (the task input, typically).
-  if(ov && ov._prevFocus){
-    try { ov._prevFocus.focus(); } catch(_){}
-    ov._prevFocus = null;
-  }
+  // Modal.close removes .open, closes focus trap (restores prev focus),
+  // and releases body lock.
+  Modal.close('bulkImportModal');
 }
 
 /**
