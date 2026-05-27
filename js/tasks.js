@@ -181,6 +181,7 @@ function defaultTaskProps(){return{
   valuesNote:null,      // Short note from values alignment
   completions:[],      // recurring habit log: { date, sec }
   habitLastRecordedTotalSec:null, // baseline for per-completion delta (see completeHabitCycle)
+  attachments:[],      // attachment ids in IndexedDB (see attachments.js)
 }}
 
 let _dupRefreshTimer = null;
@@ -211,9 +212,16 @@ function parseQuickAdd(raw){
   if(tags.length){props.tags=tags;text=text.replace(/\s#[^\s#]+/g,'')}
   // Star !star !pin
   if(/\s!(star|pin)\b/i.test(text)){props.starred=true;text=text.replace(/\s!(star|pin)\b/i,'')}
-  // Recurrence ~daily ~weekdays ~weekly ~monthly
-  const rcMatch=text.match(/\s~(daily|weekdays|weekly|monthly)\b/i);
-  if(rcMatch){props.recur=rcMatch[1].toLowerCase();text=text.replace(rcMatch[0],'')}
+  // Recurrence ~daily ~weekdays ~weekly ~monthly ~every2d ~habit
+  const rcMatch=text.match(/\s~(daily|weekdays|weekly|monthly|every2d|habit)\b/i);
+  if(rcMatch){
+    const k=rcMatch[1].toLowerCase();
+    props.recur=(k==='habit')?'daily':k;
+    text=text.replace(rcMatch[0],'');
+  }
+  // Type %bug %idea %errand %waiting %task
+  const tyMatch=text.match(/\s%(task|bug|idea|errand|waiting)\b/i);
+  if(tyMatch){props.type=tyMatch[1].toLowerCase();text=text.replace(tyMatch[0],'')}
   // Bare recurrence phrases (no ~ sigil). The empty-state copy and quick-add
   // syntax hints promise these "just work" — wire them so the promise isn't
   // a lie (#1 in the UX audit). These run BEFORE the bare day-name strip so
@@ -224,6 +232,8 @@ function parseQuickAdd(raw){
       [/\bevery\s+day\b/i,'daily'],
       [/\bevery\s+week\b/i,'weekly'],
       [/\bevery\s+month\b/i,'monthly'],
+      [/\bevery\s+other\s+day\b/i,'every2d'],
+      [/\bevery\s+2\s+days?\b/i,'every2d'],
       [/(^|\s)weekdays\b/i,'weekdays'],
       [/(^|\s)daily\b/i,'daily'],
       [/(^|\s)weekly\b/i,'weekly'],
@@ -249,6 +259,17 @@ function parseQuickAdd(raw){
     const d=new Date();d.setDate(d.getDate()+7);
     props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     text=text.replace(/\bnext week\b/i,'');
+  }else if(/\bin\s+(\d+)\s+days?\b/i.test(lower)){
+    const m=lower.match(/\bin\s+(\d+)\s+days?\b/i);
+    if(m){
+      const n=parseInt(m[1],10)||0;
+      const d=new Date();d.setDate(d.getDate()+n);
+      props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      text=text.replace(/\bin\s+\d+\s+days?\b/i,'');
+    }
+  }else if(/\beod\b/i.test(lower)){
+    props.dueDate=todayISOs;
+    text=text.replace(/\beod\b/i,'');
   }else{
     const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
     if(dayMatch){
@@ -290,10 +311,15 @@ async function addTask(){
   // typing "@urgent" still wins over a panel-set priority — explicit text
   // input is the most recent intent.
   const panelVals=(typeof window!=='undefined'&&window._quickAddValues)?window._quickAddValues:null;
+  const entryKind=panelVals&&panelVals.entryKind;
+  const panelClean=panelVals?{...panelVals}:null;
+  if(panelClean) delete panelClean.entryKind;
   const _newT=Object.assign({
     id:++taskIdCtr,name,totalSec:0,sessions:0,created:timeNowFull(),
     parentId:null,collapsed:false
-  },defaultTaskProps(),panelVals||{},props);
+  },defaultTaskProps(),panelClean||{},props);
+  if(entryKind==='habit'&&!props.recur) _newT.recur=_newT.recur||'daily';
+  if(entryKind==='task'&&!props.recur) _newT.recur=null;
   tasks.push(_newT);
   _taskIndexRegister(_newT);
   inp.value='';
@@ -420,6 +446,7 @@ function updateLiveParsePreview(){
   }
   if(props.starred) chips.push(_qpcChip('star', '★', 'Pinned to top'));
   if(props.recur)   chips.push(_qpcChip('recur', '↻ '+props.recur, 'Repeats'));
+  if(props.type)    chips.push(_qpcChip('tag', '%'+props.type, 'Type'));
   if(props.dueDate){
     let label=props.dueDate;
     if(typeof prettyDate==='function'){ try{ label=prettyDate(props.dueDate); }catch(_){} }
@@ -522,22 +549,20 @@ function openBulkImportModal(items, skippedLong){
   _updateBulkImportButtonState();
   _syncBulkRoutingControls();
   ta.oninput = () => { _updateBulkImportButtonState(); _onBulkRoutingTextareaChanged(); };
-  ov.classList.add('open');
   // Pre-warm the chrono CDN module while the user is reviewing — without this
   // the first parseQuickAddAsync call inside confirmBulkImport blocks on the
   // dynamic import (1-3s cold), which read as a UI freeze for users pasting
   // a batch and immediately clicking Add.
   if(typeof loadChrono === 'function'){ try { loadChrono().catch(()=>{}); } catch(_){} }
-  setTimeout(() => ta.focus(), 30);
-  // Modal focus management — trap Tab/Shift+Tab inside the dialog so users
-  // can't accidentally tab back to the page behind it.
-  if(typeof installTabTrap === 'function') setTimeout(() => installTabTrap(ov), 40);
-  if(typeof openFocusTrap !== 'function' && typeof installTabTrap !== 'function'){
-    // Both utils unavailable — leave focus management to the user agent.
-  }
-  // Capture previous focus manually so we can restore on close even if the
-  // trap util chose skipPrevFocus mode.
-  ov._prevFocus = document.activeElement;
+  // Modal utility owns focus trap + prev-focus restore + body lock.
+  // onRequestClose ensures ESC routes through closeBulkImportModal so the
+  // "discard unsaved routing edits?" confirmation runs before tear-down.
+  Modal.open('bulkImportModal', {
+    variant: 'dialog',
+    focus: '#bulkImportTextarea',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeBulkImportModal()
+  });
 }
 
 function _updateBulkImportButtonState(){
@@ -569,10 +594,8 @@ async function closeBulkImportModal(){
     const ok = await showAppConfirm('Discard ' + n + ' routing edit' + (n === 1 ? '' : 's') + '? They will not be saved.');
     if(!ok) return;
   }
-  if(ov) ov.classList.remove('open');
   const ta = gid('bulkImportTextarea');
   if(ta) ta.oninput = null;
-  if(typeof removeTabTrap === 'function') removeTabTrap();
   // Cancel any confirmBulkImport that's still running. Dismissing the modal
   // is the user saying "stop" — without this they'd close the modal and a
   // few seconds later watch tasks they didn't expect appear in their list.
@@ -581,11 +604,9 @@ async function closeBulkImportModal(){
     _bulkImportAbort = null;
   }
   _setBulkProgress(null);
-  // Restore focus to whatever launched the modal (the task input, typically).
-  if(ov && ov._prevFocus){
-    try { ov._prevFocus.focus(); } catch(_){}
-    ov._prevFocus = null;
-  }
+  // Modal.close removes .open, closes focus trap (restores prev focus),
+  // and releases body lock.
+  Modal.close('bulkImportModal');
 }
 
 /**
@@ -1091,6 +1112,13 @@ function _subtaskAllowedUnderShownParent(t){
   if(today && t.hiddenUntil && t.hiddenUntil > today
      && smartView !== 'snoozed'
      && smartView !== 'completed') return false;
+  // Hide done children outside the 'completed' view unless the global
+  // "show completed" toggle is on — same rule top-level done tasks already
+  // follow in the 'all' view (matchesFilters at line ~2646).
+  if(t.status === 'done' && smartView !== 'completed'){
+    const sd = gid('showCompletedAll');
+    if(!sd || !sd.checked) return false;
+  }
   return true;
 }
 function hasChildren(taskId){return tasks.some(t=>t.parentId===taskId)}
@@ -1400,6 +1428,9 @@ async function removeTask(id, ev){
   const _removedSnaps=[];
   tasks.forEach((t,idx)=>{ if(toRemove.includes(t.id)) _removedSnaps.push({idx, task:{...t}}); });
   for(const rid of toRemove) _taskIndexRemove(rid);
+  if(typeof deleteAttachmentsForTask === 'function'){
+    for(const rid of toRemove) deleteAttachmentsForTask(rid).catch(()=>{});
+  }
   tasks=tasks.filter(t=>!toRemove.includes(t.id));
   if(typeof syncTaskDels==='object'&&syncTaskDels){
     const ts = Date.now();
@@ -1715,6 +1746,7 @@ function advanceRecurringDate(dateStr,recurType){
   }
   const d=dateStr?new Date(dateStr+'T12:00:00'):new Date();
   if(recurType==='daily')d.setDate(d.getDate()+1);
+  else if(recurType==='every2d')d.setDate(d.getDate()+2);
   else if(recurType==='weekdays'){
     d.setDate(d.getDate()+1);
     while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);
@@ -2271,8 +2303,59 @@ let _updateTaskFiltersDebounce=null;
 // Returns: { text: 'free part', ops: { tag:[], list:[], is:[], priority:[],
 //                                       due:[], status:[] } }
 function parseTaskSearchQuery(raw){
-  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [] };
+  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [], duration: [], completed: [] };
   if(typeof raw !== 'string') return { text: '', ops };
+  // Completion-date value parser: accepts keyword (today/yesterday/this-week/
+  // last-week/this-month/last-month), exact ISO date (YYYY-MM-DD), or ISO
+  // range (YYYY-MM-DD..YYYY-MM-DD). Returns { start, end } or null.
+  function _shiftIso(iso, days){
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  function _parseCompletedVal(rawVal){
+    const today = (typeof todayISO === 'function')
+      ? todayISO()
+      : new Date().toISOString().slice(0, 10);
+    if(rawVal === 'today')      return { start: today, end: today };
+    if(rawVal === 'yesterday')  return { start: _shiftIso(today, -1), end: _shiftIso(today, -1) };
+    if(rawVal === 'this-week')  return { start: _shiftIso(today, -6), end: today };
+    if(rawVal === 'last-week')  return { start: _shiftIso(today, -7), end: _shiftIso(today, -1) };
+    if(rawVal === 'this-month') return { start: today.slice(0, 8) + '01', end: today };
+    if(rawVal === 'last-month'){
+      const d = new Date(today + 'T00:00:00Z');
+      const lastPrev  = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0));
+      const firstPrev = new Date(Date.UTC(lastPrev.getUTCFullYear(), lastPrev.getUTCMonth(), 1));
+      return { start: firstPrev.toISOString().slice(0, 10), end: lastPrev.toISOString().slice(0, 10) };
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(rawVal)) return { start: rawVal, end: rawVal };
+    const range = rawVal.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+    if(range) return { start: range[1], end: range[2] };
+    return null;
+  }
+  // Duration value parser: accepts "90" (bare integer = minutes), "2h", "30m",
+  // "45s", compound "1h30m", optionally prefixed with a compare op (>, >=, <,
+  // <=, =; default "="). Returns { op, seconds } or null for invalid input.
+  function _parseDurationVal(rawVal){
+    const m = rawVal.match(/^([<>]=?|=)?\s*(.+)$/);
+    if(!m) return null;
+    const op = m[1] || '=';
+    const body = m[2];
+    let seconds = 0;
+    if(/^\d+$/.test(body)){
+      seconds = parseInt(body, 10) * 60;
+    } else {
+      let any = false;
+      for(const pair of body.matchAll(/(\d+)([hms])/gi)){
+        any = true;
+        const n = parseInt(pair[1], 10);
+        const u = pair[2].toLowerCase();
+        seconds += u === 'h' ? n * 3600 : u === 'm' ? n * 60 : n;
+      }
+      if(!any) return null;
+    }
+    return { op, seconds };
+  }
   // Match `key:value` (quoted optional) or shorthand prefixes.
   const opRe = /(\w+):("[^"]+"|'[^']+'|\S+)|#(\S+)|@(\S+)/g;
   // Build a list of [start, end] ranges to splice out of the source. The old
@@ -2305,6 +2388,18 @@ function parseTaskSearchQuery(raw){
       else if(key === 'priority'){ ops.priority.push(val); consumed = true; }
       else if(key === 'due'){ ops.due.push(val); consumed = true; }
       else if(key === 'status'){ ops.status.push(val); consumed = true; }
+      else if(key === 'duration'){
+        const parsed = _parseDurationVal(val);
+        if(parsed) ops.duration.push(parsed);
+        // invalid duration values are dropped (token still consumed so it
+        // doesn't survive as free text - matches @priority behaviour above).
+        consumed = true;
+      }
+      else if(key === 'completed'){
+        const parsed = _parseCompletedVal(val);
+        if(parsed) ops.completed.push(parsed);
+        consumed = true;
+      }
       // else: unknown operator → leave it in the leftover free-text query.
     }
     if(consumed) cuts.push([m.index, opRe.lastIndex]);
@@ -2531,6 +2626,10 @@ function updateTaskFilters(){
   // / semantic-search code paths; parsed.ops drives the new operator filters.
   taskFilters.search = parsed.text;
   taskFilters.ops    = parsed.ops;
+  // Track which time-related filters are active so renderTaskItem can decide
+  // whether to surface the duration pill on each card.
+  window._activeDurationFilter = !!(parsed.ops.duration && parsed.ops.duration.length);
+  window._activeCompletedFilter = !!(parsed.ops.completed && parsed.ops.completed.length);
   taskFilters.status=gid('filterStatus').value;
   taskFilters.priority=gid('filterPriority').value;
   taskFilters.category=(gid('filterCategory')||{}).value||'all';
@@ -2739,6 +2838,33 @@ function matchesFilters(t){
         }
       };
       if(!ops.is.every(matchOne)) return false;
+    }
+    // duration: filters — AND across declared comparisons (e.g. duration:>1h
+    // duration:<3h means "between 1 and 3 hours"). Uses getRolledUpTime for
+    // consistency with the existing 'time' sort, so a parent task's time
+    // includes its subtasks.
+    if(ops.duration && ops.duration.length){
+      const sec = (typeof getRolledUpTime === 'function') ? getRolledUpTime(t.id) : (t.totalSec || 0);
+      for(const d of ops.duration){
+        switch(d.op){
+          case '>':  if(!(sec >  d.seconds)) return false; break;
+          case '>=': if(!(sec >= d.seconds)) return false; break;
+          case '<':  if(!(sec <  d.seconds)) return false; break;
+          case '<=': if(!(sec <= d.seconds)) return false; break;
+          case '=':  if(sec !== d.seconds)   return false; break;
+        }
+      }
+    }
+    // completed: filter — OR across declared ranges. Task must have a
+    // completedAt and its date portion must fall in at least one range.
+    if(ops.completed && ops.completed.length){
+      if(!t.completedAt) return false;
+      const k = (typeof completionDateKey === 'function')
+        ? completionDateKey(t.completedAt)
+        : String(t.completedAt).slice(0, 10);
+      if(!k) return false;
+      const inAnyRange = ops.completed.some(r => k >= r.start && k <= r.end);
+      if(!inAnyRange) return false;
     }
   }
   if(!habitVisibilityOk(t))return false;
@@ -3154,8 +3280,9 @@ function renderTaskList(){
       row.className='habit-template-row';
       const tmpls=[
         {label:'+ Daily check-in',name:'Daily check-in',recur:'daily'},
+        {label:'+ Every other day',name:'Every other day',recur:'every2d'},
+        {label:'+ Weekday habit',name:'Weekday habit',recur:'weekdays'},
         {label:'+ Weekly review',name:'Weekly review',recur:'weekly'},
-        {label:'+ Weekday habit',name:'New weekday habit',recur:'weekdays'},
       ];
       tmpls.forEach(tm=>{
         const b=document.createElement('button');
@@ -3713,6 +3840,7 @@ window.clearTaskSearch = clearTaskSearch;
 // Settings → Quick-add fields. Default fields: list + due. Each field's
 // chosen value is staged in window._quickAddValues until the user submits.
 const QUICK_ADD_FIELDS = {
+  entryKind: { label: 'Entry kind', render: _renderQAEntryKind },
   list: { label: 'List', render: _renderQAList },
   due:  { label: 'Due date', render: _renderQADue },
   category: { label: 'Life area', render: _renderQACategory },
@@ -3730,6 +3858,14 @@ function _qaSet(key, val){
   else v[key] = val;
 }
 
+function _renderQAEntryKind(wrap){
+  _renderQAChips(wrap, 'Entry kind', 'entryKind', [
+    ['task', 'One-off task'],
+    ['habit', 'Habit'],
+  ]);
+  const v = _qaVal().entryKind;
+  if(v === 'habit' && !_qaVal().recur) _qaSet('recur', 'daily');
+}
 function _renderQAList(wrap){
   wrap.appendChild(_qaLbl('List'));
   const ctl = document.createElement('div');
@@ -3824,7 +3960,11 @@ function _renderQARecur(wrap){
   ctl.className='qa-more-field-control';
   const sel = document.createElement('select');
   sel.className='mfield-in';
-  [['','None'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']].forEach(([v,l])=>{
+  [
+    ['','None'],['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],
+    ['weekly','Weekly'],['monthly','Monthly'],
+    ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],
+  ].forEach(([v,l])=>{
     const o=document.createElement('option');o.value=v;o.textContent=l;sel.appendChild(o);
   });
   sel.value = _qaVal().recur || '';

@@ -3,14 +3,23 @@
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   /* Kill the default mobile tap overlay (a black rectangle that ignores
      border-radius) so press feedback follows each component's own shape. */
-  html{-webkit-tap-highlight-color:transparent}
+  /* Reserve scrollbar space at all times so locking body scroll (when a
+     modal opens) does NOT cause the page to shift horizontally as the
+     scrollbar disappears. Paired with body.modal-locked below. */
+  html{-webkit-tap-highlight-color:transparent;scrollbar-gutter:stable}
   /* Soft-keyboard inset variables live in `:root` with design tokens below;
      utils.js keeps them in sync via VisualViewport. */
   /* M5: 100vh on mobile Safari reports the *maximum* visible area including the
      address bar, which pushes content behind the toolbar. Prefer 100dvh (dynamic
      viewport) and fall back to 100vh for browsers that don't support dvh. */
   body{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;padding:24px 16px 88px;background:var(--bg-0);color:var(--text-1);font-family:var(--font-sans);font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  /* Modal-open body lock — set by Modal.open() in js/modal.js. position:fixed
+     is the iOS-safe pattern (overflow:hidden alone doesn't stop scroll on
+     iOS Safari). The Modal utility writes top:-scrollY inline so the page
+     visually stays put; on unlock it restores scrollY via window.scrollTo. */
+  body.modal-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden}
   button{cursor:pointer;font-family:inherit;border:none;-webkit-tap-highlight-color:transparent}button:hover{filter:brightness(1.12)}
+  .task-item .ta-btn:hover,.task-item .task-checkbox:hover,.task-item .task-chevron:hover{filter:none}
   /* Keyboard-focus outline. Modern browsers render `outline` so it follows
      the focused element's own `border-radius` automatically — no need (or
      correctness) in setting `border-radius:inherit` here, which would
@@ -137,6 +146,10 @@
     --dur-fast:120ms;
     --dur-base:200ms;
     --dur-slow:320ms;
+    /* Modal/overlay open transition — sits between base UI feedback and slow
+       emphasis. Used by .modal-overlay (and .cmdk-overlay for its faster fade
+       via --dur-fast). One token = one place to retune all modal motion. */
+    --dur-modal:240ms;
     /* Elevation shadow language — one shadow depth per surface tier */
     --shadow-card:0 1px 3px rgba(0,0,0,.18),0 1px 2px rgba(0,0,0,.12);
     --shadow-raised:0 4px 16px rgba(0,0,0,.22),0 1px 4px rgba(0,0,0,.14);
@@ -518,18 +531,43 @@
   .task-item.completed .task-name{text-decoration:line-through}
   .task-item.overdue{border-left-color:var(--danger)!important}
   .task-meta-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
+  /* Time-tracked pill — inline after the task name when the user is
+     filtering or sorting by duration / completion. Tabular figures so
+     digits line up across rows. */
+  .task-duration-pill{display:inline-flex;align-items:center;margin-left:6px;padding:1px 6px;font-size:10px;color:var(--text-3);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:999px;font-variant-numeric:tabular-nums;white-space:nowrap}
   /* .task-checkbox is defined further below in the themed component block —
      the legacy 18px/hex-bordered rule that used to live here was dead code
      (shadowed by source order) and has been removed. */
   .task-estimate{font-size:9px;color:var(--text-3);letter-spacing:.5px}
   .task-desc-preview{font-size:10px;color:var(--text-3);font-style:italic;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 
-  /* Task Detail Modal */
-  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:var(--z-modal);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;padding-bottom:calc(40px + var(--kb-inset, 0px));overflow-y:auto}
-  .modal-overlay.open{display:flex;animation:fadeIn .2s}
+  /* Task Detail Modal — state-driven (transition), not one-shot (animation).
+     The overlay stays mounted at all times; only opacity/visibility/pointer-events
+     change with .open. This eliminates the display:none → display:flex flip
+     that races the keyframe in the same frame (the historical jitter cause).
+     backdrop-filter is deferred via .backdrop-ready (set on transitionend) so
+     the GPU does not composite a blur layer during the open transition. */
+  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);z-index:var(--z-modal);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;padding-bottom:calc(40px + var(--kb-inset, 0px));overflow-y:auto;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-modal) var(--ease-out),visibility 0s linear var(--dur-modal)}
+  .modal-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-modal) var(--ease-out),visibility 0s linear 0s}
+  .modal-overlay.backdrop-ready{backdrop-filter:blur(4px)}
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-  .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);animation:modalSlide .25s}
-  @keyframes modalSlide{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);transform:translateY(-20px);opacity:0;transition:transform var(--dur-modal) var(--ease-out),opacity var(--dur-modal) var(--ease-out)}
+  .modal-overlay.open .modal{transform:translateY(0);opacity:1}
+  /* prefers-reduced-motion: collapse modal/overlay transitions to ~instant.
+     Modal.open's onOpen callback still fires correctly under reduced motion
+     thanks to its transitionend listener + 400ms safety timeout fallback. */
+  @media (prefers-reduced-motion:reduce){
+    .modal-overlay,
+    .modal-overlay.open,
+    .modal-overlay .modal,
+    .modal-overlay.open .modal,
+    .cmdk-overlay,
+    .cmdk-overlay.open,
+    .what-next-overlay,
+    .what-next-overlay.open{
+      transition-duration:.01ms!important;
+    }
+  }
   .modal-head{display:flex;align-items:center;gap:10px;padding:var(--space-7) var(--space-9);border-bottom:1px solid var(--border-subtle)}
   .modal-close{margin-inline-start:auto;width:28px;height:28px;background:transparent;border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3);font-size:14px;cursor:pointer;font-family:inherit}
   .modal-close:hover{color:var(--danger);border-color:var(--danger-border)}
@@ -1567,9 +1605,12 @@
   .cal-agenda-mk{font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);cursor:pointer}
   .cal-agenda-empty{font-size:12px;color:var(--text-3);padding:8px 4px}
 
-  /* Command Palette (Cmd+K) */
-  .cmdk-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);z-index:var(--z-cmdk);display:none;align-items:flex-start;justify-content:center;padding:80px 16px 16px;padding-bottom:calc(16px + var(--kb-inset, 0px))}
-  .cmdk-overlay.open{display:flex;animation:fadeIn .15s}
+  /* Command Palette (Cmd+K) — same state-driven pattern as .modal-overlay,
+     just snappier (var(--dur-fast)) and fade-only (no transform). Backdrop
+     blur deferred via .backdrop-ready so the GPU does not composite during fade. */
+  .cmdk-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:var(--z-cmdk);display:flex;align-items:flex-start;justify-content:center;padding:80px 16px 16px;padding-bottom:calc(16px + var(--kb-inset, 0px));opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+  .cmdk-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
+  .cmdk-overlay.backdrop-ready{backdrop-filter:blur(6px)}
   .cmdk-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);overflow:hidden;max-height:min(90vh, var(--vv-height, 90dvh))}
   .cmdk-input{width:100%;padding:16px 18px;background:transparent;border:none;color:var(--text-1);font-size:15px;font-family:inherit;outline:0;border-bottom:1px solid var(--border)}
   .cmdk-input::placeholder{color:var(--text-4)}
@@ -1721,8 +1762,8 @@
     border-left:3px solid var(--border);
     border-radius:var(--r-md);
     padding:0;gap:0;margin-bottom:4px;
-    transition:background .12s,border-color .12s,transform .12s;
-    position:relative;display:block;
+    transition:background .12s,border-color .12s;
+    position:relative;display:flex;flex-direction:column;align-items:stretch;
   }
   .task-item:hover{background:var(--bg-2);border-color:var(--border-strong)}
   .task-item.priority-urgent-item{border-left-color:var(--danger)}
@@ -1739,7 +1780,10 @@
   }
   .task-item.completed{opacity:.45}
   .task-item.completed .task-name{text-decoration:line-through;color:var(--text-3)}
-  .task-item.completed .task-signals,.task-item.completed .task-row-secondary{display:none}
+  .task-item.completed .task-signals,.task-item.completed .task-row-secondary-wrap{display:none}
+  .task-sig.sig-habit{background:var(--purple-bg);color:var(--purple);font-size:10px;font-weight:600}
+  .task-checkbox--habit{border-color:var(--purple-border)}
+  .task-checkbox--habit:hover{border-color:var(--purple);background:var(--purple-bg)}
 
   .task-row-primary{
     /* column-gap (not gap) keeps a tight horizontal rhythm: chevron+checkbox
@@ -1836,6 +1880,54 @@
     border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.5);
     display:flex;flex-direction:column;gap:2px;animation:fadeIn .12s;
   }
+
+  /* Dropdown — small selection popover with optional bottom-sheet variant
+     on narrow viewports. Same visual base as .task-action-menu, plus an
+     inline trigger button + hidden shadow-select that keeps the existing
+     save-detail logic (which reads gid('mdRecur').value etc.) working
+     unchanged. */
+  .dropdown-popover{
+    position:fixed;z-index:var(--z-popover,100);
+    background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);
+    box-shadow:var(--shadow-overlay);
+    min-width:200px;max-width:320px;max-height:60vh;
+    overflow:hidden;display:flex;flex-direction:column;
+    animation:fadeIn .12s ease-out;
+  }
+  .dropdown-sheet{
+    position:fixed;left:0;right:0;bottom:0;z-index:var(--z-modal);
+    background:var(--bg-2);border-top:1px solid var(--border);
+    border-radius:16px 16px 0 0;
+    box-shadow:var(--shadow-overlay);
+    max-height:70vh;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
+    display:flex;flex-direction:column;
+    animation:slideIn .2s ease-out;
+  }
+  .dropdown-search{
+    width:100%;padding:10px 12px;background:transparent;border:none;
+    border-bottom:1px solid var(--border);color:var(--text-1);
+    font:inherit;outline:0;
+  }
+  .dropdown-list{overflow-y:auto;padding:4px 0;flex:1}
+  .dropdown-item{
+    display:flex;align-items:center;gap:8px;width:100%;
+    padding:8px 12px;background:transparent;border:none;
+    color:var(--text-1);font:inherit;font-size:13px;text-align:left;cursor:pointer;
+  }
+  .dropdown-item:hover,.dropdown-item.is-highlight{background:var(--bg-3)}
+  .dropdown-item.is-selected{color:var(--accent);font-weight:600}
+  .dropdown-swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0;display:inline-block}
+  .dropdown-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dropdown-trigger{
+    display:inline-flex;align-items:center;gap:6px;width:100%;
+    padding:8px 12px;background:var(--bg-0);border:1px solid var(--border);
+    border-radius:var(--r-sm);color:var(--text-1);font:inherit;font-size:12px;
+    cursor:pointer;min-height:32px;font-family:inherit;
+  }
+  .dropdown-trigger:hover{border-color:var(--accent-border)}
+  .dropdown-trigger-label{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dropdown-trigger-caret{opacity:.6;flex-shrink:0}
+  .dropdown-shadow-select{display:none!important}
   .task-action-menu .tam-item{
     display:flex;align-items:center;gap:10px;width:100%;
     padding:10px 12px;min-height:40px;
@@ -1885,7 +1977,6 @@
      Compact: tight rows, smaller checkbox, subtler signals — for power users
               with long lists. Secondary row stays gated to hover. */
   .task-list--comfortable .task-row-primary{padding:14px 16px;min-height:56px;column-gap:var(--space-6)}
-  .task-list--comfortable .task-row-secondary{display:flex}
   .task-list--comfortable .task-item{padding-block-end:2px}
   .task-list--cozy .task-row-primary{padding:11px 14px;min-height:48px}
   .task-list--compact .task-row-primary{padding:6px 10px;min-height:36px;column-gap:var(--space-4)}
@@ -1893,14 +1984,22 @@
   .task-list--compact .task-row-primary .task-checkbox{width:18px;height:18px;min-width:18px;border-width:1.5px}
   .task-list--compact .task-sig{padding:1px 6px;font-size:11px}
   .task-list--compact .task-row-secondary{padding:0 10px 6px 36px}
-  .task-row-secondary{
-    display:none;align-items:center;gap:8px;flex-wrap:wrap;
-    padding:0 14px 10px 52px;font-size:12px;color:var(--text-3);
+  .task-row-secondary-wrap{
+    display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease-out);
   }
-  .task-item:hover .task-row-secondary,
-  .task-item:focus-within .task-row-secondary{display:flex}
+  .task-item:hover .task-row-secondary-wrap,
+  .task-item:focus-within .task-row-secondary-wrap{grid-template-rows:1fr}
+  @media (prefers-reduced-motion:reduce){
+    .task-row-secondary-wrap{transition:none}
+  }
+  .task-row-secondary{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:0 14px 10px 52px;font-size:12px;color:var(--text-3);
+    overflow:hidden;min-height:0;
+  }
+  .task-list--comfortable .task-row-secondary-wrap{grid-template-rows:1fr}
   @media (hover:none){
-    .task-item .task-row-secondary{display:flex}
+    .task-row-secondary-wrap{grid-template-rows:1fr}
     /* On touch devices, list chip Edit (✎) and Remove (✕) icons stay visible
        and meet a comfortable tap area — hover-only reveal is unreachable here */
     .list-chip .lc-edit,
@@ -1999,14 +2098,14 @@
        right edge so users SEE that more chips exist beyond the viewport;
        without it, "Fo..." cut-offs read as visual bugs rather than scroll
        affordances. */
-    .smart-views{padding:4px;overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;-webkit-overflow-scrolling:touch;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
+    .smart-views{padding:4px;overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
     .smart-views::-webkit-scrollbar{display:none}
     .sv-chip{white-space:nowrap;flex-shrink:0;padding:10px 12px;min-height:40px;font-size:13px}
     .sv-icon{font-size:14px}
     .sv-count{font-size:11px;padding:1px 7px}
 
     /* Lists bar - horizontal scroll, same fade affordance as smart-views. */
-    .lists-bar{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;gap:6px;padding:8px;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
+    .lists-bar{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none;gap:6px;padding:8px;-webkit-overflow-scrolling:touch;touch-action:pan-x;-webkit-mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,black 0,black calc(100% - 28px),transparent 100%)}
     .lists-bar::-webkit-scrollbar{display:none}
     .list-chip{white-space:nowrap;flex-shrink:0;padding:8px 12px;min-height:40px;font-size:13px}
     .list-add{flex-shrink:0;padding:8px 12px;min-height:40px;font-size:13px}
@@ -2065,8 +2164,12 @@
        the sheet above the soft keyboard so input fields and Save/Close
        chrome stay visible without the user scrolling. */
     .modal-overlay{align-items:flex-end;padding:0 0 var(--kb-inset, 0px) 0!important}
-    .modal{width:100%!important;max-width:100%!important;max-height:92vh;max-height:calc(var(--vv-height, 92dvh) - 8px);border-radius:16px 16px 0 0;animation:slideUp .25s ease-out}
-    @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    /* Mobile bottom-sheet initial state — translateY(100%) parks the modal
+       below the viewport. The transition declared by the desktop .modal rule
+       above still applies; .modal-overlay.open .modal { transform:translateY(0) }
+       (also declared above) drives the slide. Opacity stays at 1 on mobile so
+       the sheet appears solid as it slides in (no fade compounding the slide). */
+    .modal{width:100%!important;max-width:100%!important;max-height:92vh;max-height:calc(var(--vv-height, 92dvh) - 8px);border-radius:16px 16px 0 0;transform:translateY(100%);opacity:1}
     /* Bottom-sheet drag-handle affordance — telegraphs "swipe down to close"
        on mobile per iOS / Android sheet conventions. The header wears the
        handle so dragging the body's scroll area doesn't dismiss accidentally. */
@@ -2462,32 +2565,6 @@
   }
   .smart-views:hover,.smart-views:focus-within{opacity:1}
 
-  /* Task rows: even quieter by default */
-  .task-item{background:transparent;border:1px solid transparent;transition:all .15s}
-  .task-item:hover{background:var(--bg-1);border-color:var(--border)}
-  /* Priority stripe: thinner, only prominent for urgent */
-  .task-item.priority-urgent{border-left:3px solid var(--danger)!important}
-  .task-item.priority-high{border-left:2px solid var(--warning)}
-  .task-item.priority-normal,.task-item.priority-low,.task-item.priority-none{border-left:1px solid transparent}
-  /* Actions: hidden until hover on desktop */
-  @media (hover:hover){
-    .task-row-actions{opacity:0;transition:opacity .15s}
-    .task-item:hover .task-row-actions,.task-item:focus-within .task-row-actions{opacity:1}
-    /* Stack the primary row above the secondary metadata line. .task-item is
-       display:flex with the default row direction; on desktop there's no
-       flex-wrap, so the hover-revealed .task-row-secondary would otherwise sit
-       beside the primary and force the centered row to grow/re-center around
-       the pointer — that animated reflow toggles :hover on and off, making the
-       row flicker open/closed. A column keeps the primary fixed at the top so
-       the secondary reveals straight downward. Excludes bulk-select mode, whose
-       leading ::before checkbox relies on the row direction. */
-    body:not(.app-bulk-mode) .task-item{flex-direction:column;align-items:stretch}
-  }
-
-  /* Tag pills in secondary row: hide by default, show on task hover */
-  .task-row-secondary{max-height:0;overflow:hidden;transition:max-height .2s;padding:0 12px!important}
-  .task-item:hover .task-row-secondary,.task-item:focus-within .task-row-secondary{max-height:60px;padding:4px 12px 10px 48px!important}
-
   /* --- MOBILE: the big simplification --- */
   @media (max-width:640px){
     /* HIDE the panel border/background on tasks — let tasks breathe */
@@ -2524,8 +2601,9 @@
     .task-row-actions:hover{opacity:1!important}
     .ta-btn{width:32px;height:32px;font-size:13px}
     /* Hide sub-items (tags) until tapped — reduces row height */
-    .task-row-secondary{display:none!important}
-    .task-item.expanded .task-row-secondary{display:flex!important;max-height:60px!important;padding:0 14px 10px 46px!important}
+    .task-row-secondary-wrap{display:none!important}
+    .task-item.expanded .task-row-secondary-wrap{display:grid!important;grid-template-rows:1fr!important}
+    .task-item.expanded .task-row-secondary{padding:0 14px 10px 46px!important}
 
     /* Signals (date chip, recur icon): single small indicator only */
     .task-signals{gap:3px}
@@ -2766,7 +2844,11 @@
 .task-search-semantic{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;user-select:none}
 .task-search-semantic--disabled{opacity:.65;cursor:not-allowed}
 .task-search-semantic--disabled input{cursor:not-allowed}
-.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto}
+/* What-Next overlay — same state-driven pattern as .modal-overlay / .cmdk-overlay.
+   Stage 3 of the modal-system unification: routes through js/modal.js so all
+   overlays share one open/close mechanism. */
+.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+.what-next-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
 .what-next-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);max-width:440px;width:100%;padding:16px 18px;box-shadow:var(--shadow-card);margin-top:8vh}
 .what-next-hdr{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px;margin-bottom:6px}
 .what-next-x{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;padding:4px}
@@ -4235,6 +4317,44 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
    black-on-white output with no chrome, ribbons, modals, or overlays. The
    app's normal palette is dark; print explicitly resets the foreground so
    it doesn't waste ink on dark backgrounds. */
+/* Timer dock */
+.timer-dock-grip{cursor:grab;padding:0 4px;color:var(--text-3);background:transparent;border:none;font-size:14px;line-height:1;flex-shrink:0}
+.timer-dock-grip:active{cursor:grabbing}
+.timer-dock-min,.timer-dock-qt{background:transparent;border:none;color:var(--text-3);cursor:pointer;font-size:14px;padding:0 6px;font-family:inherit}
+.timer-dock-qt{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--accent)}
+.timer-dock--min .mt-info,.timer-dock--min .mt-open,.timer-dock--min .timer-dock-qt{display:none}
+.timer-dock--min{padding:8px 10px!important}
+body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}
+
+/* Calendar modes */
+.cal-mode-seg{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.cal-mode-btn{padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--bg-2);color:var(--text-2);font-size:12px;cursor:pointer;font-family:inherit}
+.cal-mode-btn.active{background:var(--accent-bg);border-color:var(--accent-border);color:var(--accent)}
+.cal-week-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;min-height:280px}
+.cal-week-col{border:1px solid var(--border);border-radius:var(--r-md);background:var(--bg-1);min-height:200px;display:flex;flex-direction:column}
+.cal-week-col.selected{border-color:var(--accent-border);box-shadow:0 0 0 1px var(--accent-border)}
+.cal-week-col-head{width:100%;padding:8px;border:none;border-bottom:1px solid var(--border-subtle);background:var(--bg-2);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text-1)}
+.cal-week-col-body{padding:6px;font-size:11px;flex:1;overflow-y:auto}
+.cal-day-count{display:block;font-size:9px;color:var(--text-3);margin-top:2px}
+.cal-day{min-height:72px}
+.cal-day-agenda--full{max-height:none}
+.cal-day-nav{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:8px}
+
+/* Task modal layout */
+.md-block{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-subtle)}
+.md-block-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
+.md-hint{font-size:11px;color:var(--text-3);margin:6px 0 0}
+.md-attach-tools{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.md-attach-grid{display:flex;flex-wrap:wrap;gap:10px}
+.md-attach-card{position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-2)}
+.md-attach-card img{max-width:120px;max-height:120px;display:block}
+.md-attach-card audio{max-width:200px}
+.md-attach-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:#fff;cursor:pointer}
+@media (min-width:720px){
+  #taskModal .modal-body .mfield-row--modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .panel[data-tab="tasks"] .task-form{position:sticky;top:0;z-index:2;background:var(--bg-0);padding-bottom:8px}
+}
+
 @media print {
   :root, body, body.dark-theme, body.light-theme {
     background:white !important;
@@ -4244,7 +4364,7 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
      itself and the daily-momentum tile survive so printed output is the
      same content the user was looking at. */
   .header, .tabs-bar, .nav-tab, .skip-link,
-  .mini-timer, .quick-add-fab, .save-indicator,
+  .mini-timer, .timer-dock, .quick-add-fab, .save-indicator,
   .modal-overlay, .cmdk-overlay, .what-next-overlay,
   .update-banner, .sw-precache-banner, .share-in-banner, .sync-incoming-bar,
   .action-toast, .export-toast, .quota-warning,

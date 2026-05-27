@@ -2,7 +2,7 @@
 // Internal keys keep stupind_* prefix so existing installs retain data through rebrands (stupind → OdTauLai → Odta).
 const STORE_KEY     = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.STATE) || 'stupind_state';
 const ARCHIVE_KEY   = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.ARCHIVE) || 'stupind_archive';
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 /** P2P sync: permanent task deletion tombstones id → deleted-at (ms). Merged with max(ts). */
 var syncTaskDels = {};
@@ -77,7 +77,8 @@ function _repairTask(t){
     hiddenUntil:  t.hiddenUntil ? _str(t.hiddenUntil) : null,
     remindAt:     t.remindAt  ? _str(t.remindAt)  : null,
     reminderFired:_bool(t.reminderFired, false),
-    recur:        _enum(t.recur, ['daily','weekdays','weekly','monthly','after1d','after3d','after7d','after14d','after30d'], null) ?? (t.recur&&typeof t.recur==='string'?null:null),
+    recur:        _enum(t.recur, ['daily','weekdays','weekly','monthly','every2d','after1d','after3d','after7d','after14d','after30d'], null) ?? (t.recur&&typeof t.recur==='string'?null:null),
+    attachments:  _arr(t.attachments).filter(x => typeof x === 'string').slice(0, 32),
     // Text fields
     description:  _str(t.description, ''),
     url:          t.url ? _str(t.url) : null,
@@ -233,6 +234,19 @@ function migrateState(s){
         }
         return base;
       });
+    }
+  });
+
+  step(8, () => {
+    if(Array.isArray(s.tasks)){
+      s.tasks = s.tasks.map(t => {
+        const o = _obj(t);
+        return { attachments: [], ...o };
+      });
+    }
+    if(s.cfg && typeof s.cfg === 'object'){
+      if(!s.cfg.calMode) s.cfg.calMode = 'month';
+      if(!s.cfg.timerDock || typeof s.cfg.timerDock !== 'object') s.cfg.timerDock = {};
     }
   });
 
@@ -585,6 +599,8 @@ function _applyState(s){
     if(s.cfg && typeof s.cfg==='object'){
       cfg = s.cfg;
       if(!cfg.timerSub) cfg.timerSub='pomo';
+      if(!cfg.calMode) cfg.calMode='month';
+      if(!cfg.timerDock || typeof cfg.timerDock!=='object') cfg.timerDock={};
       if(typeof cfg.hideHabitsInMainViews!=='boolean') cfg.hideHabitsInMainViews=true;
       if(typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
       const hh=gid('hideHabitsInMain'); if(hh) hh.checked=!!cfg.hideHabitsInMainViews;

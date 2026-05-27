@@ -2042,14 +2042,14 @@ function openWhatNext(){
         </button>`).join('')
       : '<span class="text-12-muted">Nothing queued — add tasks or clear filters.</span>';
   }
-  o.hidden = false;
-  if(typeof openFocusTrap === 'function') openFocusTrap(o);
+  // Stage 3: route through Modal utility so what-next shares the same
+  // open/close mechanism as every other overlay (focus trap + prev-focus
+  // restore + ESC handling). 'palette' variant: no body lock, no swipe.
+  Modal.open('whatNextOverlay', { variant:'palette', onRequestClose:()=>closeWhatNext() });
 }
 
 function closeWhatNext(){
-  const o = document.getElementById('whatNextOverlay');
-  if(o) o.hidden = true;
-  if(typeof closeFocusTrap === 'function') closeFocusTrap();
+  Modal.close('whatNextOverlay');
 }
 
 function toggleTaskSearchSemantic(){

@@ -25,8 +25,58 @@ function _calMonthAnchor(){
   }
   return new Date(calMonth);
 }
+function setCalMode(mode){
+  if(typeof cfg!=='object'||!cfg)return;
+  const m=mode==='week'||mode==='day'?mode:'month';
+  cfg.calMode=m;
+  if(typeof saveState==='function')saveState('user');
+  if(typeof renderTaskList==='function')renderTaskList();
+}
+window.setCalMode=setCalMode;
+
+function _calModeSegHtml(active){
+  const modes=[['month','Month'],['week','Week'],['day','Day']];
+  let h='<div class="cal-mode-seg" role="group" aria-label="Calendar layout">';
+  modes.forEach(([k,l])=>{
+    h+='<button type="button" class="cal-mode-btn'+(active===k?' active':'')+'" data-action="setCalMode" data-arg="'+k+'">'+l+'</button>';
+  });
+  return h+'</div>';
+}
+
 function renderCalendar(visibleTasks){
   const container=gid('calendarView');if(!container)return;
+  const calMode=(typeof cfg==='object'&&cfg&&cfg.calMode)||'month';
+  const focusIso=_calEffectiveFocusDate();
+  const byDate={};
+  visibleTasks.forEach(t=>{if(t.dueDate){(byDate[t.dueDate]=byDate[t.dueDate]||[]).push(t)}});
+
+  if(calMode==='day'){
+    container.innerHTML=_calModeSegHtml('day')+_renderCalDayAgendaHtml(focusIso, byDate, true);
+    _bindCalAgendaClicks(container);
+    return;
+  }
+
+  if(calMode==='week'){
+    const anchor=new Date(focusIso+'T12:00:00');
+    const dow=anchor.getDay();
+    const weekStart=new Date(anchor);
+    weekStart.setDate(anchor.getDate()-dow);
+    let html=_calModeSegHtml('week')+'<div class="cal-week-grid">';
+    for(let i=0;i<7;i++){
+      const d=new Date(weekStart);
+      d.setDate(weekStart.getDate()+i);
+      const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const dayLbl=d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
+      html+='<div class="cal-week-col'+(iso===focusIso?' selected':'')+'" data-date="'+iso+'">'
+        +'<button type="button" class="cal-week-col-head" data-action="calFocusDay" data-arg="'+iso+'">'+esc(dayLbl)+'</button>'
+        +'<div class="cal-week-col-body">'+_renderCalDayAgendaInner(iso, byDate)+'</div></div>';
+    }
+    html+='</div>';
+    container.innerHTML=html;
+    _bindCalWeekCols(container);
+    return;
+  }
+
   const now=_calMonthAnchor();
   const year=now.getFullYear(),month=now.getMonth();
   const first=new Date(year,month,1);
@@ -34,11 +84,7 @@ function renderCalendar(visibleTasks){
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
   const today=todayISO();
-  const focusIso=_calEffectiveFocusDate();
   const monthName=now.toLocaleDateString(undefined,{month:'long',year:'numeric'});
-  // Group tasks by due date
-  const byDate={};
-  visibleTasks.forEach(t=>{if(t.dueDate){(byDate[t.dueDate]=byDate[t.dueDate]||[]).push(t)}});
   // Surface feed sync failures inline at the top of the calendar so users
   // realise their displayed events may be stale. Falls back silently when
   // the calfeed module isn't loaded (e.g. in test sandbox).
@@ -54,7 +100,7 @@ function renderCalendar(visibleTasks){
         + '</div>';
     }
   }
-  let html=feedAlertHtml+'<div class="calendar"><div class="cal-head">'
+  let html=feedAlertHtml+_calModeSegHtml('month')+'<div class="calendar"><div class="cal-head">'
     +'<button class="cal-nav" data-action="calNav" data-args="[-1]" title="Previous month" aria-label="Previous month">‹</button>'
     +'<div class="cal-title">'+monthName+'</div>'
     +'<button class="cal-today-btn" data-action="calToday">Today</button>'
@@ -122,11 +168,45 @@ function renderCalendar(visibleTasks){
     el.onclick=function(e){
       e.stopPropagation();
       const date=el.dataset.date;
-      if(date && typeof calFocusDay === 'function') calFocusDay(date);
+      if(date){
+        if(typeof setCalMode==='function') setCalMode('day');
+        if(typeof calFocusDay==='function') calFocusDay(date);
+      }
     };
   });
 }
-function _renderCalDayAgendaHtml(isoDate, byDate){
+function _renderCalDayAgendaInner(isoDate, byDate){
+  const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
+  const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
+    ? getCalFeedEventsForDate(isoDate) : [];
+  let rows = '';
+  const sortKey = (ev) => ev.allDay ? '00:00' : String(ev.time || '99:99');
+  feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
+    rows += '<div class="cal-agenda-row cal-agenda-feed"><span class="cal-agenda-title">'+esc(ev.title||'(event)')+'</span></div>';
+  });
+  tasks.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name))).forEach(t=>{
+    rows+='<div class="cal-agenda-row cal-agenda-task" data-task-id="'+t.id+'"><span class="cal-agenda-title">'+esc(t.name)+'</span></div>';
+  });
+  return rows || '<div class="cal-agenda-empty">Nothing scheduled</div>';
+}
+
+function _bindCalAgendaClicks(container){
+  if(!container) return;
+  container.querySelectorAll('.cal-agenda-task[data-task-id]').forEach(el=>{
+    el.onclick=function(e){
+      e.stopPropagation();
+      const tid=parseInt(el.dataset.taskId,10);
+      if(tid) openTaskDetail(tid);
+    };
+  });
+}
+
+function _bindCalWeekCols(container){
+  if(!container) return;
+  _bindCalAgendaClicks(container);
+}
+
+function _renderCalDayAgendaHtml(isoDate, byDate, dayOnly){
   const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
   const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
     ? getCalFeedEventsForDate(isoDate) : [];
@@ -159,11 +239,29 @@ function _renderCalDayAgendaHtml(isoDate, byDate){
   const empty = !rows
     ? '<div class="cal-agenda-empty">No tasks or calendar events on this day.</div>'
     : rows;
-  return '<div class="cal-day-agenda" id="calDayAgenda" data-date="'+escAttr(isoDate)+'">'
+  const nav = dayOnly
+    ? '<div class="cal-day-nav">'
+      +'<button type="button" class="cal-nav" data-action="calDayNav" data-args="[-1]">‹</button>'
+      +'<button type="button" class="cal-today-btn" data-action="calToday">Today</button>'
+      +'<button type="button" class="cal-nav" data-action="calDayNav" data-args="[1]">›</button>'
+      +'</div>'
+    : '';
+  return '<div class="cal-day-agenda'+(dayOnly?' cal-day-agenda--full':'')+'" id="calDayAgenda" data-date="'+escAttr(isoDate)+'">'
+    + nav
     + '<div class="cal-agenda-head">'+esc(heading)+'</div>'
     + '<div class="cal-agenda-list">'+empty+'</div>'
     + '</div>';
 }
+
+function calDayNav(dir){
+  const d=parseInt(dir,10)||0;
+  const iso=_calEffectiveFocusDate();
+  const x=new Date(iso+'T12:00:00');
+  x.setDate(x.getDate()+d);
+  const next=x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+  calFocusDay(next);
+}
+window.calDayNav=calDayNav;
 function renderCalTasks(arr, isoDate){
   // Merge local tasks with external calendar feed events for this date
   const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
@@ -193,6 +291,11 @@ function renderCalTasks(arr, isoDate){
         + '</div>';
     }).join('');
   }
+  const taskN=arr?arr.length:0;
+  const feedN=feedEvents.length;
+  if(taskN||feedN){
+    html+='<span class="cal-day-count" title="'+taskN+' tasks, '+feedN+' events">'+taskN+'·'+feedN+'</span>';
+  }
   // "+N more" indicator if we truncated
   const totalCount = (arr ? arr.length : 0) + feedEvents.length;
   const shownCount = Math.min(arr ? arr.length : 0, 2) + Math.min(feedEvents.length, 2);
@@ -218,25 +321,21 @@ window.calToday=calToday;
 
 // ========== COMMAND PALETTE (Cmd+K) ==========
 let cmdkActiveIdx=0,cmdkFilteredItems=[];
-let _cmdkPrevFocus=null;
 function openCmdK(){
   const ov=gid('cmdkOverlay');if(!ov)return;
-  _cmdkPrevFocus=document.activeElement;
-  ov.classList.add('open');
+  // Render content BEFORE delegating to Modal so the panel is fully built
+  // by the time the open transition runs (no mid-fade DOM growth).
   _applyCmdkMode();
   const inp=gid('cmdkInput');
   if(inp)inp.value='';
   cmdkActiveIdx=0;renderCmdK();
-  if(inp){
-    try{inp.focus({preventScroll:true})}catch(_){inp.focus()}
-  }
-  if(typeof installTabTrap==='function') installTabTrap(ov);
+  // Modal utility owns prev-focus capture/restore, ESC, and Tab-trap.
+  // skipInitialFocus + focus:'#cmdkInput' = the trap watches Tab but we
+  // pick the focus target ourselves (the input, not the first focusable).
+  Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true });
 }
 function closeCmdK(){
-  if(typeof removeTabTrap==='function') removeTabTrap();
-  gid('cmdkOverlay').classList.remove('open');
-  if(_cmdkPrevFocus&&_cmdkPrevFocus.focus)try{_cmdkPrevFocus.focus()}catch(_){}
-  _cmdkPrevFocus=null;
+  Modal.close('cmdkOverlay');
 }
 function _cmdkTouchOrNarrowUI(){
   return typeof matchMedia==='function' && (matchMedia('(max-width: 640px)').matches || matchMedia('(pointer: coarse)').matches);
@@ -463,7 +562,7 @@ function cmdkKeydown(e){
 }
 function _blockingOverlaysForCmdK(){
   const wno = document.getElementById('whatNextOverlay');
-  if(wno && !wno.hidden) return true;
+  if(wno && wno.classList.contains('open')) return true;
   const tm = document.getElementById('taskModal');
   if(tm && tm.classList.contains('open')) return true;
   if(document.getElementById('bulkImportModal')?.classList.contains('open')) return true;
@@ -1029,8 +1128,11 @@ function renderTaskItem(t,depth){
   d.addEventListener('touchstart',function(e){
     // Don't track a swipe (or long-press) when the touch begins on the drag
     // grip — that gesture belongs to Sortable's reorder, and double-handling
-    // it would also fire move/delete on release.
+    // it would also fire move/delete on release. Also short-circuit when the
+    // touch begins inside a horizontally-scrollable selection bar so its
+    // native overflow-x scroll wins.
     if(e.target.closest('button')||e.target.closest('input')||e.target.closest('.drag-handle'))return;
+    if(e.target.closest('.smart-views, .lists-bar, .tags-bar, .bulk-route-row, select, .task-action-menu'))return;
     touchStartX=e.touches[0].clientX;touchStartY=e.touches[0].clientY;swiping=false;
     _longPressFired=false;
     if(_longPressId){clearTimeout(_longPressId);_longPressId=null}
@@ -1087,12 +1189,24 @@ function renderTaskItem(t,depth){
     }
     touchStartX=0;touchCurrentX=0;swiping=false;
   },{passive:false});
+  // Defensive: if the touch is cancelled (system gesture preempted us, screen
+  // recognised a long-press for context menu, etc.) the touchend handler
+  // never fires and any active translateX stays applied, leaving the card
+  // visually shoved off-screen. Reset on touchcancel too.
+  d.addEventListener('touchcancel',function(){
+    if(_longPressId){ clearTimeout(_longPressId); _longPressId = null; }
+    d.style.transition='transform .2s,background .2s';
+    d.style.transform='';
+    d.style.background='';
+    touchStartX=0;touchCurrentX=0;swiping=false;_longPressFired=false;
+  },{passive:true});
 
   // At rest: due chip (overdue / today / soon only) + subtask progress. Habits view: ↻ + streak. Rest on hover.
   const chevron=kids
     ?'<button class="task-chevron'+(t.collapsed?' collapsed':'')+'" data-action="toggleCollapse" data-arg="'+t.id+'" title="'+(t.collapsed?'Expand':'Collapse')+'" aria-label="'+(t.collapsed?'Expand subtasks':'Collapse subtasks')+'" aria-expanded="'+(t.collapsed?'false':'true')+'">▸</button>'
     :'<span class="task-chevron-spacer"></span>';
-  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'" aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
+  const habitHint=t.recur?' title="Log habit completion (stays open, next due scheduled)" aria-label="Log habit completion"':' title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'"';
+  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
 
   let signalChips='';
   if(t.dueDate&&!isDone){
@@ -1103,7 +1217,8 @@ function renderTaskItem(t,depth){
   }
   const prog=getSubtaskProgress(t.id);
   if(prog) signalChips+='<span class="task-sig sig-subs" title="'+prog.done+' of '+prog.total+' subtasks done" aria-label="'+prog.done+' of '+prog.total+' subtasks done">'+prog.done+'/'+prog.total+'</span>';
-  if(smartView==='habits'&&t.recur){
+  if(t.recur){
+    signalChips+='<span class="task-sig sig-habit" title="Habit — completing logs a cycle and schedules the next due date" aria-label="Habit">Habit</span>';
     signalChips+='<span class="task-sig sig-recur" title="Repeats '+escAttr(String(t.recur))+'" aria-label="Repeats '+escAttr(String(t.recur))+'">↻</span>';
     if(typeof getHabitStreak==='function'){
       const st=getHabitStreak(t);
@@ -1159,11 +1274,29 @@ function renderTaskItem(t,depth){
       +'</div>'
       +'<div class="task-row-actions">'+actions+'</div>'
     +'</div>'
-    +'<div class="task-row-secondary">'
+    +'<div class="task-row-secondary-wrap"><div class="task-row-secondary">'
       +statusBadge
       +(tagsVisible?'<span class="task-tags-inline">'+tagsVisible+'</span>':'')
       +descPrev
-    +'</div>';
+    +'</div></div>';
+  // Surface a small "Xh Ym" pill next to the task name when the user is
+  // currently filtering or sorting by duration/completion - so they can see
+  // why a task survived the filter without opening the detail modal. Built
+  // via DOM APIs (createElement / appendChild) after the row is in place,
+  // so the production esc() escapes the name and the pill text comes from
+  // fmtHMS (digits + unit letters, no metachars).
+  const _showDurPill = (window._activeDurationFilter || window._activeCompletedFilter
+                        || taskSortBy === 'time') && rolledTime > 0;
+  if(_showDurPill){
+    const _nameEl = d.querySelector('.task-name');
+    if(_nameEl){
+      const _pill = document.createElement('span');
+      _pill.className = 'task-duration-pill';
+      _pill.title = 'Time tracked';
+      _pill.textContent = fmtHMS(rolledTime);
+      _nameEl.insertAdjacentElement('afterend', _pill);
+    }
+  }
   list.appendChild(d)
 }
 
@@ -1450,9 +1583,24 @@ function openTaskDetail(id){
   const path=getTaskPath(id);
   const pathStr=path.length>1?path.slice(0,-1).join(' › ')+' › ':'';
   gid('mdStats').innerHTML='<span><b>Path:</b> '+esc(pathStr)+'<b class="md-name-strong">'+esc(t.name)+'</b></span> · <span>Created '+esc(t.created||'—')+'</span>'+(t.completedAt?' · <span>Done '+esc(String(t.completedAt))+'</span>':'');
-  // List selector
-  const listSel=gid('mdList');listSel.innerHTML='';
-  lists.forEach(l=>{const opt=document.createElement('option');opt.value=l.id;opt.textContent=l.name;if((t.listId||lists[0].id)===l.id)opt.selected=true;listSel.appendChild(opt)});
+  // List selector — populate the hidden shadow <select> (saveTaskDetail
+  // reads its .value) and set the visible trigger's label to the current
+  // list's name. The Dropdown utility builds its option list from the
+  // shadow select when openListDropdown fires.
+  const listSel=gid('mdList');
+  listSel.replaceChildren();
+  lists.forEach(l=>{
+    const opt=document.createElement('option');
+    opt.value=l.id;
+    opt.textContent=l.name;
+    if((t.listId||lists[0].id)===l.id) opt.selected=true;
+    listSel.appendChild(opt);
+  });
+  const _listLabelEl = gid('mdListLabel');
+  if(_listLabelEl){
+    const _selOpt = listSel.options[listSel.selectedIndex];
+    _listLabelEl.textContent = _selOpt ? _selOpt.textContent : 'List';
+  }
   // ARIA chip helpers — without role/aria-checked or aria-pressed, screen
   // readers can't tell selected state since visual selection is color-only
   // (#13 in UX audit). Radio-group chips (single-select) use role=radio +
@@ -1535,30 +1683,27 @@ function openTaskDetail(id){
     };
     enChips.appendChild(b)
   });
-  // Recurrence — calendar-relative (daily/weekly/...) plus C-5 after-completion variants
-  const rc=gid('mdRecur');if(rc){rc.replaceChildren();
-    rc.setAttribute('role','radiogroup');
-    [
-      ['none','No repeat'],
-      ['daily','Daily'],['weekdays','Weekdays'],['weekly','Weekly'],['monthly','Monthly'],
-      ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
-    ].forEach(([key,lbl])=>{
-      const b=document.createElement('button');b.type='button';b.className='recur-opt'+((t.recur||'none')===key?' active':'');
-      b.setAttribute('role','radio');
-      b.setAttribute('aria-checked', (t.recur||'none')===key ? 'true' : 'false');
-      b.textContent=lbl;
-      if(key && key.startsWith('after')) b.title='Schedule next due ' + key.replace(/^after(\d+)d$/, '$1 day(s)') + ' AFTER completion (won\'t pile up if you finish late)';
-      b.onclick=function(){
-        t.recur=key==='none'?null:key;
-        _setRadioGroupSelection(rc, b);
-        // First-time recurrence on a task with no due date defaults to today
-        // so it actually shows up in Today / Habits views immediately.
-        if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
-        _commitChipChange(t);
-      };
-      rc.appendChild(b)
-    })
+  // Recurrence — moved from an 11-chip radiogroup to a single dropdown
+  // trigger. The 11 options were dominating the modal on narrow viewports
+  // (multiple chip rows). The trigger button shows the current selection;
+  // clicking it opens a Dropdown popover (or bottom-sheet on mobile). The
+  // hidden #mdRecur input keeps a syncable DOM reference for any consumers.
+  const _recurOptions = [
+    ['none','No repeat'],
+    ['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],['weekly','Weekly'],['monthly','Monthly'],
+    ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
+  ];
+  window._recurOptions = _recurOptions;  // openRecurDropdown reads this
+  const _recurKey = t.recur || 'none';
+  const _recurLabel = gid('mdRecurLabel');
+  const _recurHidden = gid('mdRecur');
+  if(_recurLabel){
+    const _row = _recurOptions.find(r => r[0] === _recurKey);
+    _recurLabel.textContent = _row ? _row[1] : 'No repeat';
   }
+  if(_recurHidden) _recurHidden.value = _recurKey;
+  // The dropdown's onSelect (in openRecurDropdown below) mutates t.recur,
+  // syncs the trigger label + hidden input, and calls _commitChipChange.
   // Tags
   renderTagsEditor(id);
   // Category chips (toggle)
@@ -1600,13 +1745,24 @@ function openTaskDetail(id){
   if(typeof renderTaskActivity === 'function') renderTaskActivity(t);
   // C-6 estimate vs actual variance
   if(typeof renderEstimateVariance === 'function') renderEstimateVariance(t);
-  refreshMdSimilarTasks(id);
   renderMdHabitLog(t);
   renderMdSessions(t);
-  gid('taskModal').classList.add('open');
-  _taskModalPrevFocus=document.activeElement;
-  document.addEventListener('keydown',_taskModalTabTrap,true);
-  setTimeout(()=>gid('mdName').focus(),50)
+  if(typeof renderMdAttachments === 'function') renderMdAttachments(id);
+  // 'sheet' variant: body scroll lock + bottom-sheet swipe.
+  // onRequestClose routes ESC through closeTaskDetail so the
+  // "discard unsaved text edits?" confirmation runs before tear-down.
+  // onOpen runs when the slide-up transition completes (transitionend),
+  // so the similar-tasks accordion never expands mid-slide — that
+  // expansion would change the modal's height; on mobile (align-items:
+  // flex-end) the bottom stays anchored and the TOP would jolt upward
+  // ("jitter at the top"). editingTaskId guard cancels stale fetches.
+  Modal.open('taskModal', {
+    variant: 'sheet',
+    focus: '#mdName',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeTaskDetail(),
+    onOpen: ()=>{ if(editingTaskId===id) refreshMdSimilarTasks(id); }
+  });
 }
 
 /**
@@ -1823,18 +1979,8 @@ function renderTagsEditor(id){
 function addTag(id,tag){const t=findTask(id);if(!t)return;if(!t.tags)t.tags=[];if(!t.tags.includes(tag))t.tags.push(tag);renderTagsEditor(id);_commitChipChange(t)}
 function removeTag(id,idx){const t=findTask(id);if(!t||!t.tags)return;t.tags.splice(idx,1);renderTagsEditor(id);_commitChipChange(t)}
 
-let _taskModalPrevFocus=null;
-function _taskModalTabTrap(e){
-  const modal=gid('taskModal');
-  if(!modal||!modal.classList.contains('open')||e.key!=='Tab')return;
-  const panel=modal.querySelector('.modal');
-  if(!panel)return;
-  const f=[...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el=>!el.disabled&&el.offsetParent!==null);
-  if(f.length<2)return;
-  const first=f[0],last=f[f.length-1];
-  if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}
-  else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
-}
+// _taskModalPrevFocus and _taskModalTabTrap removed in Stage 2 — Modal.open
+// owns focus capture/restore (via openFocusTrap) and Tab cycling for taskModal.
 // Snapshot-vs-form-fields divergence check. Only the *text/number* form
 // fields gate the discard-confirm — chip edits already committed via
 // _commitChipChange aren't considered "unsaved". Returns true when the user
@@ -1878,16 +2024,14 @@ async function closeTaskDetail(opts){
   }
   _taskModalSnapshot=null;
   const _modalEl=gid('taskModal');
-  _modalEl.classList.remove('open');
   // Reset any leftover swipe-drag transform from the bottom-sheet gesture so
-  // the next open starts cleanly.
+  // the next open starts cleanly. Do this BEFORE Modal.close so the transform
+  // reset doesn't fight the close transition.
   const _sheet=_modalEl&&_modalEl.querySelector('.modal');
   if(_sheet){_sheet.style.transform='';_sheet.style.transition=''}
+  Modal.close('taskModal');
   if(!skipRevert){ window._preserveTaskScroll = true; renderTaskList(); }
   editingTaskId=null;
-  document.removeEventListener('keydown',_taskModalTabTrap,true);
-  if(_taskModalPrevFocus&&_taskModalPrevFocus.focus)try{_taskModalPrevFocus.focus()}catch(e){}
-  _taskModalPrevFocus=null;
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
   // If midnight rolled over while the modal was open, the day-rollover
   // handler deferred (see app.js _isTaskModalOpen). Retry now that the
@@ -1956,15 +2100,18 @@ window._initTaskModalSwipeDismiss=_initTaskModalSwipeDismiss;
 function openSheet(id){
   const ov=document.getElementById(id);
   if(!ov) return;
-  ov.classList.add('open');
-  bindSheetSwipe(ov, ()=>closeSheet(id));
-  // Focus the first focusable control for keyboard users.
-  const f=ov.querySelector('.modal-close,button,select,input,a[href]');
-  if(f){ try{ f.focus(); }catch(_){} }
+  // 'sheet' variant: body scroll lock + bottom-sheet swipe (bindSheetSwipe).
+  // onRequestClose ensures ESC routes through closeSheet so sheet-specific
+  // cleanup (e.g. _restoreQuickAddHost) always runs.
+  Modal.open(id, {
+    variant: 'sheet',
+    focus: '.modal-close,button,select,input,a[href]',
+    skipInitialFocus: true,
+    onRequestClose: ()=>closeSheet(id)
+  });
 }
 function closeSheet(id){
-  const ov=document.getElementById(id);
-  if(ov) ov.classList.remove('open');
+  Modal.close(id);
   // The quick-add sheet borrows the inline add-task cluster — put it back so
   // the DOM is left as found (and the inline copy reappears on desktop).
   if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function') _restoreQuickAddHost();
@@ -2111,9 +2258,16 @@ function showTaskListPickerSheet(id){
   const row=document.querySelector('.task-item[data-task-id="'+id+'"]');
   const r=row?row.getBoundingClientRect():{top:80,bottom:120,right:window.innerWidth-12};
   const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  const vw=window.innerWidth, vh=window.innerHeight;
   let top=r.bottom+6, left=r.right-mw;
-  if(left<8) left=8;
-  if(top+mh>window.innerHeight-8) top=Math.max(8,r.top-mh-6);
+  // Clamp horizontally to the viewport - the previous code only clamped the
+  // LEFT edge, so on narrow mobile viewports a menu wider than r.right (a
+  // long list name etc.) could have its RIGHT side cut off, leaving only
+  // the leftmost part of the column reachable.
+  if(left + mw > vw - 8) left = vw - mw - 8;
+  if(left < 8) left = 8;
+  if(top+mh>vh-8) top=Math.max(8, r.top-mh-6);
+  if(top < 8) top = 8;
   menu.style.top=top+'px';
   menu.style.left=left+'px';
   _taskActionMenuEl=menu;
@@ -2124,6 +2278,70 @@ function showTaskListPickerSheet(id){
   const first=menu.querySelector('.tam-item'); if(first){ try{ first.focus(); }catch(_){} }
 }
 window.showTaskListPickerSheet=showTaskListPickerSheet;
+
+// Recurrence dropdown - opens a Dropdown popover (or bottom-sheet on
+// mobile) for the 11 recurrence options. Replaces the previous chip-row
+// pattern that wrapped onto multiple lines on narrow viewports. The
+// onSelect callback mutates the live task object the modal is editing.
+function openRecurDropdown(){
+  if(typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  const trigger = gid('mdRecurTrigger');
+  const label = gid('mdRecurLabel');
+  const hidden = gid('mdRecur');
+  if(!trigger || editingTaskId == null) return;
+  const t = findTask(editingTaskId);
+  if(!t) return;
+  const rows = window._recurOptions || [];
+  const options = rows.map(function(r){ return { value: r[0], label: r[1] }; });
+  Dropdown.open(trigger, {
+    options: options,
+    selected: t.recur || 'none',
+    onSelect: function(key){
+      t.recur=key==='none'?null:key;
+      const row = rows.find(function(r){ return r[0] === key; });
+      if(label) label.textContent = row ? row[1] : 'No repeat';
+      if(hidden) hidden.value = key;
+      // First-time recurrence on a task with no due date defaults to today
+      // so it actually shows up in Today / Habits views immediately.
+      // Mirrors the same behaviour the old chip-click handler had.
+      if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
+      if(typeof _commitChipChange === 'function') _commitChipChange(t);
+    },
+  });
+}
+window.openRecurDropdown = openRecurDropdown;
+
+// List dropdown - opens a Dropdown popover for the task's destination
+// list. Each option carries the list's color metadata so the dropdown
+// renders a small swatch beside the name, matching the chip-based color
+// language used elsewhere. saveTaskDetail still reads gid('mdList').value,
+// so the dropdown writes the selected id into the hidden <select>.
+function openListDropdown(){
+  if(typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  const trigger = gid('mdListTrigger');
+  const sel = gid('mdList');
+  const label = gid('mdListLabel');
+  if(!trigger || !sel) return;
+  const allLists = (typeof lists !== 'undefined' && Array.isArray(lists)) ? lists : [];
+  const options = Array.prototype.slice.call(sel.options).map(function(o){
+    const found = allLists.find(function(L){ return String(L.id) === String(o.value); });
+    const rawColor = found && found.color ? found.color : null;
+    const safeColor = (rawColor && typeof sanitizeListColor === 'function')
+      ? sanitizeListColor(rawColor) : rawColor;
+    return { value: o.value, label: o.textContent, color: safeColor };
+  });
+  Dropdown.open(trigger, {
+    options: options,
+    selected: sel.value,
+    searchable: options.length > 8,
+    onSelect: function(value){
+      sel.value = value;
+      const opt = options.find(function(o){ return String(o.value) === String(value); });
+      if(label) label.textContent = opt ? opt.label : 'List';
+    },
+  });
+}
+window.openListDropdown = openListDropdown;
 
 function saveTaskDetail(){
   if(!editingTaskId)return;
@@ -2174,11 +2392,8 @@ function saveTaskDetail(){
   // C-2: record diffs into task.activity[] (cap at 50 entries)
   if(typeof recordTaskActivity === 'function') recordTaskActivity(t, _activityBefore);
   _taskModalSnapshot=null;
-  gid('taskModal').classList.remove('open');
+  Modal.close('taskModal');
   editingTaskId=null;
-  document.removeEventListener('keydown',_taskModalTabTrap,true);
-  if(_taskModalPrevFocus&&_taskModalPrevFocus.focus)try{_taskModalPrevFocus.focus()}catch(e){}
-  _taskModalPrevFocus=null;
   }finally{
     try{ delete t._habitCycledInSession; }catch(e){}
   }
@@ -2262,20 +2477,11 @@ window._updateActiveTaskTickSchedule=_updateActiveTaskTickSchedule;
 
 // ========== APP DIALOGS (replace native confirm/prompt) ==========
 let _appConfirmResolve=null;
-let _appConfirmReturnFocus=null;
-function _restoreFocus(el){
-  if(!el || typeof el.focus !== 'function') return;
-  try{ if(document.contains(el)) el.focus(); }catch(_){}
-}
 function closeAppConfirm(ok){
-  const ov=gid('appConfirmModal');
-  if(ov) ov.classList.remove('open');
   const fn=_appConfirmResolve;
-  const ret=_appConfirmReturnFocus;
   _appConfirmResolve=null;
-  _appConfirmReturnFocus=null;
+  Modal.close('appConfirmModal');
   if(fn) fn(!!ok);
-  _restoreFocus(ret);
 }
 function showAppConfirm(message){
   return new Promise(resolve=>{
@@ -2283,9 +2489,10 @@ function showAppConfirm(message){
     if(!ov||!m){ resolve(confirm(message)); return; }
     m.textContent=message;
     _appConfirmResolve=resolve;
-    _appConfirmReturnFocus=document.activeElement;
-    ov.classList.add('open');
-    setTimeout(()=>{const b=gid('appConfirmOk');if(b)b.focus()},30);
+    // Modal.open captures prev-focus via openFocusTrap and restores on close.
+    // skipInitialFocus + focus:'#appConfirmOk' = trap watches Tab; we pick
+    // the OK button as the initial target (matches the original 30ms focus).
+    Modal.open('appConfirmModal', { variant:'dialog', focus:'#appConfirmOk', skipInitialFocus:true, onRequestClose:()=>closeAppConfirm(false) });
   });
 }
 
@@ -2337,13 +2544,11 @@ function showImportConfirm(summary){
     w.textContent = '⚠ This replaces all current tasks, lists, and settings. Cannot be undone.';
     m.appendChild(w);
     _appConfirmResolve = resolve;
-    _appConfirmReturnFocus = document.activeElement;
-    ov.classList.add('open');
-    setTimeout(() => { const b = gid('appConfirmOk'); if(b) b.focus(); }, 30);
+    Modal.open('appConfirmModal', { variant:'dialog', focus:'#appConfirmOk', skipInitialFocus:true, onRequestClose:()=>closeAppConfirm(false) });
   });
 }
 if(typeof window !== 'undefined') window.showImportConfirm = showImportConfirm;
-let _appPromptResolve=null,_appPromptMultiline=false,_appPromptReturnFocus=null;
+let _appPromptResolve=null,_appPromptMultiline=false;
 function _appPromptTextareaKeydown(e){
   if(!_appPromptMultiline) return;
   if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){
@@ -2357,15 +2562,11 @@ function closeAppPrompt(val){
     multi.removeEventListener('keydown', multi._appPromptKd);
     multi._appPromptKd=null;
   }
-  const ov=gid('appPromptModal');
-  if(ov) ov.classList.remove('open');
   const fn=_appPromptResolve;
-  const ret=_appPromptReturnFocus;
   _appPromptResolve=null;
   _appPromptMultiline=false;
-  _appPromptReturnFocus=null;
+  Modal.close('appPromptModal');
   if(fn) fn(val);
-  _restoreFocus(ret);
 }
 function submitAppPrompt(){
   const single=gid('appPromptInput'), multi=gid('appPromptTextarea');
@@ -2394,9 +2595,8 @@ function showAppPrompt(label, defaultValue, opts){
       }
     }
     _appPromptResolve=resolve;
-    _appPromptReturnFocus=document.activeElement;
-    ov.classList.add('open');
-    setTimeout(()=>{(useMulti?multi:single)?.focus()},30);
+    const focusSel = useMulti ? '#appPromptTextarea' : '#appPromptInput';
+    Modal.open('appPromptModal', { variant:'dialog', focus:focusSel, skipInitialFocus:true, onRequestClose:()=>closeAppPrompt(null) });
   });
 }
 window.closeAppConfirm=closeAppConfirm;
@@ -2405,25 +2605,8 @@ window.submitAppPrompt=submitAppPrompt;
 window.showAppConfirm=showAppConfirm;
 window.showAppPrompt=showAppPrompt;
 
-document.addEventListener('keydown',e=>{
-  if(e.key!=='Escape') return;
-  const ac=gid('appConfirmModal');
-  if(ac&&ac.classList.contains('open')){ e.preventDefault(); closeAppConfirm(false); return }
-  const ap=gid('appPromptModal');
-  if(ap&&ap.classList.contains('open')){ e.preventDefault(); closeAppPrompt(null); return }
-  const cmdk=gid('cmdkOverlay');
-  if(cmdk&&cmdk.classList.contains('open')){ e.preventDefault(); if(typeof closeCmdK==='function') closeCmdK(); return }
-  const wno=gid('whatNextOverlay');
-  if(wno && !wno.hidden){ e.preventDefault(); if(typeof closeWhatNext==='function') closeWhatNext(); return }
-  const bulk=gid('bulkImportModal');
-  if(bulk&&bulk.classList.contains('open')){ e.preventDefault(); if(typeof closeBulkImportModal==='function') closeBulkImportModal(); return }
-  const tm=gid('taskModal');
-  if(tm&&tm.classList.contains('open')){ e.preventDefault(); closeTaskDetail(); return }
-  for(const sid of ['quickAddSheet','listsSheet','tagsSheet','viewSheet']){
-    const sh=gid(sid);
-    if(sh&&sh.classList.contains('open')){ e.preventDefault(); closeSheet(sid); return }
-  }
-});
+// Legacy ESC chain removed in Stage 3 — every overlay now routes through
+// js/modal.js's capture-phase ESC listener (via onRequestClose hooks).
 
 // ========== LOG ==========
 function addLog(name,durSec,type){timeLog.unshift({id:++logIdCtr,name,durSec,type,time:timeNow()});renderLog();saveState('user')}
@@ -2500,6 +2683,127 @@ window.showPomodoroSummary=function(){
   }
 };
 
+// ========== TASK ATTACHMENTS (modal) ==========
+let _mdAttachUrls = [];
+
+function _revokeMdAttachUrls(){
+  _mdAttachUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(_){} });
+  _mdAttachUrls = [];
+}
+
+async function renderMdAttachments(taskId){
+  const host = gid('mdAttachments');
+  if(!host) return;
+  _revokeMdAttachUrls();
+  host.replaceChildren();
+  if(typeof listTaskAttachments !== 'function') return;
+  const rows = await listTaskAttachments(taskId);
+  const tools = document.createElement('div');
+  tools.className = 'md-attach-tools';
+  const photoLbl = document.createElement('label');
+  photoLbl.className = 'btn-ghost btn-sm';
+  photoLbl.textContent = 'Add photo';
+  const photoIn = document.createElement('input');
+  photoIn.type = 'file';
+  photoIn.accept = 'image/*';
+  photoIn.capture = 'environment';
+  photoIn.hidden = true;
+  photoIn.onchange = async () => {
+    const f = photoIn.files && photoIn.files[0];
+    photoIn.value = '';
+    if(f && typeof addImageAttachment === 'function'){
+      await addImageAttachment(taskId, f);
+      renderMdAttachments(taskId);
+    }
+  };
+  photoLbl.appendChild(photoIn);
+  tools.appendChild(photoLbl);
+
+  let rec = null;
+  let recBtn = null;
+  if(typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    recBtn = document.createElement('button');
+    recBtn.type = 'button';
+    recBtn.className = 'btn-ghost btn-sm';
+    recBtn.textContent = 'Record voice';
+    recBtn.onclick = async () => {
+      if(rec){
+        rec.stop();
+        return;
+      }
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const chunks = [];
+        rec = new MediaRecorder(stream);
+        rec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+        rec.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          rec = null;
+          recBtn.textContent = 'Record voice';
+          recBtn.classList.remove('on');
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          if(typeof addAudioAttachment === 'function'){
+            await addAudioAttachment(taskId, blob, 'audio/webm');
+            renderMdAttachments(taskId);
+          }
+        };
+        rec.start();
+        recBtn.textContent = 'Stop';
+        recBtn.classList.add('on');
+      }catch(e){
+        if(typeof toast === 'function') toast('Microphone access denied');
+      }
+    };
+    tools.appendChild(recBtn);
+  }
+  host.appendChild(tools);
+
+  const grid = document.createElement('div');
+  grid.className = 'md-attach-grid';
+  for(const row of rows){
+    const card = document.createElement('div');
+    card.className = 'md-attach-card md-attach-'+row.kind;
+    if(row.kind === 'image' && typeof _attachGet === 'function'){
+      const full = await _attachGet(row.id);
+      if(full && full.blob){
+        const url = attachmentObjectUrl(full);
+        if(url){ _mdAttachUrls.push(url); const img = document.createElement('img'); img.src = url; img.alt = 'Attachment'; card.appendChild(img); }
+      }
+    } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
+      const full = await _attachGet(row.id);
+      if(full && full.blob){
+        const url = attachmentObjectUrl(full);
+        if(url){
+          _mdAttachUrls.push(url);
+          const aud = document.createElement('audio');
+          aud.controls = true;
+          aud.src = url;
+          card.appendChild(aud);
+        }
+      }
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'md-attach-del';
+    del.textContent = '×';
+    del.setAttribute('aria-label', 'Remove attachment');
+    del.onclick = async () => {
+      if(typeof removeAttachment === 'function') await removeAttachment(taskId, row.id);
+      renderMdAttachments(taskId);
+    };
+    card.appendChild(del);
+    grid.appendChild(card);
+  }
+  if(!rows.length){
+    const hint = document.createElement('p');
+    hint.className = 'intel-muted';
+    hint.textContent = 'Photos and voice notes stay on this device (not synced).';
+    grid.appendChild(hint);
+  }
+  host.appendChild(grid);
+}
+window.renderMdAttachments = renderMdAttachments;
+
 // ========== FLOATING MINI TIMER ==========
 // Show the mini-timer when not on the Timer (focus) tab. Click it to jump to Timer.
 window.toggleSimilarAccordion = function(){
@@ -2508,7 +2812,7 @@ window.toggleSimilarAccordion = function(){
 };
 
 function updateMiniTimer(){
-  const el=gid('miniTimer');if(!el)return;
+  const el=gid('timerDock')||gid('miniTimer');if(!el)return;
   // Hide on the Timer tab (the full timer is already visible there)
   if(activeTab==='focus'){el.classList.remove('visible');return}
   el.classList.add('visible');
@@ -3252,9 +3556,9 @@ document.addEventListener('keydown', function(e){
   const open = candidates.reverse().find(el => {
     const cls = el.classList;
     if(cls.contains('open')) return true;
-    if(!el.hidden && cls.contains('cmdk-overlay')) return true;
+    // aiBriefCard still uses the hidden-attribute pattern; what-next, cmdk,
+    // and the modal-overlays all moved to .open class in Stages 1-3.
     if(el.id === 'aiBriefCard' && !el.hidden) return true;
-    if(el.id === 'whatNextOverlay' && !el.hidden) return true;
     return false;
   });
   if(!open) return;
@@ -3274,6 +3578,23 @@ document.addEventListener('keydown', function(e){
     }
   }
 });
+
+// ========== MODAL BACKDROP-READY TRANSITION ==========
+// Defer .modal-overlay/.cmdk-overlay backdrop-filter:blur(...) until AFTER
+// the opacity transition completes. The GPU stalls when blur is composited
+// on the same frame an animation starts — historically the source of the
+// "jitter" felt at the top of bottom-up sheets. We listen once at document
+// level so dynamically-created overlays (e.g. showShortcutsHelp) are covered
+// without any per-element wiring. Capture phase so the listener fires even
+// if a child stops propagation.
+document.addEventListener('transitionend', function(e){
+  const t = e.target;
+  if(!(t instanceof Element)) return;
+  if(e.propertyName !== 'opacity') return;
+  if(!t.matches('.modal-overlay, .cmdk-overlay')) return;
+  if(t.classList.contains('open')) t.classList.add('backdrop-ready');
+  else t.classList.remove('backdrop-ready');
+}, true);
 
 // ========== G-7 FOCUS-ON-LIST MODE ==========
 function toggleFocusListMode(){

@@ -276,7 +276,8 @@ try {
 // in js/event-delegation.js can resolve them by name.
 window.taskInputLiveUpdate = function(){
   if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
-  if(typeof updateLiveParsePreview === 'function') updateLiveParsePreview();
+  if(typeof scheduleLiveParsePreview === 'function') scheduleLiveParsePreview();
+  else if(typeof updateLiveParsePreview === 'function') updateLiveParsePreview();
 };
 window.addTaskOrApplyPreview = function(){
   if(window._smartAddPreview && typeof applySmartAddAndSubmit === 'function') applySmartAddAndSubmit();
@@ -557,6 +558,7 @@ setTaskView(taskView);
 setSmartView(smartView);
 if(typeof hydrateIcons==='function') hydrateIcons();
 updateMiniTimer();
+if(typeof updateTimerDock==='function') updateTimerDock();
 
 // Pomodoro post-rehydrate reconciliation. If the timer was running at save
 // time, either resume the tick interval (and re-schedule phase-end audio) or,
