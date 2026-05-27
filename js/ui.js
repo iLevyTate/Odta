@@ -2008,6 +2008,8 @@ function _taskModalHasUnsavedTextEdits(){
   return false;
 }
 async function closeTaskDetail(opts){
+  if(typeof closeAttachLightbox === 'function') closeAttachLightbox();
+  _abortMdVoiceRecording();
   const skipRevert=opts&&opts.skipRevert;
   // Confirm before discarding text/number edits the user typed but didn't
   // save. Chip edits aren't gated by this — they were already committed.
@@ -2685,15 +2687,107 @@ window.showPomodoroSummary=function(){
 
 // ========== TASK ATTACHMENTS (modal) ==========
 let _mdAttachUrls = [];
+let _mdAttachLightboxUrl = null;
+let _mdVoiceSession = null;
+
+function _pickMdAudioMime(){
+  if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  for(let i = 0; i < candidates.length; i++){
+    if(MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+  }
+  return '';
+}
+
+function _abortMdVoiceRecording(){
+  const s = _mdVoiceSession;
+  if(!s) return;
+  _mdVoiceSession = null;
+  try{
+    if(s.recorder && s.recorder.state !== 'inactive') s.recorder.stop();
+  }catch(_){}
+  if(s.stream) s.stream.getTracks().forEach(t => { try{ t.stop(); }catch(_){} });
+  if(s.saveOnStop) s.saveOnStop = false;
+}
 
 function _revokeMdAttachUrls(){
-  _mdAttachUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(_){} });
-  _mdAttachUrls = [];
+  _mdAttachUrls.forEach(u=>{
+    if(u === _mdAttachLightboxUrl) return;
+    try{ URL.revokeObjectURL(u); }catch(_){}
+  });
+  _mdAttachUrls = _mdAttachUrls.filter(u => u === _mdAttachLightboxUrl);
 }
+
+function closeAttachLightbox(){
+  const overlay = gid('attachLightbox');
+  if(overlay) overlay.classList.remove('open');
+  if(_mdAttachLightboxUrl){
+    try{ URL.revokeObjectURL(_mdAttachLightboxUrl); }catch(_){}
+    const i = _mdAttachUrls.indexOf(_mdAttachLightboxUrl);
+    if(i >= 0) _mdAttachUrls.splice(i, 1);
+    _mdAttachLightboxUrl = null;
+  }
+  const body = overlay && overlay.querySelector('.attach-lightbox-body');
+  if(body) body.replaceChildren();
+}
+
+function openAttachLightboxBlob(blob){
+  if(!blob || !(blob instanceof Blob)) return;
+  let overlay = gid('attachLightbox');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'attachLightbox';
+    overlay.className = 'attach-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Attachment preview');
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'attach-lightbox-close';
+    closeBtn.setAttribute('aria-label', 'Close preview');
+    closeBtn.textContent = '×';
+    closeBtn.onclick = closeAttachLightbox;
+    const body = document.createElement('div');
+    body.className = 'attach-lightbox-body';
+    overlay.append(closeBtn, body);
+    overlay.addEventListener('click', e => { if(e.target === overlay) closeAttachLightbox(); });
+    document.body.appendChild(overlay);
+  }
+  closeAttachLightbox();
+  const url = URL.createObjectURL(blob);
+  _mdAttachLightboxUrl = url;
+  const body = overlay.querySelector('.attach-lightbox-body');
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = 'Full-size attachment';
+  body.appendChild(img);
+  overlay.classList.add('open');
+}
+window.closeAttachLightbox = closeAttachLightbox;
+
+/** Keep modal discard from reverting attachment ids while blobs stay in IDB. */
+function _commitAttachmentChange(taskId){
+  if(!_taskModalSnapshot || editingTaskId !== taskId) return;
+  const t = typeof findTask === 'function' ? findTask(taskId) : null;
+  if(!t) return;
+  _taskModalSnapshot.attachments = Array.isArray(t.attachments) ? t.attachments.slice() : [];
+}
+window._commitAttachmentChange = _commitAttachmentChange;
+
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Escape') return;
+  const lb = gid('attachLightbox');
+  if(lb && lb.classList.contains('open')){
+    e.preventDefault();
+    e.stopPropagation();
+    closeAttachLightbox();
+  }
+}, true);
 
 async function renderMdAttachments(taskId){
   const host = gid('mdAttachments');
   if(!host) return;
+  if(_mdVoiceSession && _mdVoiceSession.taskId !== taskId) _abortMdVoiceRecording();
   _revokeMdAttachUrls();
   host.replaceChildren();
   if(typeof listTaskAttachments !== 'function') return;
@@ -2713,13 +2807,13 @@ async function renderMdAttachments(taskId){
     photoIn.value = '';
     if(f && typeof addImageAttachment === 'function'){
       await addImageAttachment(taskId, f);
+      _commitAttachmentChange(taskId);
       renderMdAttachments(taskId);
     }
   };
   photoLbl.appendChild(photoIn);
   tools.appendChild(photoLbl);
 
-  let rec = null;
   let recBtn = null;
   if(typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
     recBtn = document.createElement('button');
@@ -2727,34 +2821,70 @@ async function renderMdAttachments(taskId){
     recBtn.className = 'btn-ghost btn-sm';
     recBtn.textContent = 'Record voice';
     recBtn.onclick = async () => {
-      if(rec){
-        rec.stop();
+      if(_mdVoiceSession && _mdVoiceSession.taskId === taskId && _mdVoiceSession.recorder.state !== 'inactive'){
+        _mdVoiceSession.saveOnStop = true;
+        try{ if(_mdVoiceSession.recorder.state === 'recording') _mdVoiceSession.recorder.requestData(); }catch(_){}
+        _mdVoiceSession.recorder.stop();
         return;
       }
+      if(_mdVoiceSession) _abortMdVoiceRecording();
       try{
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const chunks = [];
-        rec = new MediaRecorder(stream);
-        rec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
-        rec.onstop = async () => {
-          stream.getTracks().forEach(t => t.stop());
-          rec = null;
-          recBtn.textContent = 'Record voice';
-          recBtn.classList.remove('on');
-          const blob = new Blob(chunks, { type: 'audio/webm' });
+        const mime = _pickMdAudioMime();
+        const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        const blobType = mime || recorder.mimeType || 'audio/webm';
+        recorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach(t => { try{ t.stop(); }catch(_){} });
+          const session = _mdVoiceSession;
+          _mdVoiceSession = null;
+          const btn = session && session.recBtn;
+          if(btn){
+            btn.textContent = 'Record voice';
+            btn.classList.remove('on');
+          }
+          if(!session || !session.saveOnStop) return;
+          if(!chunks.length){
+            if(typeof toast === 'function') toast('No audio captured — try again');
+            return;
+          }
+          const blob = new Blob(chunks, { type: blobType });
+          if(blob.size < 1){
+            if(typeof toast === 'function') toast('Recording too short');
+            return;
+          }
           if(typeof addAudioAttachment === 'function'){
-            await addAudioAttachment(taskId, blob, 'audio/webm');
+            await addAudioAttachment(taskId, blob, blobType);
+            _commitAttachmentChange(taskId);
             renderMdAttachments(taskId);
           }
         };
-        rec.start();
+        recorder.onerror = () => {
+          if(typeof toast === 'function') toast('Recording failed');
+          _abortMdVoiceRecording();
+          recBtn.textContent = 'Record voice';
+          recBtn.classList.remove('on');
+        };
+        _mdVoiceSession = { taskId, recorder, stream, recBtn, saveOnStop: false };
+        recorder.start(250);
         recBtn.textContent = 'Stop';
         recBtn.classList.add('on');
       }catch(e){
-        if(typeof toast === 'function') toast('Microphone access denied');
+        if(typeof toast === 'function') toast('Microphone access denied or unavailable');
       }
     };
+    if(_mdVoiceSession && _mdVoiceSession.taskId === taskId){
+      _mdVoiceSession.recBtn = recBtn;
+      recBtn.textContent = 'Stop';
+      recBtn.classList.add('on');
+    }
     tools.appendChild(recBtn);
+  } else {
+    const noRec = document.createElement('p');
+    noRec.className = 'intel-muted md-attach-voice-hint';
+    noRec.textContent = 'Voice recording needs a browser with microphone support (Chrome, Edge, Firefox).';
+    tools.appendChild(noRec);
   }
   host.appendChild(tools);
 
@@ -2767,7 +2897,26 @@ async function renderMdAttachments(taskId){
       const full = await _attachGet(row.id);
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
-        if(url){ _mdAttachUrls.push(url); const img = document.createElement('img'); img.src = url; img.alt = 'Attachment'; card.appendChild(img); }
+        if(url){
+          _mdAttachUrls.push(url);
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = 'Attachment';
+          img.className = 'md-attach-thumb';
+          img.title = 'View full size';
+          img.tabIndex = 0;
+          img.setAttribute('role', 'button');
+          img.setAttribute('aria-label', 'View full-size photo');
+          const openFull = e => {
+            e.stopPropagation();
+            openAttachLightboxBlob(full.blob);
+          };
+          img.addEventListener('click', openFull);
+          img.addEventListener('keydown', e => {
+            if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openFull(e); }
+          });
+          card.appendChild(img);
+        }
       }
     } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
@@ -2789,6 +2938,7 @@ async function renderMdAttachments(taskId){
     del.setAttribute('aria-label', 'Remove attachment');
     del.onclick = async () => {
       if(typeof removeAttachment === 'function') await removeAttachment(taskId, row.id);
+      _commitAttachmentChange(taskId);
       renderMdAttachments(taskId);
     };
     card.appendChild(del);

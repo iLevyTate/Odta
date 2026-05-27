@@ -98,6 +98,7 @@ async function addImageAttachment(taskId, file){
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
+  if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   return rec;
 }
 
@@ -118,6 +119,7 @@ async function addAudioAttachment(taskId, blob, mime){
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
+  if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   return rec;
 }
 
@@ -127,6 +129,7 @@ async function removeAttachment(taskId, attachId){
   if(t && Array.isArray(t.attachments)){
     t.attachments = t.attachments.filter(x => x !== attachId);
     if(typeof saveState === 'function') saveState('user');
+    if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   }
 }
 
@@ -136,8 +139,11 @@ async function deleteAttachmentsForTask(taskId){
 }
 
 function attachmentObjectUrl(rec){
-  if(!rec || !rec.blob) return null;
-  return URL.createObjectURL(rec.blob);
+  if(!rec || rec.blob == null) return null;
+  const b = rec.blob;
+  if(b instanceof Blob) return URL.createObjectURL(b);
+  if(b instanceof ArrayBuffer) return URL.createObjectURL(new Blob([b], { type: rec.mime || '' }));
+  return null;
 }
 
 window.getTaskAttachmentIds = getTaskAttachmentIds;
