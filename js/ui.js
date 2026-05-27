@@ -25,8 +25,58 @@ function _calMonthAnchor(){
   }
   return new Date(calMonth);
 }
+function setCalMode(mode){
+  if(typeof cfg!=='object'||!cfg)return;
+  const m=mode==='week'||mode==='day'?mode:'month';
+  cfg.calMode=m;
+  if(typeof saveState==='function')saveState('user');
+  if(typeof renderTaskList==='function')renderTaskList();
+}
+window.setCalMode=setCalMode;
+
+function _calModeSegHtml(active){
+  const modes=[['month','Month'],['week','Week'],['day','Day']];
+  let h='<div class="cal-mode-seg" role="group" aria-label="Calendar layout">';
+  modes.forEach(([k,l])=>{
+    h+='<button type="button" class="cal-mode-btn'+(active===k?' active':'')+'" data-action="setCalMode" data-arg="'+k+'">'+l+'</button>';
+  });
+  return h+'</div>';
+}
+
 function renderCalendar(visibleTasks){
   const container=gid('calendarView');if(!container)return;
+  const calMode=(typeof cfg==='object'&&cfg&&cfg.calMode)||'month';
+  const focusIso=_calEffectiveFocusDate();
+  const byDate={};
+  visibleTasks.forEach(t=>{if(t.dueDate){(byDate[t.dueDate]=byDate[t.dueDate]||[]).push(t)}});
+
+  if(calMode==='day'){
+    container.innerHTML=_calModeSegHtml('day')+_renderCalDayAgendaHtml(focusIso, byDate, true);
+    _bindCalAgendaClicks(container);
+    return;
+  }
+
+  if(calMode==='week'){
+    const anchor=new Date(focusIso+'T12:00:00');
+    const dow=anchor.getDay();
+    const weekStart=new Date(anchor);
+    weekStart.setDate(anchor.getDate()-dow);
+    let html=_calModeSegHtml('week')+'<div class="cal-week-grid">';
+    for(let i=0;i<7;i++){
+      const d=new Date(weekStart);
+      d.setDate(weekStart.getDate()+i);
+      const iso=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const dayLbl=d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
+      html+='<div class="cal-week-col'+(iso===focusIso?' selected':'')+'" data-date="'+iso+'">'
+        +'<button type="button" class="cal-week-col-head" data-action="calFocusDay" data-arg="'+iso+'">'+esc(dayLbl)+'</button>'
+        +'<div class="cal-week-col-body">'+_renderCalDayAgendaInner(iso, byDate)+'</div></div>';
+    }
+    html+='</div>';
+    container.innerHTML=html;
+    _bindCalWeekCols(container);
+    return;
+  }
+
   const now=_calMonthAnchor();
   const year=now.getFullYear(),month=now.getMonth();
   const first=new Date(year,month,1);
@@ -34,11 +84,7 @@ function renderCalendar(visibleTasks){
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
   const today=todayISO();
-  const focusIso=_calEffectiveFocusDate();
   const monthName=now.toLocaleDateString(undefined,{month:'long',year:'numeric'});
-  // Group tasks by due date
-  const byDate={};
-  visibleTasks.forEach(t=>{if(t.dueDate){(byDate[t.dueDate]=byDate[t.dueDate]||[]).push(t)}});
   // Surface feed sync failures inline at the top of the calendar so users
   // realise their displayed events may be stale. Falls back silently when
   // the calfeed module isn't loaded (e.g. in test sandbox).
@@ -54,7 +100,7 @@ function renderCalendar(visibleTasks){
         + '</div>';
     }
   }
-  let html=feedAlertHtml+'<div class="calendar"><div class="cal-head">'
+  let html=feedAlertHtml+_calModeSegHtml('month')+'<div class="calendar"><div class="cal-head">'
     +'<button class="cal-nav" data-action="calNav" data-args="[-1]" title="Previous month" aria-label="Previous month">‹</button>'
     +'<div class="cal-title">'+monthName+'</div>'
     +'<button class="cal-today-btn" data-action="calToday">Today</button>'
@@ -122,11 +168,45 @@ function renderCalendar(visibleTasks){
     el.onclick=function(e){
       e.stopPropagation();
       const date=el.dataset.date;
-      if(date && typeof calFocusDay === 'function') calFocusDay(date);
+      if(date){
+        if(typeof setCalMode==='function') setCalMode('day');
+        if(typeof calFocusDay==='function') calFocusDay(date);
+      }
     };
   });
 }
-function _renderCalDayAgendaHtml(isoDate, byDate){
+function _renderCalDayAgendaInner(isoDate, byDate){
+  const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
+  const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
+    ? getCalFeedEventsForDate(isoDate) : [];
+  let rows = '';
+  const sortKey = (ev) => ev.allDay ? '00:00' : String(ev.time || '99:99');
+  feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
+    rows += '<div class="cal-agenda-row cal-agenda-feed"><span class="cal-agenda-title">'+esc(ev.title||'(event)')+'</span></div>';
+  });
+  tasks.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name))).forEach(t=>{
+    rows+='<div class="cal-agenda-row cal-agenda-task" data-task-id="'+t.id+'"><span class="cal-agenda-title">'+esc(t.name)+'</span></div>';
+  });
+  return rows || '<div class="cal-agenda-empty">Nothing scheduled</div>';
+}
+
+function _bindCalAgendaClicks(container){
+  if(!container) return;
+  container.querySelectorAll('.cal-agenda-task[data-task-id]').forEach(el=>{
+    el.onclick=function(e){
+      e.stopPropagation();
+      const tid=parseInt(el.dataset.taskId,10);
+      if(tid) openTaskDetail(tid);
+    };
+  });
+}
+
+function _bindCalWeekCols(container){
+  if(!container) return;
+  _bindCalAgendaClicks(container);
+}
+
+function _renderCalDayAgendaHtml(isoDate, byDate, dayOnly){
   const tasks = (byDate && byDate[isoDate]) ? byDate[isoDate] : [];
   const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
     ? getCalFeedEventsForDate(isoDate) : [];
@@ -159,11 +239,29 @@ function _renderCalDayAgendaHtml(isoDate, byDate){
   const empty = !rows
     ? '<div class="cal-agenda-empty">No tasks or calendar events on this day.</div>'
     : rows;
-  return '<div class="cal-day-agenda" id="calDayAgenda" data-date="'+escAttr(isoDate)+'">'
+  const nav = dayOnly
+    ? '<div class="cal-day-nav">'
+      +'<button type="button" class="cal-nav" data-action="calDayNav" data-args="[-1]">‹</button>'
+      +'<button type="button" class="cal-today-btn" data-action="calToday">Today</button>'
+      +'<button type="button" class="cal-nav" data-action="calDayNav" data-args="[1]">›</button>'
+      +'</div>'
+    : '';
+  return '<div class="cal-day-agenda'+(dayOnly?' cal-day-agenda--full':'')+'" id="calDayAgenda" data-date="'+escAttr(isoDate)+'">'
+    + nav
     + '<div class="cal-agenda-head">'+esc(heading)+'</div>'
     + '<div class="cal-agenda-list">'+empty+'</div>'
     + '</div>';
 }
+
+function calDayNav(dir){
+  const d=parseInt(dir,10)||0;
+  const iso=_calEffectiveFocusDate();
+  const x=new Date(iso+'T12:00:00');
+  x.setDate(x.getDate()+d);
+  const next=x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+  calFocusDay(next);
+}
+window.calDayNav=calDayNav;
 function renderCalTasks(arr, isoDate){
   // Merge local tasks with external calendar feed events for this date
   const feedEvents = (typeof getCalFeedEventsForDate === 'function' && isoDate)
@@ -192,6 +290,11 @@ function renderCalTasks(arr, isoDate){
         + esc(ev.title)
         + '</div>';
     }).join('');
+  }
+  const taskN=arr?arr.length:0;
+  const feedN=feedEvents.length;
+  if(taskN||feedN){
+    html+='<span class="cal-day-count" title="'+taskN+' tasks, '+feedN+' events">'+taskN+'·'+feedN+'</span>';
   }
   // "+N more" indicator if we truncated
   const totalCount = (arr ? arr.length : 0) + feedEvents.length;
@@ -1088,7 +1191,8 @@ function renderTaskItem(t,depth){
   const chevron=kids
     ?'<button class="task-chevron'+(t.collapsed?' collapsed':'')+'" data-action="toggleCollapse" data-arg="'+t.id+'" title="'+(t.collapsed?'Expand':'Collapse')+'" aria-label="'+(t.collapsed?'Expand subtasks':'Collapse subtasks')+'" aria-expanded="'+(t.collapsed?'false':'true')+'">▸</button>'
     :'<span class="task-chevron-spacer"></span>';
-  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'" aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
+  const habitHint=t.recur?' title="Log habit completion (stays open, next due scheduled)" aria-label="Log habit completion"':' title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'"';
+  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
 
   let signalChips='';
   if(t.dueDate&&!isDone){
@@ -1099,7 +1203,8 @@ function renderTaskItem(t,depth){
   }
   const prog=getSubtaskProgress(t.id);
   if(prog) signalChips+='<span class="task-sig sig-subs" title="'+prog.done+' of '+prog.total+' subtasks done" aria-label="'+prog.done+' of '+prog.total+' subtasks done">'+prog.done+'/'+prog.total+'</span>';
-  if(smartView==='habits'&&t.recur){
+  if(t.recur){
+    signalChips+='<span class="task-sig sig-habit" title="Habit — completing logs a cycle and schedules the next due date" aria-label="Habit">Habit</span>';
     signalChips+='<span class="task-sig sig-recur" title="Repeats '+escAttr(String(t.recur))+'" aria-label="Repeats '+escAttr(String(t.recur))+'">↻</span>';
     if(typeof getHabitStreak==='function'){
       const st=getHabitStreak(t);
@@ -1155,11 +1260,11 @@ function renderTaskItem(t,depth){
       +'</div>'
       +'<div class="task-row-actions">'+actions+'</div>'
     +'</div>'
-    +'<div class="task-row-secondary">'
+    +'<div class="task-row-secondary-wrap"><div class="task-row-secondary">'
       +statusBadge
       +(tagsVisible?'<span class="task-tags-inline">'+tagsVisible+'</span>':'')
       +descPrev
-    +'</div>';
+    +'</div></div>';
   list.appendChild(d)
 }
 
@@ -1536,7 +1641,7 @@ function openTaskDetail(id){
     rc.setAttribute('role','radiogroup');
     [
       ['none','No repeat'],
-      ['daily','Daily'],['weekdays','Weekdays'],['weekly','Weekly'],['monthly','Monthly'],
+      ['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],['weekly','Weekly'],['monthly','Monthly'],
       ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],['after14d','After 14d'],['after30d','After 30d'],
     ].forEach(([key,lbl])=>{
       const b=document.createElement('button');b.type='button';b.className='recur-opt'+((t.recur||'none')===key?' active':'');
@@ -1598,6 +1703,7 @@ function openTaskDetail(id){
   if(typeof renderEstimateVariance === 'function') renderEstimateVariance(t);
   renderMdHabitLog(t);
   renderMdSessions(t);
+  if(typeof renderMdAttachments === 'function') renderMdAttachments(id);
   // 'sheet' variant: body scroll lock + bottom-sheet swipe.
   // onRequestClose routes ESC through closeTaskDetail so the
   // "discard unsaved text edits?" confirmation runs before tear-down.
@@ -2462,6 +2568,127 @@ window.showPomodoroSummary=function(){
   }
 };
 
+// ========== TASK ATTACHMENTS (modal) ==========
+let _mdAttachUrls = [];
+
+function _revokeMdAttachUrls(){
+  _mdAttachUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(_){} });
+  _mdAttachUrls = [];
+}
+
+async function renderMdAttachments(taskId){
+  const host = gid('mdAttachments');
+  if(!host) return;
+  _revokeMdAttachUrls();
+  host.replaceChildren();
+  if(typeof listTaskAttachments !== 'function') return;
+  const rows = await listTaskAttachments(taskId);
+  const tools = document.createElement('div');
+  tools.className = 'md-attach-tools';
+  const photoLbl = document.createElement('label');
+  photoLbl.className = 'btn-ghost btn-sm';
+  photoLbl.textContent = 'Add photo';
+  const photoIn = document.createElement('input');
+  photoIn.type = 'file';
+  photoIn.accept = 'image/*';
+  photoIn.capture = 'environment';
+  photoIn.hidden = true;
+  photoIn.onchange = async () => {
+    const f = photoIn.files && photoIn.files[0];
+    photoIn.value = '';
+    if(f && typeof addImageAttachment === 'function'){
+      await addImageAttachment(taskId, f);
+      renderMdAttachments(taskId);
+    }
+  };
+  photoLbl.appendChild(photoIn);
+  tools.appendChild(photoLbl);
+
+  let rec = null;
+  let recBtn = null;
+  if(typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    recBtn = document.createElement('button');
+    recBtn.type = 'button';
+    recBtn.className = 'btn-ghost btn-sm';
+    recBtn.textContent = 'Record voice';
+    recBtn.onclick = async () => {
+      if(rec){
+        rec.stop();
+        return;
+      }
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const chunks = [];
+        rec = new MediaRecorder(stream);
+        rec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+        rec.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          rec = null;
+          recBtn.textContent = 'Record voice';
+          recBtn.classList.remove('on');
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          if(typeof addAudioAttachment === 'function'){
+            await addAudioAttachment(taskId, blob, 'audio/webm');
+            renderMdAttachments(taskId);
+          }
+        };
+        rec.start();
+        recBtn.textContent = 'Stop';
+        recBtn.classList.add('on');
+      }catch(e){
+        if(typeof toast === 'function') toast('Microphone access denied');
+      }
+    };
+    tools.appendChild(recBtn);
+  }
+  host.appendChild(tools);
+
+  const grid = document.createElement('div');
+  grid.className = 'md-attach-grid';
+  for(const row of rows){
+    const card = document.createElement('div');
+    card.className = 'md-attach-card md-attach-'+row.kind;
+    if(row.kind === 'image' && typeof _attachGet === 'function'){
+      const full = await _attachGet(row.id);
+      if(full && full.blob){
+        const url = attachmentObjectUrl(full);
+        if(url){ _mdAttachUrls.push(url); const img = document.createElement('img'); img.src = url; img.alt = 'Attachment'; card.appendChild(img); }
+      }
+    } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
+      const full = await _attachGet(row.id);
+      if(full && full.blob){
+        const url = attachmentObjectUrl(full);
+        if(url){
+          _mdAttachUrls.push(url);
+          const aud = document.createElement('audio');
+          aud.controls = true;
+          aud.src = url;
+          card.appendChild(aud);
+        }
+      }
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'md-attach-del';
+    del.textContent = '×';
+    del.setAttribute('aria-label', 'Remove attachment');
+    del.onclick = async () => {
+      if(typeof removeAttachment === 'function') await removeAttachment(taskId, row.id);
+      renderMdAttachments(taskId);
+    };
+    card.appendChild(del);
+    grid.appendChild(card);
+  }
+  if(!rows.length){
+    const hint = document.createElement('p');
+    hint.className = 'intel-muted';
+    hint.textContent = 'Photos and voice notes stay on this device (not synced).';
+    grid.appendChild(hint);
+  }
+  host.appendChild(grid);
+}
+window.renderMdAttachments = renderMdAttachments;
+
 // ========== FLOATING MINI TIMER ==========
 // Show the mini-timer when not on the Timer (focus) tab. Click it to jump to Timer.
 window.toggleSimilarAccordion = function(){
@@ -2470,7 +2697,7 @@ window.toggleSimilarAccordion = function(){
 };
 
 function updateMiniTimer(){
-  const el=gid('miniTimer');if(!el)return;
+  const el=gid('timerDock')||gid('miniTimer');if(!el)return;
   // Hide on the Timer tab (the full timer is already visible there)
   if(activeTab==='focus'){el.classList.remove('visible');return}
   el.classList.add('visible');

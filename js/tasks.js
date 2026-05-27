@@ -181,6 +181,7 @@ function defaultTaskProps(){return{
   valuesNote:null,      // Short note from values alignment
   completions:[],      // recurring habit log: { date, sec }
   habitLastRecordedTotalSec:null, // baseline for per-completion delta (see completeHabitCycle)
+  attachments:[],      // attachment ids in IndexedDB (see attachments.js)
 }}
 
 let _dupRefreshTimer = null;
@@ -211,9 +212,16 @@ function parseQuickAdd(raw){
   if(tags.length){props.tags=tags;text=text.replace(/\s#[^\s#]+/g,'')}
   // Star !star !pin
   if(/\s!(star|pin)\b/i.test(text)){props.starred=true;text=text.replace(/\s!(star|pin)\b/i,'')}
-  // Recurrence ~daily ~weekdays ~weekly ~monthly
-  const rcMatch=text.match(/\s~(daily|weekdays|weekly|monthly)\b/i);
-  if(rcMatch){props.recur=rcMatch[1].toLowerCase();text=text.replace(rcMatch[0],'')}
+  // Recurrence ~daily ~weekdays ~weekly ~monthly ~every2d ~habit
+  const rcMatch=text.match(/\s~(daily|weekdays|weekly|monthly|every2d|habit)\b/i);
+  if(rcMatch){
+    const k=rcMatch[1].toLowerCase();
+    props.recur=(k==='habit')?'daily':k;
+    text=text.replace(rcMatch[0],'');
+  }
+  // Type %bug %idea %errand %waiting %task
+  const tyMatch=text.match(/\s%(task|bug|idea|errand|waiting)\b/i);
+  if(tyMatch){props.type=tyMatch[1].toLowerCase();text=text.replace(tyMatch[0],'')}
   // Bare recurrence phrases (no ~ sigil). The empty-state copy and quick-add
   // syntax hints promise these "just work" — wire them so the promise isn't
   // a lie (#1 in the UX audit). These run BEFORE the bare day-name strip so
@@ -224,6 +232,8 @@ function parseQuickAdd(raw){
       [/\bevery\s+day\b/i,'daily'],
       [/\bevery\s+week\b/i,'weekly'],
       [/\bevery\s+month\b/i,'monthly'],
+      [/\bevery\s+other\s+day\b/i,'every2d'],
+      [/\bevery\s+2\s+days?\b/i,'every2d'],
       [/(^|\s)weekdays\b/i,'weekdays'],
       [/(^|\s)daily\b/i,'daily'],
       [/(^|\s)weekly\b/i,'weekly'],
@@ -249,6 +259,17 @@ function parseQuickAdd(raw){
     const d=new Date();d.setDate(d.getDate()+7);
     props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     text=text.replace(/\bnext week\b/i,'');
+  }else if(/\bin\s+(\d+)\s+days?\b/i.test(lower)){
+    const m=lower.match(/\bin\s+(\d+)\s+days?\b/i);
+    if(m){
+      const n=parseInt(m[1],10)||0;
+      const d=new Date();d.setDate(d.getDate()+n);
+      props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      text=text.replace(/\bin\s+\d+\s+days?\b/i,'');
+    }
+  }else if(/\beod\b/i.test(lower)){
+    props.dueDate=todayISOs;
+    text=text.replace(/\beod\b/i,'');
   }else{
     const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
     if(dayMatch){
@@ -290,10 +311,15 @@ async function addTask(){
   // typing "@urgent" still wins over a panel-set priority — explicit text
   // input is the most recent intent.
   const panelVals=(typeof window!=='undefined'&&window._quickAddValues)?window._quickAddValues:null;
+  const entryKind=panelVals&&panelVals.entryKind;
+  const panelClean=panelVals?{...panelVals}:null;
+  if(panelClean) delete panelClean.entryKind;
   const _newT=Object.assign({
     id:++taskIdCtr,name,totalSec:0,sessions:0,created:timeNowFull(),
     parentId:null,collapsed:false
-  },defaultTaskProps(),panelVals||{},props);
+  },defaultTaskProps(),panelClean||{},props);
+  if(entryKind==='habit'&&!props.recur) _newT.recur=_newT.recur||'daily';
+  if(entryKind==='task'&&!props.recur) _newT.recur=null;
   tasks.push(_newT);
   _taskIndexRegister(_newT);
   inp.value='';
@@ -420,6 +446,7 @@ function updateLiveParsePreview(){
   }
   if(props.starred) chips.push(_qpcChip('star', '★', 'Pinned to top'));
   if(props.recur)   chips.push(_qpcChip('recur', '↻ '+props.recur, 'Repeats'));
+  if(props.type)    chips.push(_qpcChip('tag', '%'+props.type, 'Type'));
   if(props.dueDate){
     let label=props.dueDate;
     if(typeof prettyDate==='function'){ try{ label=prettyDate(props.dueDate); }catch(_){} }
@@ -1394,6 +1421,9 @@ async function removeTask(id, ev){
   const _removedSnaps=[];
   tasks.forEach((t,idx)=>{ if(toRemove.includes(t.id)) _removedSnaps.push({idx, task:{...t}}); });
   for(const rid of toRemove) _taskIndexRemove(rid);
+  if(typeof deleteAttachmentsForTask === 'function'){
+    for(const rid of toRemove) deleteAttachmentsForTask(rid).catch(()=>{});
+  }
   tasks=tasks.filter(t=>!toRemove.includes(t.id));
   if(typeof syncTaskDels==='object'&&syncTaskDels){
     const ts = Date.now();
@@ -1709,6 +1739,7 @@ function advanceRecurringDate(dateStr,recurType){
   }
   const d=dateStr?new Date(dateStr+'T12:00:00'):new Date();
   if(recurType==='daily')d.setDate(d.getDate()+1);
+  else if(recurType==='every2d')d.setDate(d.getDate()+2);
   else if(recurType==='weekdays'){
     d.setDate(d.getDate()+1);
     while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);
@@ -3148,8 +3179,9 @@ function renderTaskList(){
       row.className='habit-template-row';
       const tmpls=[
         {label:'+ Daily check-in',name:'Daily check-in',recur:'daily'},
+        {label:'+ Every other day',name:'Every other day',recur:'every2d'},
+        {label:'+ Weekday habit',name:'Weekday habit',recur:'weekdays'},
         {label:'+ Weekly review',name:'Weekly review',recur:'weekly'},
-        {label:'+ Weekday habit',name:'New weekday habit',recur:'weekdays'},
       ];
       tmpls.forEach(tm=>{
         const b=document.createElement('button');
@@ -3707,6 +3739,7 @@ window.clearTaskSearch = clearTaskSearch;
 // Settings → Quick-add fields. Default fields: list + due. Each field's
 // chosen value is staged in window._quickAddValues until the user submits.
 const QUICK_ADD_FIELDS = {
+  entryKind: { label: 'Entry kind', render: _renderQAEntryKind },
   list: { label: 'List', render: _renderQAList },
   due:  { label: 'Due date', render: _renderQADue },
   category: { label: 'Life area', render: _renderQACategory },
@@ -3724,6 +3757,14 @@ function _qaSet(key, val){
   else v[key] = val;
 }
 
+function _renderQAEntryKind(wrap){
+  _renderQAChips(wrap, 'Entry kind', 'entryKind', [
+    ['task', 'One-off task'],
+    ['habit', 'Habit'],
+  ]);
+  const v = _qaVal().entryKind;
+  if(v === 'habit' && !_qaVal().recur) _qaSet('recur', 'daily');
+}
 function _renderQAList(wrap){
   wrap.appendChild(_qaLbl('List'));
   const ctl = document.createElement('div');
@@ -3818,7 +3859,11 @@ function _renderQARecur(wrap){
   ctl.className='qa-more-field-control';
   const sel = document.createElement('select');
   sel.className='mfield-in';
-  [['','None'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']].forEach(([v,l])=>{
+  [
+    ['','None'],['daily','Daily'],['weekdays','Weekdays'],['every2d','Every 2 days'],
+    ['weekly','Weekly'],['monthly','Monthly'],
+    ['after1d','After 1d'],['after3d','After 3d'],['after7d','After 7d'],
+  ].forEach(([v,l])=>{
     const o=document.createElement('option');o.value=v;o.textContent=l;sel.appendChild(o);
   });
   sel.value = _qaVal().recur || '';

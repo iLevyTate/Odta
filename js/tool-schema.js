@@ -47,7 +47,7 @@ const ENUM_FIELDS = {
   effort:   ['xs','s','m','l','xl'],
   energyLevel: ['high','low'],
   type:     ['task','bug','idea','errand','waiting'],
-  recur:    ['daily','weekdays','weekly','monthly','after1d','after3d','after7d','after14d','after30d'],
+  recur:    ['daily','weekdays','weekly','monthly','every2d','after1d','after3d','after7d','after14d','after30d'],
 };
 
 function _coerceInt(v){

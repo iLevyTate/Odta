@@ -61,6 +61,12 @@ Core mutable state (tasks, timer, goals, lists, …) lives primarily in [`js/tim
 
 [`js/version.js`](js/version.js) sets `window.ODTAULAI_RELEASE` (the window-global identifier is intentionally left in upper-case after the brand rename — every consumer reads it by this name). The service worker cache name in [`sw.js`](sw.js) must stay aligned (see [`tests/version-sync.test.mjs`](tests/version-sync.test.mjs)).
 
+## Attachments and calendar
+
+Task photos and voice notes live in IndexedDB (`js/attachments.js`, store `odtaulai_attachments`). Tasks keep `attachments: string[]` ids only — blobs never enter the JSON state snapshot.
+
+Calendar view supports `cfg.calMode`: `month` (grid + agenda), `week` (seven full columns), `day` (single-day agenda). Timer UI uses `js/timer-dock.js` for drag position (`cfg.timerDock`) and quick-timer summary on the floating dock.
+
 ## On‑device intelligence
 
 A single Transformers.js embedding pipeline drives every "AI" surface — there is no generative LLM in this app.

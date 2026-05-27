@@ -14,7 +14,7 @@ function toggleSettings(){
 }
 
 // ========== STATE ==========
-let cfg={work:25,short:5,long:15,cycle:4,autoBreak:true,autoWork:false,sound:true,linkTask:true,notif:true,timerSub:'pomo',hideHabitsInMainViews:true,askSessionNote:true,focusListMode:false,phasePreset:'classic',qaHintHidden:true,quickAddFields:['list','due'],cascadeCompletion:true,dueNotify:true};
+let cfg={work:25,short:5,long:15,cycle:4,autoBreak:true,autoWork:false,sound:true,linkTask:true,notif:true,timerSub:'pomo',hideHabitsInMainViews:true,askSessionNote:true,focusListMode:false,phasePreset:'classic',qaHintHidden:true,quickAddFields:['entryKind','list','due'],cascadeCompletion:true,dueNotify:true,calMode:'month',timerDock:{}};
 
 /** Named Pomodoro phase presets — applies to cfg.work/short/cycle on selection. */
 const PHASE_PRESETS = {
@@ -104,6 +104,7 @@ function renderTimerChrome(){
   renderCtrls();
   updateTitle();
   updateMiniTimer();
+  if(typeof updateTimerDock==='function') updateTimerDock();
 }
 function renderAll(){
   renderTimerChrome();
@@ -154,6 +155,7 @@ function tick(){
   intervals.forEach(iv=>{if(iv.intervalSec<=0)return;if((iv.target||'pomo')!=='pomo')return;const exp=Math.floor(totalEl/iv.intervalSec),prev=fireCounts[iv.id]||0;if(exp>prev&&totalEl>0){if(cfg.sound&&!audioScheduled)playChime(iv.chime);fireCounts[iv.id]=exp;flashInt(iv.id)}});
   if(remaining!==lastTickSec){lastTickSec=remaining;if(intervals.length)renderIntList();}
   renderBanner();updateTitle();updateMiniTimer();
+  if(typeof updateTimerDock==='function') updateTimerDock();
   if(remaining<=0){running=false;finished=true;clearInterval(tickId);onPhaseComplete()}
 }
 function onPhaseComplete(){
@@ -556,6 +558,7 @@ function ensureQuickTick(){
 }
 
 function renderQuickTimers(){
+  if(typeof updateTimerDock==='function') updateTimerDock();
   const list=gid('qtList');
   gid('qtCount').textContent=quickTimers.length+' timer'+(quickTimers.length!==1?'s':'');
   list.querySelectorAll('.qt-item').forEach(e=>e.remove());

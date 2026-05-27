@@ -53,7 +53,15 @@ test('nlparse: chrono URL points at the vendored bundle, not a CDN', () => {
   assert.doesNotMatch(src, /cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com/, 'must not reference any CDN host');
 });
 
-test('nlparse: only invokes chrono when base.dueDate is unset', () => {
-  // If parseQuickAdd already captured a date, skip the LLM-ish chrono pass.
-  assert.match(src, /if\s*\(\s*!base\.name\s*\|\|\s*base\.props\.dueDate\s*\)\s*return\s+base/, 'short-circuit when base already has a date');
+test('nlparse: skips chrono when title is empty after sync parse', () => {
+  assert.match(src, /if\s*\(\s*!base\.name\s*\)\s*return\s+base/, 'short-circuit when no title remains');
+});
+
+test('nlparse: strips matched chrono span from task title', () => {
+  assert.match(src, /function _applyChronoResult/, '_applyChronoResult helper must exist');
+  assert.match(src, /r0\.text/, 'must remove matched text from name');
+});
+
+test('nlparse: debounced live preview hook exists', () => {
+  assert.match(src, /scheduleLiveParsePreview/, 'live preview scheduler exported');
 });

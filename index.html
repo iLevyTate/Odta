@@ -228,6 +228,8 @@
         <span class="qpc qpc--tag"    title="Tags">#tag</span>
         <span class="qpc qpc--star"   title="Pin to top">!star</span>
         <span class="qpc qpc--recur"  title="Recurrence">~daily</span>
+        <span class="qpc qpc--recur"  title="Habit">~habit</span>
+        <span class="qpc qpc--tag"    title="Type">%idea</span>
       </span>
     </div>
     <button type="button" class="qa-hint-reveal" id="qa-hint-reveal" data-action="showQaHint">Show quick-add syntax</button>
@@ -430,7 +432,7 @@
               </div>
               <div class="task-toolbar-display-checks">
                 <label class="task-tb-check" title="When on, recurring tasks only appear in the Habits view">
-                  <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide recurring from main
+                  <input type="checkbox" id="hideHabitsInMain" checked data-onchange="onHideHabitsToggle"> Hide habits from Today/Inbox
                 </label>
                 <label class="task-tb-check" title="Include completed tasks in the All view">
                   <input type="checkbox" id="showCompletedAll" data-onchange="onShowCompletedToggle"> Show completed
@@ -778,7 +780,8 @@
 <!-- Floating Mini Timer. The outer container is non-interactive; two real
      buttons (Open and Play/Pause) keep ARIA semantics clean — no
      interactive-inside-interactive. -->
-<div class="mini-timer" id="miniTimer" role="group" aria-label="Focus timer mini-controls">
+<div class="mini-timer timer-dock" id="timerDock" role="group" aria-label="Timer dock">
+  <button type="button" class="timer-dock-grip" aria-label="Drag timer dock" title="Drag to move">⠿</button>
   <button type="button" class="mt-open-btn" data-action="showTab" data-arg="focus" aria-label="Open focus timer">
     <span class="mt-phase-dot" id="mtDot" aria-hidden="true"></span>
     <span class="mt-info">
@@ -788,6 +791,8 @@
     <span class="mt-open" id="mtTaskHint" hidden aria-hidden="true">⇢ open</span>
   </button>
   <button type="button" class="mt-btn mt-play" id="mtToggle" aria-label="Play or pause focus timer" data-action="miniTimerToggle">▶</button>
+  <button type="button" class="timer-dock-min" data-action="toggleTimerDockMin" aria-label="Minimize timer dock" title="Minimize">−</button>
+  <button type="button" class="timer-dock-qt" id="timerDockQt" hidden data-action="showTab" data-arg="focus" title="Quick timers"></button>
 </div>
 
 <!-- Floating Quick-Add button (mobile / touch). Always-on quick capture so a
@@ -954,7 +959,7 @@
         </div>
       </div>
 
-      <div class="mfield-row">
+      <div class="mfield-row mfield-row--modal-grid">
         <div class="mfield">
           <label class="mfield-lbl" for="mdDue">Due Date</label>
           <input type="date" class="mfield-in" id="mdDue">
@@ -978,35 +983,44 @@
         </div>
       </div>
 
-      <div class="mfield-row">
+      <div class="md-block md-block-when">
+        <div class="md-block-title">When</div>
         <div class="mfield">
-          <label class="mfield-lbl" for="mdSnoozeUntil">Snooze (hide until)</label>
-          <input type="date" class="mfield-in" id="mdSnoozeUntil" title="Hide this task from main views until this date. Distinct from due date — snoozing does not move the deadline.">
-          <div class="quick-dates" role="group" aria-label="Quick snooze">
-            <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[1]'>+1 day</button>
-            <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[3]'>+3 days</button>
-            <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[7]'>+1 week</button>
-            <button type="button" class="qd-btn" data-action="setQuickSnooze" data-arg="clear">Clear</button>
-          </div>
+          <div class="mfield-lbl" id="mdRecurLbl">Repeat</div>
+          <div class="recur-options" id="mdRecur" role="group" aria-labelledby="mdRecurLbl"></div>
+          <p class="md-hint">Calendar schedule (daily, every 2 days…) vs “After Nd” schedules from completion day.</p>
         </div>
-        <div class="mfield">
-          <div class="mfield-lbl" id="mdTypeLbl">Type</div>
-          <div class="mfield-chips" id="mdTypeChips" role="group" aria-labelledby="mdTypeLbl"></div>
+        <div class="mfield-row">
+          <div class="mfield">
+            <label class="mfield-lbl" for="mdSnoozeUntil">Snooze (hide until)</label>
+            <input type="date" class="mfield-in" id="mdSnoozeUntil" title="Hide this task from main views until this date. Distinct from due date — snoozing does not move the deadline.">
+            <div class="quick-dates" role="group" aria-label="Quick snooze">
+              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[1]'>+1 day</button>
+              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[3]'>+3 days</button>
+              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[7]'>+1 week</button>
+              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-arg="clear">Clear</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="mfield">
-        <label class="mfield-lbl" for="mdDesc">Description</label>
-        <textarea class="mfield-textarea" id="mdDesc" placeholder="Acceptance criteria, links, notes…"></textarea>
+      <div class="md-block md-block-what">
+        <div class="md-block-title">What</div>
+        <div class="mfield-row">
+          <div class="mfield">
+            <div class="mfield-lbl" id="mdTypeLbl">Type</div>
+            <div class="mfield-chips" id="mdTypeChips" role="group" aria-labelledby="mdTypeLbl"></div>
+          </div>
+        </div>
+        <div class="mfield">
+          <label class="mfield-lbl" for="mdDesc">Description</label>
+          <textarea class="mfield-textarea" id="mdDesc" placeholder="Acceptance criteria, links, notes…"></textarea>
+        </div>
       </div>
 
       <details class="md-section">
         <summary class="md-section-sum">Tags &amp; list</summary>
         <div class="md-section-body">
-          <div class="mfield">
-            <div class="mfield-lbl" id="mdRecurLbl">Repeat</div>
-            <div class="recur-options" id="mdRecur" role="group" aria-labelledby="mdRecurLbl"></div>
-          </div>
           <div class="mfield">
             <div class="mfield-lbl" id="mdTagsLbl">Tags</div>
             <div class="tags-editor" id="mdTagsEditor" role="group" aria-labelledby="mdTagsLbl"></div>
@@ -1073,6 +1087,15 @@
         </div>
       </details>
 
+      <details class="md-section" open>
+        <summary class="md-section-sum">Attachments</summary>
+        <div class="md-section-body">
+          <div class="mfield" id="mdAttachmentsWrap">
+            <div id="mdAttachments" class="md-attachments" role="group" aria-label="Task attachments"></div>
+          </div>
+        </div>
+      </details>
+
       <details class="md-section">
         <summary class="md-section-sum">Links &amp; more</summary>
         <div class="md-section-body">
@@ -1127,6 +1150,8 @@
 <script src="js/storage.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/timer.js"></script>
+<script src="js/attachments.js"></script>
+<script src="js/timer-dock.js"></script>
 <script src="js/tasks.js"></script>
 <script src="js/intel.js"></script>
 <script src="js/embed-store.js"></script>

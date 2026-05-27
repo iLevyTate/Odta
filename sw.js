@@ -36,6 +36,8 @@ const ASSETS = [
   './js/storage.js',
   './js/audio.js',
   './js/timer.js',
+  './js/attachments.js',
+  './js/timer-dock.js',
   './js/tasks.js',
   './js/intel.js',
   './js/embed-store.js',
