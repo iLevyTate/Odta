@@ -2303,8 +2303,36 @@ let _updateTaskFiltersDebounce=null;
 // Returns: { text: 'free part', ops: { tag:[], list:[], is:[], priority:[],
 //                                       due:[], status:[] } }
 function parseTaskSearchQuery(raw){
-  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [], duration: [] };
+  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [], duration: [], completed: [] };
   if(typeof raw !== 'string') return { text: '', ops };
+  // Completion-date value parser: accepts keyword (today/yesterday/this-week/
+  // last-week/this-month/last-month), exact ISO date (YYYY-MM-DD), or ISO
+  // range (YYYY-MM-DD..YYYY-MM-DD). Returns { start, end } or null.
+  function _shiftIso(iso, days){
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  function _parseCompletedVal(rawVal){
+    const today = (typeof todayISO === 'function')
+      ? todayISO()
+      : new Date().toISOString().slice(0, 10);
+    if(rawVal === 'today')      return { start: today, end: today };
+    if(rawVal === 'yesterday')  return { start: _shiftIso(today, -1), end: _shiftIso(today, -1) };
+    if(rawVal === 'this-week')  return { start: _shiftIso(today, -6), end: today };
+    if(rawVal === 'last-week')  return { start: _shiftIso(today, -7), end: _shiftIso(today, -1) };
+    if(rawVal === 'this-month') return { start: today.slice(0, 8) + '01', end: today };
+    if(rawVal === 'last-month'){
+      const d = new Date(today + 'T00:00:00Z');
+      const lastPrev  = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0));
+      const firstPrev = new Date(Date.UTC(lastPrev.getUTCFullYear(), lastPrev.getUTCMonth(), 1));
+      return { start: firstPrev.toISOString().slice(0, 10), end: lastPrev.toISOString().slice(0, 10) };
+    }
+    if(/^\d{4}-\d{2}-\d{2}$/.test(rawVal)) return { start: rawVal, end: rawVal };
+    const range = rawVal.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+    if(range) return { start: range[1], end: range[2] };
+    return null;
+  }
   // Duration value parser: accepts "90" (bare integer = minutes), "2h", "30m",
   // "45s", compound "1h30m", optionally prefixed with a compare op (>, >=, <,
   // <=, =; default "="). Returns { op, seconds } or null for invalid input.
@@ -2365,6 +2393,11 @@ function parseTaskSearchQuery(raw){
         if(parsed) ops.duration.push(parsed);
         // invalid duration values are dropped (token still consumed so it
         // doesn't survive as free text - matches @priority behaviour above).
+        consumed = true;
+      }
+      else if(key === 'completed'){
+        const parsed = _parseCompletedVal(val);
+        if(parsed) ops.completed.push(parsed);
         consumed = true;
       }
       // else: unknown operator → leave it in the leftover free-text query.
