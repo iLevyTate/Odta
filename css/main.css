@@ -548,6 +548,21 @@
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
   .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);transform:translateY(-20px);opacity:0;transition:transform var(--dur-modal) var(--ease-out),opacity var(--dur-modal) var(--ease-out)}
   .modal-overlay.open .modal{transform:translateY(0);opacity:1}
+  /* prefers-reduced-motion: collapse modal/overlay transitions to ~instant.
+     Modal.open's onOpen callback still fires correctly under reduced motion
+     thanks to its transitionend listener + 400ms safety timeout fallback. */
+  @media (prefers-reduced-motion:reduce){
+    .modal-overlay,
+    .modal-overlay.open,
+    .modal-overlay .modal,
+    .modal-overlay.open .modal,
+    .cmdk-overlay,
+    .cmdk-overlay.open,
+    .what-next-overlay,
+    .what-next-overlay.open{
+      transition-duration:.01ms!important;
+    }
+  }
   .modal-head{display:flex;align-items:center;gap:10px;padding:var(--space-7) var(--space-9);border-bottom:1px solid var(--border-subtle)}
   .modal-close{margin-inline-start:auto;width:28px;height:28px;background:transparent;border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3);font-size:14px;cursor:pointer;font-family:inherit}
   .modal-close:hover{color:var(--danger);border-color:var(--danger-border)}
@@ -2791,7 +2806,11 @@
 .task-search-semantic{font-size:11px;color:var(--text-3);display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;user-select:none}
 .task-search-semantic--disabled{opacity:.65;cursor:not-allowed}
 .task-search-semantic--disabled input{cursor:not-allowed}
-.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto}
+/* What-Next overlay — same state-driven pattern as .modal-overlay / .cmdk-overlay.
+   Stage 3 of the modal-system unification: routes through js/modal.js so all
+   overlays share one open/close mechanism. */
+.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+.what-next-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
 .what-next-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);max-width:440px;width:100%;padding:16px 18px;box-shadow:var(--shadow-card);margin-top:8vh}
 .what-next-hdr{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px;margin-bottom:6px}
 .what-next-x{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;padding:4px}

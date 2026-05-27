@@ -459,7 +459,7 @@ function cmdkKeydown(e){
 }
 function _blockingOverlaysForCmdK(){
   const wno = document.getElementById('whatNextOverlay');
-  if(wno && !wno.hidden) return true;
+  if(wno && wno.classList.contains('open')) return true;
   const tm = document.getElementById('taskModal');
   if(tm && tm.classList.contains('open')) return true;
   if(document.getElementById('bulkImportModal')?.classList.contains('open')) return true;
@@ -2384,17 +2384,8 @@ window.submitAppPrompt=submitAppPrompt;
 window.showAppConfirm=showAppConfirm;
 window.showAppPrompt=showAppPrompt;
 
-// Legacy ESC handler — bubble phase. Stage 2 moved app-confirm, app-prompt,
-// cmdk, bulk-import, task-modal, and all filter sheets onto js/modal.js,
-// whose own capture-phase ESC listener invokes each modal's onRequestClose
-// and calls stopPropagation, so those branches never reach here anyway.
-// What-next still uses the .hidden attribute pattern (Stage 3 will fold it
-// into the Modal utility), so it stays in this chain until then.
-document.addEventListener('keydown',e=>{
-  if(e.key!=='Escape') return;
-  const wno=gid('whatNextOverlay');
-  if(wno && !wno.hidden){ e.preventDefault(); if(typeof closeWhatNext==='function') closeWhatNext(); return }
-});
+// Legacy ESC chain removed in Stage 3 — every overlay now routes through
+// js/modal.js's capture-phase ESC listener (via onRequestClose hooks).
 
 // ========== LOG ==========
 function addLog(name,durSec,type){timeLog.unshift({id:++logIdCtr,name,durSec,type,time:timeNow()});renderLog();saveState('user')}
@@ -3223,9 +3214,9 @@ document.addEventListener('keydown', function(e){
   const open = candidates.reverse().find(el => {
     const cls = el.classList;
     if(cls.contains('open')) return true;
-    if(!el.hidden && cls.contains('cmdk-overlay')) return true;
+    // aiBriefCard still uses the hidden-attribute pattern; what-next, cmdk,
+    // and the modal-overlays all moved to .open class in Stages 1-3.
     if(el.id === 'aiBriefCard' && !el.hidden) return true;
-    if(el.id === 'whatNextOverlay' && !el.hidden) return true;
     return false;
   });
   if(!open) return;
