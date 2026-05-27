@@ -1112,6 +1112,13 @@ function _subtaskAllowedUnderShownParent(t){
   if(today && t.hiddenUntil && t.hiddenUntil > today
      && smartView !== 'snoozed'
      && smartView !== 'completed') return false;
+  // Hide done children outside the 'completed' view unless the global
+  // "show completed" toggle is on — same rule top-level done tasks already
+  // follow in the 'all' view (matchesFilters at line ~2646).
+  if(t.status === 'done' && smartView !== 'completed'){
+    const sd = gid('showCompletedAll');
+    if(!sd || !sd.checked) return false;
+  }
   return true;
 }
 function hasChildren(taskId){return tasks.some(t=>t.parentId===taskId)}
