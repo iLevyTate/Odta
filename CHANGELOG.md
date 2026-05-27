@@ -1,8 +1,21 @@
 # Changelog
 
-## v57 — 2026-05-27
+## v58 — 2026-05-26
 
-- **Fix**: the Tools-tab **Proposed changes** preview no longer collapses every row to a thin sliver on large batches (e.g. auto-organize with 20 list moves). The list is a height-capped flex column and the cards set `overflow:hidden`, which zeroed their automatic flex min-size and let flexbox shrink each card to a hairline that clipped the task name, route, and checkbox. Cards now pin `flex-shrink:0` so the list scrolls instead of crushing its rows.
+- **Fix**: the Tools-tab **Proposed changes** preview no longer collapses every row to a thin sliver on large batches (e.g. auto-organize with 20 list moves). Cards pin `flex-shrink:0` so the list scrolls instead of crushing its rows; safe task-name normalization and list-move confirmation markup improve readability.
+- **Fix (CSP)**: life-area chips use `data-cat-id` instead of inline styles; smoke tests ignore Chromium dynamic-style console noise.
+- **UI**: chip language for tasks filter bar, bottom sheets, and modal life areas; filter bar responsive grid, active-filters footer, Settings nav/Focus labels.
+- **Refactor**: timer phase chrome toggles semantic card classes; calendar feed defaults and ICS import color aligned with accent; export clipboard styling via `export-btn--copied`.
+- **Build**: `bump-version` rotates cache-busting on `css/main.css` in SW precache and `index.html`.
+- **Docs/Tests**: palette guardrails, pending-ops layout contracts, `css-no-stray-hex` regression test.
+- Service worker cache rotated to `odtaulai-v58`.
+
+## v57 — 2026-05-26
+
+- **CI**: Puppeteer browser smoke (`npm run smoke`) on push/PR; `npm ci` with static server + wait-on after unit checks.
+- **Tooling**: `puppeteer`, `serve`, `wait-on`; `serve:smoke`; shared `smoke-console-utils.mjs` (SW reload settle, headless ONNX/intel noise filter, CI Chromium flags); smoke scripts hardened (`gotoSmokeStable`, exhaustive view toggles, responsive widths 360/640/960 px).
+- **A11y**: calendar day-agenda “+ Task” button gets `aria-label` alongside `title`.
+- **Docs**: `docs/MANUAL_QA_MATRIX.md`; AUDIT / README / CONTRIBUTING updates for smoke workflow.
 - Service worker cache rotated to `odtaulai-v57`.
 
 ## v55 — 2026-05-25

@@ -30,7 +30,7 @@ window.VALUE_KEYS = VALUE_KEYS;
  * Life areas — `general` is manual-only; never auto-assigned by kNN/centroid.
  */
 const DEFAULT_CATEGORY_DEFS = [
-  { id: 'bodyMindSpirit', label: 'Body, Mind & Spirit', icon: 'leaf', color: 'var(--cat-bodyMindSpirit)',
+  { id: 'bodyMindSpirit', label: 'Body, Mind & Spirit', chipLabel: 'Body & mind', icon: 'leaf', color: 'var(--cat-bodyMindSpirit)',
     focus: 'Physical health, mental wellness, and spirituality',
     description: 'Physical health, mental wellness, spirituality',
     coreValues: [
@@ -62,7 +62,7 @@ const DEFAULT_CATEGORY_DEFS = [
     ],
     examples: ['Volunteer work', 'Donations', 'Neighborhood events', 'Advocacy', 'Mentoring'],
   },
-  { id: 'jobLearningFinances', label: 'Job, Learning & Finances', icon: 'briefcase', color: 'var(--cat-jobLearningFinances)',
+  { id: 'jobLearningFinances', label: 'Job, Learning & Finances', chipLabel: 'Work & learning', icon: 'briefcase', color: 'var(--cat-jobLearningFinances)',
     focus: 'Career, education, financial stability',
     description: 'Career, education, financial stability',
     coreValues: [
@@ -212,12 +212,15 @@ function getCategoryDef(id){
   if(typeof cfg !== 'undefined' && cfg) ensureClassificationConfig(cfg);
   const row = (typeof cfg !== 'undefined' && cfg && Array.isArray(cfg.categories))
     ? cfg.categories.find(x => x.id === id) : null;
+  const baseFallback = DEFAULT_CATEGORY_DEFS.find(d => d.id === id);
   if(row){
-    const cv = _normalizeRowCoreValues(row.coreValues, DEFAULT_CATEGORY_DEFS.find(d => d.id === id));
-    const ex = _normalizeRowExamples(row.examples, DEFAULT_CATEGORY_DEFS.find(d => d.id === id));
+    const cv = _normalizeRowCoreValues(row.coreValues, baseFallback);
+    const ex = _normalizeRowExamples(row.examples, baseFallback);
+    const chipFromRow = row.chipLabel != null ? String(row.chipLabel).trim().slice(0, 48) : '';
     return {
       id: row.id,
       label: row.label || row.id,
+      chipLabel: chipFromRow || (baseFallback && baseFallback.chipLabel) || '',
       icon: row.icon || 'pin',
       color: row.color || 'var(--cat-general)',
       description: row.description || '',
@@ -231,6 +234,7 @@ function getCategoryDef(id){
     return {
       id: base.id,
       label: base.label,
+      chipLabel: base.chipLabel || '',
       icon: base.icon,
       color: base.color,
       description: base.description,
@@ -240,7 +244,18 @@ function getCategoryDef(id){
     };
   }
   const ic = CAT_ICON[id];
-  return { id, label: id, icon: ic || 'pin', color: 'var(--cat-general)', description: '', focus: '', coreValues: [], examples: [] };
+  return { id, label: id, chipLabel: '', icon: ic || 'pin', color: 'var(--cat-general)', description: '', focus: '', coreValues: [], examples: [] };
+}
+
+/** Readable short label for filter bar + tag sheet chips when present. */
+function getCategoryChipLabel(catId){
+  if(!catId || catId === 'all') return 'Life areas';
+  if(typeof getCategoryDef !== 'function') return String(catId);
+  const def = getCategoryDef(catId);
+  if(!def) return String(catId);
+  if(def.chipLabel) return def.chipLabel;
+  const full = def.label || String(catId);
+  return full.length > 28 ? full.slice(0, 26) + '…' : full;
 }
 
 function getActiveCategories(){
@@ -415,6 +430,14 @@ function renderClassificationSettings(){
   const presetVals = new Set(CLASSIFICATION_COLOR_PRESETS.map(p => p.value));
 
   let h = '<div class="class-mgr-block"><div class="class-mgr-hdr">Life areas</div>';
+  const chipPreviewCells = cfg.categories.filter(c => !c.hidden).map(obj => {
+    const def = (typeof getCategoryDef === 'function' ? getCategoryDef(obj.id) : null);
+    const text = esc((def && def.chipLabel) || obj.label || obj.id || '');
+    const idEsc = escAttr(String(obj.id || ''));
+    return `<span class="ui-chip ui-chip--dot ui-chip--preview" data-cat-id="${idEsc}" role="presentation" aria-hidden="true">${text}</span>`;
+  }).join('');
+  h += '<p class="class-mgr-preview-hint">Preview — filter chips match this compact style</p>'
+    + '<div class="class-mgr-chip-preview-bar">' + chipPreviewCells + '</div>';
   cfg.categories.forEach((obj, idx) => {
     const def = (typeof getCategoryDef === 'function' ? getCategoryDef(obj.id) : null) || obj;
     // Prefer the row's own values when present (so renames/legacy ids survive)
@@ -499,7 +522,7 @@ function refreshClassificationUi(){
   const tb = document.getElementById('tagsBar');
   if(sel){
     const cur = sel.value;
-    sel.innerHTML = '<option value="all">Any category</option>';
+    sel.innerHTML = '<option value="all">Any life area</option>';
     getActiveCategories().forEach(c => {
       const o = document.createElement('option');
       o.value = c.id;
@@ -524,12 +547,11 @@ function refreshClassificationUi(){
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sv-chip sv-chip--cat' + (cur === c.id ? ' active' : '');
-      btn.textContent = String(c.label || '');
+      btn.textContent = (typeof getCategoryChipLabel === 'function')
+        ? getCategoryChipLabel(String(c.id))
+        : String(c.label || '');
       const id = String(c.id);
-      // Tint the chip with this category's own colour so the active one is
-      // unmistakable and matches the row stripes / settings (--cat-* tokens).
-      const col = c.color || (typeof getCategoryDef === 'function' && getCategoryDef(id) && getCategoryDef(id).color);
-      if(col) btn.style.setProperty('--sv-cat', col);
+      btn.setAttribute('data-cat-id', id);
       btn.addEventListener('click', () => setFilterCategory(id));
       tb.appendChild(btn);
     });
@@ -1470,6 +1492,7 @@ window.ensureCategoryCentroids = ensureCategoryCentroids;
 window.invalidateCategoryCentroids = invalidateCategoryCentroids;
 window.ensureClassificationConfig = ensureClassificationConfig;
 window.getCategoryDef = getCategoryDef;
+window.getCategoryChipLabel = getCategoryChipLabel;
 window.getActiveCategories = getActiveCategories;
 window.hasClassificationCategory = hasClassificationCategory;
 window.renderClassificationSettings = renderClassificationSettings;

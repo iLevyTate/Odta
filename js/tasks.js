@@ -1963,8 +1963,8 @@ function haptic(ms){
 function ensureDefaultList(){
   if(lists.length===0){
     const t=Date.now();
-    lists.push({id:++listIdCtr,name:'Personal',color:'#2ecc71',description:'Personal life — errands, home, hobbies, relationships, health, self-care.',lastModified:t});
-    lists.push({id:++listIdCtr,name:'Work',color:'#3d8bcc',description:'Work and career — projects, meetings, deadlines, professional learning.',lastModified:t});
+    lists.push({id:++listIdCtr,name:'Personal',color:'#30d158',description:'Personal life — errands, home, hobbies, relationships, health, self-care.',lastModified:t});
+    lists.push({id:++listIdCtr,name:'Work',color:'#6aa8ff',description:'Work and career — projects, meetings, deadlines, professional learning.',lastModified:t});
     activeListId=lists[0].id;
   }
   if(!activeListId&&lists.length)activeListId=lists[0].id;
@@ -1981,7 +1981,7 @@ async function addList(){
   const descriptionRaw=await showAppPrompt(LIST_DESC_HINT,'',{multiline:true});
   if(descriptionRaw===null)return;
   const description=String(descriptionRaw).trim();
-  const colors=['#2ecc71','#3d8bcc','#e056a0','#e8a838','#9b59b6','#48b5e0','#c0392b','#1abc9c'];
+  const colors=['#30d158','#6aa8ff','#ff375f','#ff9f0a','#bf5af2','#7db3ff','#ff453a','#a78bfa'];
   const color=colors[lists.length%colors.length];
   lists.push({id:++listIdCtr,name:String(name).trim(),color,description,lastModified:Date.now()});
   activeListId=listIdCtr;
@@ -2180,6 +2180,28 @@ function updateFiltersSummary(){
   el.textContent=grpPart?sortPart+' · '+grpPart:sortPart;
 }
 
+// Count View-sheet options that are not their defaults — shown on #fbView
+// badge and used to tint the compact filter trigger when sorting, grouping,
+// panel filters, or display toggles stray from baseline.
+function _filtersViewCustomizationCount(){
+  let count = 0;
+  const s = gid('taskSearch'), st = gid('filterStatus'), pr = gid('filterPriority');
+  const so = gid('taskSortSel'), gr = gid('groupBySel');
+  if(s && s.value.trim()) count++;
+  const sem = gid('taskSearchSemantic');
+  if(sem && sem.checked) count++;
+  if(st && st.value !== 'all') count++;
+  if(pr && pr.value !== 'all') count++;
+  if(so && so.value !== 'manual' && so.value !== 'smart') count++;
+  if(gr && gr.value !== 'none') count++;
+  const cat = gid('filterCategory'); if(cat && cat.value !== 'all') count++;
+  const sc = gid('showCompletedAll'); if(sc && sc.checked) count++;
+  const density = (typeof getCardDensity === 'function') ? getCardDensity() : 'cozy';
+  if(density !== 'cozy') count++;
+  const hh = gid('hideHabitsInMain'); if(hh && !hh.checked) count++;
+  return count;
+}
+
 // Keep the compact .filter-bar trigger labels in sync with the live filter
 // state. Called at the end of every renderTaskList so list switches, smart-view
 // changes, category picks and view toggles all reflect immediately.
@@ -2193,25 +2215,40 @@ function syncFilterBar(){
     }
     listLbl.textContent=name;
   }
+  const fbListsBtn = gid('fbLists');
+  if(fbListsBtn){
+    const listsActive = !!(typeof showAllLists === 'boolean' && !showAllLists)
+      || (typeof smartView !== 'undefined' && smartView && smartView !== 'all');
+    fbListsBtn.classList.toggle('active', listsActive);
+  }
   const tagLbl=gid('fbTagsLabel');
   if(tagLbl){
     const cat=(gid('filterCategory')||{}).value||'all';
     let label='Life areas';
-    if(cat&&cat!=='all'&&typeof getCategoryDef==='function'){
-      const def=getCategoryDef(cat);
-      if(def&&def.label) label=def.label;
-    }
     const activeTags = (typeof parseTaskSearchQuery === 'function')
       ? (parseTaskSearchQuery((gid('taskSearch')||{}).value||'').ops.tag||[])
       : [];
+    if(cat && cat !== 'all'){
+      if(typeof getCategoryChipLabel === 'function') label = getCategoryChipLabel(cat);
+      else if(typeof getCategoryDef === 'function'){
+        const catDef = getCategoryDef(cat);
+        if(catDef && catDef.label) label = catDef.label;
+      }
+    }
     if(activeTags.length) label = '#' + activeTags[0] + (activeTags.length > 1 ? ' +' + (activeTags.length - 1) : '');
     tagLbl.textContent=label;
     const btn=gid('fbTags');
-    if(btn) btn.classList.toggle('active', cat&&cat!=='all');
+    if(btn) btn.classList.toggle('active', (cat&&cat!=='all') || activeTags.length > 0);
   }
   const viewLbl=gid('fbViewLabel');
   if(viewLbl){
     viewLbl.textContent=taskView==='board'?'Board':taskView==='calendar'?'Cal':'List';
+  }
+  const fbViewBtn = gid('fbView');
+  if(fbViewBtn){
+    const viewActive = _filtersViewCustomizationCount() > 0
+      || (typeof taskView === 'string' && taskView !== 'list');
+    fbViewBtn.classList.toggle('active', viewActive);
   }
 }
 window.syncFilterBar=syncFilterBar;
@@ -2398,14 +2435,15 @@ function renderActiveFilters(){
         renderTaskList();
       }));
   }
-  // Filter-panel category.
+  // Filter-panel life area (classification category).
   if(taskFilters.category && taskFilters.category !== 'all'){
     let catLabel = taskFilters.category;
-    if(typeof getCategoryDef === 'function'){
+    if(typeof getCategoryChipLabel === 'function') catLabel = getCategoryChipLabel(taskFilters.category);
+    else if(typeof getCategoryDef === 'function'){
       const d = getCategoryDef(taskFilters.category);
       if(d && d.label) catLabel = d.label;
     }
-    chips.push(_afChip('qpc--tag', 'category: ' + catLabel, 'category filter',
+    chips.push(_afChip('qpc--tag', 'life area: ' + catLabel, 'life area filter',
       () => {
         if(typeof setFilterCategory === 'function') setFilterCategory('all');
         else {
@@ -2441,11 +2479,15 @@ function renderActiveFilters(){
   if(!chips.length){ host.hidden = true; return; }
   host.hidden = false;
 
+  const mainRow = document.createElement('div');
+  mainRow.className = 'af-main-row';
+
   const lbl = document.createElement('span');
   lbl.className = 'af-label';
   lbl.textContent = 'Filters';
-  host.appendChild(lbl);
-  for(const c of chips) host.appendChild(c);
+  mainRow.appendChild(lbl);
+  for(const c of chips) mainRow.appendChild(c);
+  host.appendChild(mainRow);
 
   if(chips.length >= 2){
     const clearAll = document.createElement('button');
@@ -2468,7 +2510,10 @@ function renderActiveFilters(){
       if(typeof updateTaskFilters === 'function') updateTaskFilters();
       renderTaskList();
     };
-    host.appendChild(clearAll);
+    const footerRow = document.createElement('div');
+    footerRow.className = 'af-footer-row';
+    footerRow.appendChild(clearAll);
+    host.appendChild(footerRow);
   }
 }
 if(typeof window !== 'undefined') window.renderActiveFilters = renderActiveFilters;
@@ -2825,21 +2870,10 @@ function snoozeTodayBanner(){
 }
 
 function updateFiltersActiveBadge(){
-  // Show a badge on the Filters button when any filter is non-default
+  // Show a badge on the Filters button when any View-sheet option is non-default.
   const badge=gid('filtersActiveCount');if(!badge)return;
-  let count=0;
-  const s=gid('taskSearch'),st=gid('filterStatus'),pr=gid('filterPriority'),so=gid('taskSortSel'),gr=gid('groupBySel');
-  if(s&&s.value.trim())count++;
-  const sem=gid('taskSearchSemantic');  if(sem&&sem.checked)count++;
-  if(st&&st.value!=='all')count++;
-  if(pr&&pr.value!=='all')count++;
-  if(so&&so.value!=='manual'&&so.value!=='smart')count++;
-  if(gr&&gr.value!=='none')count++;
-  const cat=gid('filterCategory');if(cat&&cat.value!=='all')count++;
-  const sc=gid('showCompletedAll');if(sc&&sc.checked)count++;
-  const cd=gid('cardDensityDetailed');if(cd&&cd.checked)count++;
-  const hh=gid('hideHabitsInMain');if(hh&&!hh.checked)count++;
-  if(count>0){badge.textContent=count;badge.hidden = false;}
+  const count = _filtersViewCustomizationCount();
+  if(count > 0){badge.textContent=count;badge.hidden = false;}
   else{badge.hidden = true;}
 }
 

@@ -42,8 +42,21 @@ test('validateOps preserves _preview metadata for review cards', () => {
 });
 
 test('pending row styles use explicit readable text colors', () => {
-  assert.match(cssSrc, /\.pending-simple-title\{[^}]*color:var\(--text-1,#e8edf5\)/, 'title color fallback');
-  assert.match(cssSrc, /\.pending-route-vals\{[^}]*color:var\(--text-1,#e8edf5\)/, 'route color fallback');
+  assert.match(cssSrc, /\.pending-simple-title\{[^}]*color:var\(--text-1\)/, 'title uses text-1 token');
+  assert.match(cssSrc, /\.pending-route-vals\{[^}]*color:var\(--text-1\)/, 'route uses text-1 token');
+  assert.match(cssSrc, /\.pending-move-title\{[^}]*color:var\(--text-1\)/, 'list-move title uses text-1');
+  assert.match(cssSrc, /\.pending-move-route\{[^}]*color:var\(--text-2\)/, 'list-move route uses text-2');
+});
+
+test('pending mobile layout keeps scroll viewport and tap-friendly row heights', () => {
+  assert.ok(
+    /\.pending-move-head\{[^}]*min-height:\s*56px/.test(cssSrc),
+    'mobile pending-move-head min-height 56px',
+  );
+  assert.ok(
+    /\.pending-list\{[^}]*max-height:\s*min\(50vh,\s*420px\)/.test(cssSrc),
+    'pending-list capped with viewport-relative max',
+  );
 });
 
 test('pending list cards do not flex-shrink (large batches must scroll, not collapse)', () => {

@@ -552,13 +552,31 @@ function _listNameById(listId){
   return l ? l.name : ('List #' + listId);
 }
 
+/** Single-line title from a task row (handles missing/non-string legacy data without throwing). */
+function _intelFmtTaskTitle(task){
+  if(!task || task.name == null) return '';
+  return String(task.name).replace(/\s+/g, ' ').trim();
+}
+
+function _intelFmtArgName(args){
+  if(!args || args.name == null) return '';
+  return String(args.name).replace(/\s+/g, ' ').trim();
+}
+
+function _intelPreviewShortNameFromTaskArgs(t, a, max){
+  const lim = typeof max === 'number' ? max : 56;
+  const fromT = _intelFmtTaskTitle(t);
+  if(fromT) return fromT.slice(0, lim);
+  return _intelFmtArgName(a).slice(0, lim);
+}
+
 /**
  * @returns {{ kind:'update' } | { kind:'listMove', title:string, fromList:string, toList:string, icon:string, danger:boolean } | { kind:'simple', title:string, taskName:string, detail:string, icon:string, danger:boolean }}
  */
 function _describeOpStructured(op){
   const a = op.args || {};
   const t = a.id ? findTask(a.id) : null;
-  const taskName = t ? t.name.slice(0, 56) : (a.name ? String(a.name).slice(0, 56) : '');
+  const taskName = _intelPreviewShortNameFromTaskArgs(t, a, 56);
   const parts = keys => keys.filter(k => a[k] != null).map(k => _humanizeFieldKey(k) + ': ' + _formatFieldDisplay(k, a[k])).join(' · ');
 
   switch(op.name){
@@ -590,7 +608,8 @@ function _describeOpStructured(op){
     case 'REMOVE_TAG': return { kind: 'simple', title: 'Remove tag', taskName, detail: String(a.tag || ''), icon: 'close', danger: false };
     case 'ADD_BLOCKER': {
       const b = findTask(a.blockerId);
-      return { kind: 'simple', title: 'Add blocker', taskName, detail: b ? b.name.slice(0, 48) : ('#' + a.blockerId), icon: 'alertTriangle', danger: false };
+      const bnm = _intelFmtTaskTitle(b).slice(0, 48);
+      return { kind: 'simple', title: 'Add blocker', taskName, detail: bnm || ('#' + a.blockerId), icon: 'alertTriangle', danger: false };
     }
     case 'REMOVE_BLOCKER': return { kind: 'simple', title: 'Remove blocker', taskName, detail: 'Blocker #' + a.blockerId, icon: 'close', danger: false };
     case 'SET_REMINDER': return { kind: 'simple', title: 'Set reminder', taskName, detail: String(a.remindAt || ''), icon: 'timer', danger: false };
@@ -638,25 +657,25 @@ function _pendingMasterCheckbox(idx){
   return cb;
 }
 
-/** Mount a list-move preview row via DOM text nodes (avoids blank innerHTML rows). */
+/** Mount a list-move preview: stacked title + route (full-width body; avoids grid squeeze hairlines). */
 function _mountPendingListMoveCard(listEl, op, idx){
   const st = _describeOpStructured(op);
   if(st.kind !== 'listMove') return false;
   const card = document.createElement('div');
-  card.className = 'pending-simple-card';
+  card.className = 'pending-move-card';
   const lbl = document.createElement('label');
-  lbl.className = 'pending-simple-row pending-simple-row--route';
+  lbl.className = 'pending-move-head';
   const icWrap = document.createElement('span');
-  icWrap.className = 'pending-simple-ic-wrap';
+  icWrap.className = 'pending-move-ic-wrap';
   icWrap.setAttribute('aria-hidden', 'true');
   if(st.icon) icWrap.innerHTML = _pendingIcon(st.icon);
-  const textWrap = document.createElement('span');
-  textWrap.className = 'pending-simple-text pending-simple-text--route';
-  const titleEl = document.createElement('span');
-  titleEl.className = 'pending-simple-title';
+  const body = document.createElement('div');
+  body.className = 'pending-move-body';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'pending-move-title';
   titleEl.textContent = st.title;
-  const route = document.createElement('span');
-  route.className = 'pending-route-vals';
+  const route = document.createElement('div');
+  route.className = 'pending-move-route';
   const fromEl = document.createElement('span');
   fromEl.className = 'pending-field-val pending-field-from';
   fromEl.textContent = st.fromList;
@@ -675,9 +694,9 @@ function _mountPendingListMoveCard(listEl, op, idx){
     pill.textContent = String(op._rationale);
     route.appendChild(pill);
   }
-  textWrap.append(titleEl, route);
+  body.append(titleEl, route);
   lbl.setAttribute('aria-label', st.title + ': ' + st.fromList + ' → ' + st.toList);
-  lbl.append(_pendingMasterCheckbox(idx), icWrap, textWrap);
+  lbl.append(_pendingMasterCheckbox(idx), icWrap, body);
   card.appendChild(lbl);
   listEl.appendChild(card);
   return true;
@@ -690,19 +709,19 @@ function _renderPendingListMoveCard(op, idx){
   const score = op._rationale
     ? `<span class="pending-confidence-pill" title="Embedding match">${esc(op._rationale)}</span>`
     : '';
-  return `<div class="pending-simple-card">
-    <label class="pending-simple-row pending-simple-row--route">
+  return `<div class="pending-move-card">
+    <label class="pending-move-head">
       <input type="checkbox" class="pending-op-master" data-op-idx="${idx}" checked>
-      <span class="pending-simple-ic-wrap" aria-hidden="true">${ic}</span>
-      <span class="pending-simple-text pending-simple-text--route">
-        <span class="pending-simple-title">${esc(st.title)}</span>
-        <span class="pending-route-vals">
+      <span class="pending-move-ic-wrap" aria-hidden="true">${ic}</span>
+      <div class="pending-move-body">
+        <div class="pending-move-title">${esc(st.title)}</div>
+        <div class="pending-move-route">
           <span class="pending-field-val pending-field-from">${esc(st.fromList)}</span>
           <span class="pending-field-arrow" aria-hidden="true">→</span>
           <span class="pending-field-val pending-field-to">${esc(st.toList)}</span>
           ${score}
-        </span>
-      </span>
+        </div>
+      </div>
     </label>
   </div>`;
 }
@@ -974,7 +993,7 @@ function _mountPendingOpCard(listEl, op, idx){
 function _pendingListHasVisibleText(wrap){
   if(!wrap) return false;
   const nodes = wrap.querySelectorAll(
-    '.pending-simple-title, .pending-card-title, .pending-field-lbl, .pending-field-val, .pending-route-vals'
+    '.pending-move-title, .pending-move-route, .pending-simple-title, .pending-card-title, .pending-field-lbl, .pending-field-val, .pending-route-vals'
   );
   for(let i = 0; i < nodes.length; i++){
     if(String(nodes[i].textContent || '').trim()) return true;
@@ -1662,8 +1681,10 @@ async function intelFindDuplicatesUI(){
 
     const shown = pairs.slice(0, 30);
     sec.innerHTML = '<div class="intel-dup-hdr">Near duplicates</div>' + shown.map(p => {
+      const sa = _intelFmtTaskTitle(p.taskA).slice(0, 32);
+      const sb = _intelFmtTaskTitle(p.taskB).slice(0, 32);
       return `<div class="intel-dup-row">
-        <span class="intel-dup-pair">${esc(p.taskA.name.slice(0, 32))} ↔ ${esc(p.taskB.name.slice(0, 32))}</span>
+        <span class="intel-dup-pair">${esc(sa)} ↔ ${esc(sb)}</span>
         <span class="intel-dup-sim">${p.sim.toFixed(2)}</span>
         <button type="button" class="btn-ghost btn-sm" data-action="intelMergeDuplicatePair" data-args='[${p.idA},${p.idB}]'>Delete 2nd</button>
       </div>`;
@@ -1680,10 +1701,12 @@ async function intelFindDuplicatesUI(){
 function intelMergeDuplicatePair(idA, idB){
   const ta = findTask(idA), tb = findTask(idB);
   if(!ta || !tb) return;
-  const first = ta.name.length <= tb.name.length ? ta : tb;
+  const na = _intelFmtTaskTitle(ta), nb = _intelFmtTaskTitle(tb);
+  const first = na.length <= nb.length ? ta : tb;
   const second = first === ta ? tb : ta;
+  const secondLbl = _intelFmtTaskTitle(second) || ('#' + second.id);
   _pendingOps = [
-    { name: 'ADD_NOTE', args: { id: first.id, text: `Merged duplicate: ${second.name}` } },
+    { name: 'ADD_NOTE', args: { id: first.id, text: `Merged duplicate: ${secondLbl}` } },
     { name: 'DELETE_TASK', args: { id: second.id } },
   ];
   _renderPendingOps();

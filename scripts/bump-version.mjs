@@ -5,7 +5,8 @@
  *
  * Updates:
  *   - js/version.js  → ODTAULAI_RELEASE.version, .buildDate, .swCache
- *   - sw.js          → CACHE_NAME
+ *   - sw.js          → CACHE_NAME + precache CSS URL (?v=)
+ *   - index.html     → stylesheet href cache-bust (?v=)
  */
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -54,6 +55,10 @@ swSrc = swSrc.replace(
   /(const|let|var)\s+CACHE_NAME\s*=\s*'[^']+'/,
   `$1 CACHE_NAME = '${cacheName}'`
 );
+swSrc = swSrc.replace(
+  /'\.\/css\/main\.css(?:\?[^']*)?'/,
+  `'./css/main.css?v=${encodeURIComponent(version)}'`,
+);
 writeFileSync(swPath, swSrc, 'utf-8');
 
 // ── Update js/pwa.js inline-SW fallback string ────────────────────────────
@@ -69,7 +74,15 @@ pwaSrc = pwaSrc.replace(
 );
 writeFileSync(pwaPath, pwaSrc, 'utf-8');
 
+// ── index.html stylesheet cache-bust (must match js/version.js .version) ──
+const indexPath = resolve(root, 'index.html');
+let indexHtml = readFileSync(indexPath, 'utf-8');
+const idxLink = `<link rel="stylesheet" href="css/main.css?v=${encodeURIComponent(version)}">`;
+indexHtml = indexHtml.replace(/<link rel="stylesheet" href="css\/main\.css(?:\?[^"]*)?"\s*>/i, idxLink);
+writeFileSync(indexPath, indexHtml, 'utf-8');
+
 console.log(`Bumped to ${version}`);
 console.log(`   js/version.js  → version:'${version}', swCache:'${cacheName}', buildDate:'${buildDate}'`);
-console.log(`   sw.js           → CACHE_NAME:'${cacheName}'`);
+console.log(`   sw.js           → CACHE_NAME:'${cacheName}', css/main.css?v=${encodeURIComponent(version)}`);
 console.log(`   js/pwa.js       → inline fallback:'${cacheName}'`);
+console.log(`   index.html      → stylesheet: css/main.css?v=${encodeURIComponent(version)}`);
