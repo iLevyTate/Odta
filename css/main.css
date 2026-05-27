@@ -137,6 +137,10 @@
     --dur-fast:120ms;
     --dur-base:200ms;
     --dur-slow:320ms;
+    /* Modal/overlay open transition — sits between base UI feedback and slow
+       emphasis. Used by .modal-overlay (and .cmdk-overlay for its faster fade
+       via --dur-fast). One token = one place to retune all modal motion. */
+    --dur-modal:240ms;
     /* Elevation shadow language — one shadow depth per surface tier */
     --shadow-card:0 1px 3px rgba(0,0,0,.18),0 1px 2px rgba(0,0,0,.12);
     --shadow-raised:0 4px 16px rgba(0,0,0,.22),0 1px 4px rgba(0,0,0,.14);
@@ -524,12 +528,18 @@
   .task-estimate{font-size:9px;color:var(--text-3);letter-spacing:.5px}
   .task-desc-preview{font-size:10px;color:var(--text-3);font-style:italic;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 
-  /* Task Detail Modal */
-  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:var(--z-modal);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;padding-bottom:calc(40px + var(--kb-inset, 0px));overflow-y:auto}
-  .modal-overlay.open{display:flex;animation:fadeIn .2s}
+  /* Task Detail Modal — state-driven (transition), not one-shot (animation).
+     The overlay stays mounted at all times; only opacity/visibility/pointer-events
+     change with .open. This eliminates the display:none → display:flex flip
+     that races the keyframe in the same frame (the historical jitter cause).
+     backdrop-filter is deferred via .backdrop-ready (set on transitionend) so
+     the GPU does not composite a blur layer during the open transition. */
+  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.75);z-index:var(--z-modal);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;padding-bottom:calc(40px + var(--kb-inset, 0px));overflow-y:auto;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-modal) var(--ease-out),visibility 0s linear var(--dur-modal)}
+  .modal-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-modal) var(--ease-out),visibility 0s linear 0s}
+  .modal-overlay.backdrop-ready{backdrop-filter:blur(4px)}
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-  .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);animation:modalSlide .25s}
-  @keyframes modalSlide{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);transform:translateY(-20px);opacity:0;transition:transform var(--dur-modal) var(--ease-out),opacity var(--dur-modal) var(--ease-out)}
+  .modal-overlay.open .modal{transform:translateY(0);opacity:1}
   .modal-head{display:flex;align-items:center;gap:10px;padding:var(--space-7) var(--space-9);border-bottom:1px solid var(--border-subtle)}
   .modal-close{margin-inline-start:auto;width:28px;height:28px;background:transparent;border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3);font-size:14px;cursor:pointer;font-family:inherit}
   .modal-close:hover{color:var(--danger);border-color:var(--danger-border)}
@@ -1567,9 +1577,12 @@
   .cal-agenda-mk{font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-3);color:var(--text-2);cursor:pointer}
   .cal-agenda-empty{font-size:12px;color:var(--text-3);padding:8px 4px}
 
-  /* Command Palette (Cmd+K) */
-  .cmdk-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(6px);z-index:var(--z-cmdk);display:none;align-items:flex-start;justify-content:center;padding:80px 16px 16px;padding-bottom:calc(16px + var(--kb-inset, 0px))}
-  .cmdk-overlay.open{display:flex;animation:fadeIn .15s}
+  /* Command Palette (Cmd+K) — same state-driven pattern as .modal-overlay,
+     just snappier (var(--dur-fast)) and fade-only (no transform). Backdrop
+     blur deferred via .backdrop-ready so the GPU does not composite during fade. */
+  .cmdk-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:var(--z-cmdk);display:flex;align-items:flex-start;justify-content:center;padding:80px 16px 16px;padding-bottom:calc(16px + var(--kb-inset, 0px));opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+  .cmdk-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
+  .cmdk-overlay.backdrop-ready{backdrop-filter:blur(6px)}
   .cmdk-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);overflow:hidden;max-height:min(90vh, var(--vv-height, 90dvh))}
   .cmdk-input{width:100%;padding:16px 18px;background:transparent;border:none;color:var(--text-1);font-size:15px;font-family:inherit;outline:0;border-bottom:1px solid var(--border)}
   .cmdk-input::placeholder{color:var(--text-4)}
@@ -2065,8 +2078,12 @@
        the sheet above the soft keyboard so input fields and Save/Close
        chrome stay visible without the user scrolling. */
     .modal-overlay{align-items:flex-end;padding:0 0 var(--kb-inset, 0px) 0!important}
-    .modal{width:100%!important;max-width:100%!important;max-height:92vh;max-height:calc(var(--vv-height, 92dvh) - 8px);border-radius:16px 16px 0 0;animation:slideUp .25s ease-out}
-    @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    /* Mobile bottom-sheet initial state — translateY(100%) parks the modal
+       below the viewport. The transition declared by the desktop .modal rule
+       above still applies; .modal-overlay.open .modal { transform:translateY(0) }
+       (also declared above) drives the slide. Opacity stays at 1 on mobile so
+       the sheet appears solid as it slides in (no fade compounding the slide). */
+    .modal{width:100%!important;max-width:100%!important;max-height:92vh;max-height:calc(var(--vv-height, 92dvh) - 8px);border-radius:16px 16px 0 0;transform:translateY(100%);opacity:1}
     /* Bottom-sheet drag-handle affordance — telegraphs "swipe down to close"
        on mobile per iOS / Android sheet conventions. The header wears the
        handle so dragging the body's scroll area doesn't dismiss accidentally. */

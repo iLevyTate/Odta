@@ -1600,13 +1600,21 @@ function openTaskDetail(id){
   if(typeof renderTaskActivity === 'function') renderTaskActivity(t);
   // C-6 estimate vs actual variance
   if(typeof renderEstimateVariance === 'function') renderEstimateVariance(t);
-  refreshMdSimilarTasks(id);
   renderMdHabitLog(t);
   renderMdSessions(t);
   gid('taskModal').classList.add('open');
   _taskModalPrevFocus=document.activeElement;
   document.addEventListener('keydown',_taskModalTabTrap,true);
-  setTimeout(()=>gid('mdName').focus(),50)
+  setTimeout(()=>gid('mdName').focus(),50);
+  // Defer similar-tasks fetch + accordion expansion until AFTER the slide-up
+  // transition is fully complete. The accordion goes from display:none to
+  // display:block when neighbors land — if that flip happens mid-slide, the
+  // modal's height changes; on mobile (.modal-overlay is align-items:flex-end)
+  // the bottom stays anchored and the TOP jolts upward — the historical
+  // "jitter at the top" report. Coupled to --dur-modal in css/main.css
+  // (240ms) with a small safety margin. editingTaskId guard cancels stale
+  // fetches if the user closes the modal or switches task in the meantime.
+  setTimeout(()=>{ if(editingTaskId===id) refreshMdSimilarTasks(id); }, 260);
 }
 
 /**
@@ -3274,6 +3282,23 @@ document.addEventListener('keydown', function(e){
     }
   }
 });
+
+// ========== MODAL BACKDROP-READY TRANSITION ==========
+// Defer .modal-overlay/.cmdk-overlay backdrop-filter:blur(...) until AFTER
+// the opacity transition completes. The GPU stalls when blur is composited
+// on the same frame an animation starts — historically the source of the
+// "jitter" felt at the top of bottom-up sheets. We listen once at document
+// level so dynamically-created overlays (e.g. showShortcutsHelp) are covered
+// without any per-element wiring. Capture phase so the listener fires even
+// if a child stops propagation.
+document.addEventListener('transitionend', function(e){
+  const t = e.target;
+  if(!(t instanceof Element)) return;
+  if(e.propertyName !== 'opacity') return;
+  if(!t.matches('.modal-overlay, .cmdk-overlay')) return;
+  if(t.classList.contains('open')) t.classList.add('backdrop-ready');
+  else t.classList.remove('backdrop-ready');
+}, true);
 
 // ========== G-7 FOCUS-ON-LIST MODE ==========
 function toggleFocusListMode(){
