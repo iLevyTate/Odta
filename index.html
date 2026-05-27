@@ -1034,8 +1034,15 @@
           </div>
           <div class="mfield-row">
             <div class="mfield">
-              <label class="mfield-lbl" for="mdList">List</label>
-              <select class="mfield-in" id="mdList"></select>
+              <label class="mfield-lbl" for="mdListTrigger" id="mdListLbl">List</label>
+              <button type="button" id="mdListTrigger" class="dropdown-trigger" data-action="openListDropdown" aria-haspopup="listbox" aria-labelledby="mdListLbl mdListLabel">
+                <span class="dropdown-trigger-label" id="mdListLabel">List</span>
+                <span class="dropdown-trigger-caret" aria-hidden="true">▾</span>
+              </button>
+              <!-- Hidden shadow-select keeps the existing save logic
+                   (saveTaskDetail reads gid('mdList').value) working
+                   unchanged while the visible trigger drives selection. -->
+              <select class="dropdown-shadow-select" id="mdList" hidden tabindex="-1" aria-hidden="true"></select>
             </div>
             <div class="mfield">
               <label class="mfield-lbl" for="mdStartDate">Start Date</label>

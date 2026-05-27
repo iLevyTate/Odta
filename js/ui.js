@@ -1583,9 +1583,24 @@ function openTaskDetail(id){
   const path=getTaskPath(id);
   const pathStr=path.length>1?path.slice(0,-1).join(' › ')+' › ':'';
   gid('mdStats').innerHTML='<span><b>Path:</b> '+esc(pathStr)+'<b class="md-name-strong">'+esc(t.name)+'</b></span> · <span>Created '+esc(t.created||'—')+'</span>'+(t.completedAt?' · <span>Done '+esc(String(t.completedAt))+'</span>':'');
-  // List selector
-  const listSel=gid('mdList');listSel.innerHTML='';
-  lists.forEach(l=>{const opt=document.createElement('option');opt.value=l.id;opt.textContent=l.name;if((t.listId||lists[0].id)===l.id)opt.selected=true;listSel.appendChild(opt)});
+  // List selector — populate the hidden shadow <select> (saveTaskDetail
+  // reads its .value) and set the visible trigger's label to the current
+  // list's name. The Dropdown utility builds its option list from the
+  // shadow select when openListDropdown fires.
+  const listSel=gid('mdList');
+  listSel.replaceChildren();
+  lists.forEach(l=>{
+    const opt=document.createElement('option');
+    opt.value=l.id;
+    opt.textContent=l.name;
+    if((t.listId||lists[0].id)===l.id) opt.selected=true;
+    listSel.appendChild(opt);
+  });
+  const _listLabelEl = gid('mdListLabel');
+  if(_listLabelEl){
+    const _selOpt = listSel.options[listSel.selectedIndex];
+    _listLabelEl.textContent = _selOpt ? _selOpt.textContent : 'List';
+  }
   // ARIA chip helpers — without role/aria-checked or aria-pressed, screen
   // readers can't tell selected state since visual selection is color-only
   // (#13 in UX audit). Radio-group chips (single-select) use role=radio +
@@ -2295,6 +2310,38 @@ function openRecurDropdown(){
   });
 }
 window.openRecurDropdown = openRecurDropdown;
+
+// List dropdown - opens a Dropdown popover for the task's destination
+// list. Each option carries the list's color metadata so the dropdown
+// renders a small swatch beside the name, matching the chip-based color
+// language used elsewhere. saveTaskDetail still reads gid('mdList').value,
+// so the dropdown writes the selected id into the hidden <select>.
+function openListDropdown(){
+  if(typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  const trigger = gid('mdListTrigger');
+  const sel = gid('mdList');
+  const label = gid('mdListLabel');
+  if(!trigger || !sel) return;
+  const allLists = (typeof lists !== 'undefined' && Array.isArray(lists)) ? lists : [];
+  const options = Array.prototype.slice.call(sel.options).map(function(o){
+    const found = allLists.find(function(L){ return String(L.id) === String(o.value); });
+    const rawColor = found && found.color ? found.color : null;
+    const safeColor = (rawColor && typeof sanitizeListColor === 'function')
+      ? sanitizeListColor(rawColor) : rawColor;
+    return { value: o.value, label: o.textContent, color: safeColor };
+  });
+  Dropdown.open(trigger, {
+    options: options,
+    selected: sel.value,
+    searchable: options.length > 8,
+    onSelect: function(value){
+      sel.value = value;
+      const opt = options.find(function(o){ return String(o.value) === String(value); });
+      if(label) label.textContent = opt ? opt.label : 'List';
+    },
+  });
+}
+window.openListDropdown = openListDropdown;
 
 function saveTaskDetail(){
   if(!editingTaskId)return;
