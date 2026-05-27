@@ -1880,6 +1880,54 @@
     border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.5);
     display:flex;flex-direction:column;gap:2px;animation:fadeIn .12s;
   }
+
+  /* Dropdown — small selection popover with optional bottom-sheet variant
+     on narrow viewports. Same visual base as .task-action-menu, plus an
+     inline trigger button + hidden shadow-select that keeps the existing
+     save-detail logic (which reads gid('mdRecur').value etc.) working
+     unchanged. */
+  .dropdown-popover{
+    position:fixed;z-index:var(--z-popover,100);
+    background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);
+    box-shadow:var(--shadow-overlay);
+    min-width:200px;max-width:320px;max-height:60vh;
+    overflow:hidden;display:flex;flex-direction:column;
+    animation:fadeIn .12s ease-out;
+  }
+  .dropdown-sheet{
+    position:fixed;left:0;right:0;bottom:0;z-index:var(--z-modal);
+    background:var(--bg-2);border-top:1px solid var(--border);
+    border-radius:16px 16px 0 0;
+    box-shadow:var(--shadow-overlay);
+    max-height:70vh;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
+    display:flex;flex-direction:column;
+    animation:slideIn .2s ease-out;
+  }
+  .dropdown-search{
+    width:100%;padding:10px 12px;background:transparent;border:none;
+    border-bottom:1px solid var(--border);color:var(--text-1);
+    font:inherit;outline:0;
+  }
+  .dropdown-list{overflow-y:auto;padding:4px 0;flex:1}
+  .dropdown-item{
+    display:flex;align-items:center;gap:8px;width:100%;
+    padding:8px 12px;background:transparent;border:none;
+    color:var(--text-1);font:inherit;font-size:13px;text-align:left;cursor:pointer;
+  }
+  .dropdown-item:hover,.dropdown-item.is-highlight{background:var(--bg-3)}
+  .dropdown-item.is-selected{color:var(--accent);font-weight:600}
+  .dropdown-swatch{width:10px;height:10px;border-radius:50%;flex-shrink:0;display:inline-block}
+  .dropdown-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dropdown-trigger{
+    display:inline-flex;align-items:center;gap:6px;width:100%;
+    padding:8px 12px;background:var(--bg-0);border:1px solid var(--border);
+    border-radius:var(--r-sm);color:var(--text-1);font:inherit;font-size:12px;
+    cursor:pointer;min-height:32px;font-family:inherit;
+  }
+  .dropdown-trigger:hover{border-color:var(--accent-border)}
+  .dropdown-trigger-label{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dropdown-trigger-caret{opacity:.6;flex-shrink:0}
+  .dropdown-shadow-select{display:none!important}
   .task-action-menu .tam-item{
     display:flex;align-items:center;gap:10px;width:100%;
     padding:10px 12px;min-height:40px;
