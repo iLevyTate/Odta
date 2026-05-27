@@ -2303,8 +2303,31 @@ let _updateTaskFiltersDebounce=null;
 // Returns: { text: 'free part', ops: { tag:[], list:[], is:[], priority:[],
 //                                       due:[], status:[] } }
 function parseTaskSearchQuery(raw){
-  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [] };
+  const ops = { tag: [], list: [], is: [], priority: [], due: [], status: [], duration: [] };
   if(typeof raw !== 'string') return { text: '', ops };
+  // Duration value parser: accepts "90" (bare integer = minutes), "2h", "30m",
+  // "45s", compound "1h30m", optionally prefixed with a compare op (>, >=, <,
+  // <=, =; default "="). Returns { op, seconds } or null for invalid input.
+  function _parseDurationVal(rawVal){
+    const m = rawVal.match(/^([<>]=?|=)?\s*(.+)$/);
+    if(!m) return null;
+    const op = m[1] || '=';
+    const body = m[2];
+    let seconds = 0;
+    if(/^\d+$/.test(body)){
+      seconds = parseInt(body, 10) * 60;
+    } else {
+      let any = false;
+      for(const pair of body.matchAll(/(\d+)([hms])/gi)){
+        any = true;
+        const n = parseInt(pair[1], 10);
+        const u = pair[2].toLowerCase();
+        seconds += u === 'h' ? n * 3600 : u === 'm' ? n * 60 : n;
+      }
+      if(!any) return null;
+    }
+    return { op, seconds };
+  }
   // Match `key:value` (quoted optional) or shorthand prefixes.
   const opRe = /(\w+):("[^"]+"|'[^']+'|\S+)|#(\S+)|@(\S+)/g;
   // Build a list of [start, end] ranges to splice out of the source. The old
@@ -2337,6 +2360,13 @@ function parseTaskSearchQuery(raw){
       else if(key === 'priority'){ ops.priority.push(val); consumed = true; }
       else if(key === 'due'){ ops.due.push(val); consumed = true; }
       else if(key === 'status'){ ops.status.push(val); consumed = true; }
+      else if(key === 'duration'){
+        const parsed = _parseDurationVal(val);
+        if(parsed) ops.duration.push(parsed);
+        // invalid duration values are dropped (token still consumed so it
+        // doesn't survive as free text - matches @priority behaviour above).
+        consumed = true;
+      }
       // else: unknown operator → leave it in the leftover free-text query.
     }
     if(consumed) cuts.push([m.index, opRe.lastIndex]);
