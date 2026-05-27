@@ -11,6 +11,9 @@ export const SMOKE_KNOWN_CONSOLE_NOISE = [
   /\[intel\].*(?:protobuf|Can't create a session|pipeline failed|load failed)/i,
   /ERROR_CODE:\s*7/i,
   /Failed to load model because protobuf/i,
+  // Chromium logs style-src violations for el.style writes; index.html documents
+  // those DOM-API updates as the intended dynamic-style path (not style= attrs).
+  /Applying inline style violates the following Content Security Policy directive 'style-src 'self''/,
 ];
 
 /** @param {string} text */

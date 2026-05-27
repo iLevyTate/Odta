@@ -954,7 +954,7 @@ function renderTaskItem(t,depth){
     const cdef=getCategoryDef(t.category);
     if(cdef&&cdef.color){
       d.classList.add('task-cat-stripe');
-      d.style.setProperty('--cat-stripe',cdef.color);
+      d.setAttribute('data-cat-id', t.category);
     }
   }
   if(window._lastAddedTaskId===t.id){
@@ -1572,10 +1572,8 @@ function openTaskDetail(id){
     const chipLbl = (typeof getCategoryChipLabel === 'function') ? getCategoryChipLabel(key) : (lbl.slice(0, 40));
     b.textContent=chipLbl;
     const cdef=(typeof getCategoryDef==='function')?getCategoryDef(key):null;
-    if(cdef&&cdef.color){
-      b.style.setProperty('--md-cat', cdef.color);
-    }
     if(cdef){
+      b.setAttribute('data-cat-id', key);
       const tip=((cdef.label||key)+(cdef.focus?': '+(cdef.focus):'')+((cdef.examples&&cdef.examples.length)?' · e.g. '+cdef.examples.slice(0,3).join(', '):'')).slice(0,280);
       if(tip) b.setAttribute('title', tip);
     }

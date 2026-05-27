@@ -161,6 +161,14 @@
     --ring-done-color:#ff5c4d;
     color-scheme:dark;
   }
+  /* Life-area chip/stripe tokens via data-cat-id — no inline style= (CSP). */
+  [data-cat-id="bodyMindSpirit"]{--sv-cat:var(--cat-bodyMindSpirit);--md-cat:var(--cat-bodyMindSpirit);--ui-chip-dot:var(--cat-bodyMindSpirit);--cat-stripe:var(--cat-bodyMindSpirit)}
+  [data-cat-id="relationships"]{--sv-cat:var(--cat-relationships);--md-cat:var(--cat-relationships);--ui-chip-dot:var(--cat-relationships);--cat-stripe:var(--cat-relationships)}
+  [data-cat-id="community"]{--sv-cat:var(--cat-community);--md-cat:var(--cat-community);--ui-chip-dot:var(--cat-community);--cat-stripe:var(--cat-community)}
+  [data-cat-id="jobLearningFinances"]{--sv-cat:var(--cat-jobLearningFinances);--md-cat:var(--cat-jobLearningFinances);--ui-chip-dot:var(--cat-jobLearningFinances);--cat-stripe:var(--cat-jobLearningFinances)}
+  [data-cat-id="interests"]{--sv-cat:var(--cat-interests);--md-cat:var(--cat-interests);--ui-chip-dot:var(--cat-interests);--cat-stripe:var(--cat-interests)}
+  [data-cat-id="personalCare"]{--sv-cat:var(--cat-personalCare);--md-cat:var(--cat-personalCare);--ui-chip-dot:var(--cat-personalCare);--cat-stripe:var(--cat-personalCare)}
+  [data-cat-id="general"]{--sv-cat:var(--cat-general);--md-cat:var(--cat-general);--ui-chip-dot:var(--cat-general);--cat-stripe:var(--cat-general)}
   body.light-theme{
     color-scheme:light;
     --bg-0:#f4f6fa;--bg-1:#fff;--bg-2:#f8fafc;--bg-3:#e3e8f0;

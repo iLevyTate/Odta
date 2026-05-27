@@ -433,8 +433,8 @@ function renderClassificationSettings(){
   const chipPreviewCells = cfg.categories.filter(c => !c.hidden).map(obj => {
     const def = (typeof getCategoryDef === 'function' ? getCategoryDef(obj.id) : null);
     const text = esc((def && def.chipLabel) || obj.label || obj.id || '');
-    const colEsc = esc(String(obj.color || (def && def.color) || 'var(--cat-general)'));
-    return `<span class="ui-chip ui-chip--dot ui-chip--preview" role="presentation" aria-hidden="true" style="--ui-chip-dot:${colEsc.replace(/'/g, '&#39;')}">${text}</span>`;
+    const idEsc = escAttr(String(obj.id || ''));
+    return `<span class="ui-chip ui-chip--dot ui-chip--preview" data-cat-id="${idEsc}" role="presentation" aria-hidden="true">${text}</span>`;
   }).join('');
   h += '<p class="class-mgr-preview-hint">Preview — filter chips match this compact style</p>'
     + '<div class="class-mgr-chip-preview-bar">' + chipPreviewCells + '</div>';
@@ -551,10 +551,7 @@ function refreshClassificationUi(){
         ? getCategoryChipLabel(String(c.id))
         : String(c.label || '');
       const id = String(c.id);
-      // Tint the chip with this category's own colour so the active one is
-      // unmistakable and matches the row stripes / settings (--cat-* tokens).
-      const col = c.color || (typeof getCategoryDef === 'function' && getCategoryDef(id) && getCategoryDef(id).color);
-      if(col) btn.style.setProperty('--sv-cat', col);
+      btn.setAttribute('data-cat-id', id);
       btn.addEventListener('click', () => setFilterCategory(id));
       tb.appendChild(btn);
     });
