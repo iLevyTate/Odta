@@ -2835,6 +2835,11 @@
 .pending-toggle-all{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:11px;text-decoration:underline;padding:4px 0}
 .pending-toggle-all:hover{color:var(--accent)}
 .pending-list{display:flex;flex-direction:column;gap:10px;max-height:320px;overflow-y:auto;margin-bottom:10px;-webkit-overflow-scrolling:touch}
+/* Cards must not flex-shrink: the list is a height-capped flex column, and
+   .pending-simple-card sets overflow:hidden (which zeroes its automatic
+   flex min-size). Without this, a long batch collapses every card to a thin
+   sliver and clips the text instead of scrolling. */
+.pending-list>*{flex-shrink:0}
 
 .pending-task-card{background:var(--bg-1);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
 .pending-card-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}

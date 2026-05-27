@@ -58,3 +58,11 @@ test('pending mobile layout keeps scroll viewport and tap-friendly row heights',
     'pending-list capped with viewport-relative max',
   );
 });
+
+test('pending list cards do not flex-shrink (large batches must scroll, not collapse)', () => {
+  // .pending-list is a height-capped flex column and .pending-simple-card sets
+  // overflow:hidden, which zeroes a flex item's automatic min-size. Without an
+  // explicit flex-shrink:0, a 20-row batch crushes every card to a hairline
+  // that clips the task name/route. Guard the fix so it can't silently regress.
+  assert.match(cssSrc, /\.pending-list>\*\{[^}]*flex-shrink:0/, 'pending list children pin flex-shrink:0');
+});
