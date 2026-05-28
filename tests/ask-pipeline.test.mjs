@@ -696,3 +696,99 @@ test('runReadOp: QUERY_TASKS only scans first 5000 chars of description', () => 
   assert.equal(out.tasks.length, 1);
   assert.equal(out.tasks[0].id, 2);
 });
+
+test('_askIsQuestionLike treats "Help me figure out..." as a question', () => {
+  // Regression: a query starting with "Help" matched neither the question nor
+  // the imperative heuristic, so it never earned a grounded prose answer and
+  // dead-ended on "Couldn't parse a valid plan."
+  const { win } = mkSandbox({});
+  assert.equal(win._askIsQuestionLike('Help me figure out what I need to do in my current task list'), true);
+  assert.equal(win._askIsQuestionLike('what should I do next?'), true);
+  // Commands stay non-question so they keep flowing through the ops pipeline.
+  assert.equal(win._askIsQuestionLike('make task 3 urgent'), false);
+  assert.equal(win._askIsQuestionLike('nevermind'), false);
+});
+
+test('askRun: help/question query recovers via prose pass when the first pass is unparseable', async () => {
+  // The reported bug: a help/advice query whose first model output is an
+  // unparseable fragment (scrubs to empty prose) returned PARSE_FAILED. The
+  // fallback now runs a dedicated grounded prose pass for question-shaped
+  // queries before giving up, so the user gets a real answer.
+  const tasks = [
+    { id: 1, name: 'Pay electric bill', status: 'open', priority: 'urgent', archived: false, lastModified: 1 },
+  ];
+  const schemaSrc2 = readFileSync(join(root, 'js', 'tool-schema.js'), 'utf8');
+  const askSrc2 = readFileSync(join(root, 'js', 'ask.js'), 'utf8');
+  const win = {};
+  let calls = 0;
+  const ctx = {
+    window: win,
+    console,
+    tasks,
+    lists: [],
+    isIntelReady: () => true,
+    embedText: async () => new Float32Array(8),
+    semanticSearch: async () => [],
+    isGenReady: () => true,
+    pushAskHistory: () => {},
+    getGenCfg: () => ({ timeoutSec: 30 }),
+    getUpcomingEvents: () => [],
+    getActiveCategories: () => [],
+    intelLoad: async () => {},
+    findTask: (id) => tasks.find((t) => t.id === id) || null,
+    genGenerate: async () => {
+      calls += 1;
+      // Ops-pipeline turns emit a bracket fragment that fails parseOpsJson and
+      // scrubs to empty in _extractProseAnswer; the final (prose) call answers.
+      return calls <= 4 ? '[,' : 'You should focus on the electric bill first.';
+    },
+  };
+  new Function(...Object.keys(ctx), schemaSrc2)(...Object.values(ctx));
+  ctx.TOOL_SCHEMA = win.TOOL_SCHEMA;
+  ctx.validateOps = win.validateOps;
+  ctx.parseOpsJson = win.parseOpsJson;
+  ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
+  new Function(...Object.keys(ctx), askSrc2)(...Object.values(ctx));
+  const res = await win.askRun('Help me figure out what I need to do', {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.equal(res.ops.length, 0);
+  assert.notEqual(res.reason, 'PARSE_FAILED');
+  assert.ok(res.chatAnswer && /electric bill/i.test(res.chatAnswer), 'expected grounded prose answer: ' + res.chatAnswer);
+});
+
+test('askRun: a direct generation abort surfaces reason ABORTED, not PARSE_FAILED', async () => {
+  // Pressing Stop in Settings calls genAbort() directly (it does not abort the
+  // Ask pipeline's own signal), so genGenerate throws a GEN_ABORTED-style
+  // error. cognitaskRun must report ABORTED so the UI shows "Stopped." instead
+  // of the misleading "Couldn't parse a valid plan."
+  const tasks = [{ id: 1, name: 'X', status: 'open', archived: false, lastModified: 1 }];
+  const schemaSrc2 = readFileSync(join(root, 'js', 'tool-schema.js'), 'utf8');
+  const askSrc2 = readFileSync(join(root, 'js', 'ask.js'), 'utf8');
+  const win = {};
+  const ctx = {
+    window: win,
+    console,
+    tasks,
+    lists: [],
+    isIntelReady: () => true,
+    embedText: async () => new Float32Array(8),
+    semanticSearch: async () => [],
+    isGenReady: () => true,
+    pushAskHistory: () => {},
+    getGenCfg: () => ({ timeoutSec: 30 }),
+    getUpcomingEvents: () => [],
+    getActiveCategories: () => [],
+    intelLoad: async () => {},
+    findTask: (id) => tasks.find((t) => t.id === id) || null,
+    genGenerate: async () => { throw new Error('GEN_ABORTED'); },
+  };
+  new Function(...Object.keys(ctx), schemaSrc2)(...Object.values(ctx));
+  ctx.TOOL_SCHEMA = win.TOOL_SCHEMA;
+  ctx.validateOps = win.validateOps;
+  ctx.parseOpsJson = win.parseOpsJson;
+  ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
+  new Function(...Object.keys(ctx), askSrc2)(...Object.values(ctx));
+  const res = await win.askRun('mark task urgent', {});
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'ABORTED');
+});

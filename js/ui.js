@@ -343,6 +343,12 @@ let cmdkMode='find'; // 'find' | 'ask'
 let _cmdkAskCtl=null;
 let _cmdkAskHistoryIdx=-1;
 let _cmdkAskBusy=false;
+// Monotonic request token. Each Ask submit captures the current value; any
+// abort/close/new-chat bumps it. Post-await steps (auto-apply, terminal
+// status updates, the finally cleanup) bail when their captured token is
+// stale, so a dismissed or superseded turn can't mutate tasks or clobber a
+// newer request's state.
+let _cmdkAskReqSeq=0;
 let _cmdkLastReply=null;
 // Multi-turn conversation state for the Ask sheet. Each turn captures the
 // user's question and the assistant's reply so the conversation persists
@@ -390,8 +396,12 @@ function openCmdK(opts){
   const openAsk = opts && opts.ask === true;
   const prefill = (opts && typeof opts.prefill === 'string') ? opts.prefill : '';
   const ov=gid('cmdkOverlay');if(!ov)return;
+  // Reopening the palette mid-run must actually stop the prior turn (and
+  // invalidate it) rather than just clearing the busy flag and leaking a
+  // background generation. _cmdkAbortAsk bumps the request token + clears busy.
+  _cmdkAbortAsk();
   cmdkMode=openAsk?'ask':'find';
-  _cmdkAskHistoryIdx=-1;_cmdkLastReply=null;_cmdkAskBusy=false;
+  _cmdkAskHistoryIdx=-1;_cmdkLastReply=null;
   if(openAsk) _cmdkInitApplyModeFromCfg();
   _applyCmdkMode();
   const inp=gid('cmdkInput');
@@ -408,6 +418,9 @@ function closeCmdK(){
   _cmdkAskTurns = [];
 }
 function _cmdkAbortAsk(){
+  // Invalidate any in-flight turn so its post-await work (including auto-apply)
+  // becomes stale and won't touch task state after dismissal.
+  _cmdkAskReqSeq++;
   if(_cmdkAskCtl){try{_cmdkAskCtl.abort()}catch(_){}_cmdkAskCtl=null}
   if(typeof genAbort==='function'){try{genAbort()}catch(_){}}
   _cmdkAskBusy=false;
@@ -937,6 +950,18 @@ function _updateAskLabel(totalChars){
   if(n>0)lbl.textContent=`Planning ${n} change${n!==1?'s':''}…`;
   else lbl.textContent='Thinking on-device…';
 }
+// Map an askRun failure reason to user-facing copy. Internal codes
+// (SCHEMA_UNAVAILABLE, ASK_HELPERS_MISSING, unknown) must never reach the
+// user verbatim. GEN_NOT_READY is handled separately by the caller because it
+// drives the structured "need-model" UI rather than a plain error string.
+function _cmdkAskReasonText(reason){
+  const r = typeof reason === 'string' ? reason : '';
+  if(r === 'ABORTED') return 'Stopped.';
+  if(r === 'TIMEOUT') return 'Timed out — try a shorter request or a smaller model.';
+  if(r.startsWith('PARSE_FAILED')) return 'Couldn’t parse a valid plan. Try rephrasing.';
+  if(r === 'SCHEMA_UNAVAILABLE' || r === 'ASK_HELPERS_MISSING') return 'Ask is still warming up — give it a moment and try again.';
+  return 'Something went wrong handling that request. Try rephrasing.';
+}
 async function cmdkAskSubmit(){
   if(_cmdkAskBusy)return;
   const input=gid('cmdkInput');if(!input)return;
@@ -964,14 +989,21 @@ async function cmdkAskSubmit(){
   const priorTurns = _cmdkAskPriorTurnsFor(turn);
   _cmdkAskBusy=true;
   _cmdkAskCtl=new AbortController();
+  // Token for this submit. If anything (close, new chat, leaving Ask mode,
+  // reopening the palette) supersedes this run, _cmdkAskReqSeq advances and
+  // the stale-guards below short-circuit so we never apply ops or stomp on a
+  // newer request's controller/busy state.
+  const reqId=_cmdkAskReqSeq;
   try{
     const res=await askRun(q,{
       signal:_cmdkAskCtl.signal,
       priorTurns,
       onReadRound:()=>{
+        if(reqId !== _cmdkAskReqSeq) return; // superseded — stop touching the abandoned turn
         _cmdkAskUpdate(turn, { text: 'Running read-only tools on-device…' });
       },
       onToken:(t)=>{
+        if(reqId !== _cmdkAskReqSeq) return; // superseded — drop streamed tokens for a dead turn
         turn.stream += t;
         // Update inline label with op-count progress so the user sees the
         // model is making progress, not just spinning.
@@ -983,25 +1015,36 @@ async function cmdkAskSubmit(){
         _cmdkAskUpdate(turn, { text: lbl });
       },
     });
+    // Superseded while awaiting (palette closed, "New chat", left Ask mode, or
+    // a newer submit). Drop the result silently — the owning request, if any,
+    // will render its own outcome, and we must NOT fall through to auto-apply.
+    if(reqId !== _cmdkAskReqSeq) return;
     _cmdkLastReply=res;
     if(!res.ok){
       const reason=res.reason||'Unknown error';
-      if(reason==='ABORTED'){
-        _cmdkAskUpdate(turn, { status: 'error', text: 'Stopped.' });
-      } else if(reason==='TIMEOUT'){
-        _cmdkAskUpdate(turn, { status: 'error', text: 'Timed out — try a shorter request or a smaller model.' });
-      } else if(reason==='GEN_NOT_READY'){
+      if(reason==='GEN_NOT_READY'){
         _cmdkAskUpdate(turn, { status: 'need-model', needModel: _cmdkAskNeedModelInfo() });
-      } else if(typeof reason === 'string' && reason.startsWith('PARSE_FAILED')){
-        _cmdkAskUpdate(turn, { status: 'error', text: 'Couldn’t parse a valid plan. Try rephrasing.' });
       } else {
-        _cmdkAskUpdate(turn, { status: 'error', text: reason });
+        _cmdkAskUpdate(turn, { status: 'error', text: _cmdkAskReasonText(reason) });
       }
       return;
     }
-    if(!res.ops.length){
+    const ops = Array.isArray(res.ops) ? res.ops : [];
+    if(!ops.length){
       if(res.chatAnswer){
         _cmdkAskUpdate(turn, { status: 'answer', text: res.chatAnswer });
+        return;
+      }
+      // Ops came back empty but the model proposed changes the validator threw
+      // out (unknown task id, missing required field, ...). Tell the user that
+      // rather than the generic "nothing came back" so they know to rephrase.
+      if(res.rejected && res.rejected.length){
+        const rc = res.rejected.length;
+        _cmdkAskUpdate(turn, {
+          status: 'empty',
+          text: `I came up with ${rc} change${rc!==1?'s':''} but couldn’t apply ${rc!==1?'them':'it'} (they referenced tasks I couldn’t match). Try naming the task — e.g. "mark the electric bill urgent".`,
+          rejected: res.rejected,
+        });
         return;
       }
       _cmdkAskUpdate(turn, { status: 'empty', text: 'No changes to apply, and no answer came back. Try rephrasing — e.g. "what is overdue?" or "make task 3 urgent".' });
@@ -1064,11 +1107,16 @@ async function cmdkAskSubmit(){
   }catch(e){
     _cmdkAskUpdate(turn, { status: 'error', text: (e&&e.message)||'Error' });
   }finally{
-    _cmdkAskBusy=false;
-    _cmdkAskCtl=null;
-    // Re-focus the input so a follow-up question is one keystroke away.
-    const inp = gid('cmdkInput');
-    if(inp){ try{ inp.focus(); }catch(_){} }
+    // Only the current request may clear shared busy/controller state. A stale
+    // request finishing late must not unlock the sheet or null out a newer
+    // request's AbortController.
+    if(reqId === _cmdkAskReqSeq){
+      _cmdkAskBusy=false;
+      _cmdkAskCtl=null;
+      // Re-focus the input so a follow-up question is one keystroke away.
+      const inp = gid('cmdkInput');
+      if(inp){ try{ inp.focus(); }catch(_){} }
+    }
   }
 }
 function cmdkAskStop(){

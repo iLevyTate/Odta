@@ -37,6 +37,18 @@ test('parseQwen25ToolCallBlocks: single object with arguments', () => {
   assert.deepEqual(o[0].args, { filter: 'milk', limit: 3 });
 });
 
+test('parseQwen25ToolCallBlocks: accepts `args` field (not just `arguments`)', () => {
+  // Smaller models — and our own prompt examples / TOOL_SCHEMA shape — use
+  // `args`. The parser must accept it so valid tool calls aren't dropped and
+  // mis-reported as a parse failure.
+  const { parseQwen25ToolCallBlocks } = loadQwenToolHelpers(null);
+  const raw = '<tool_call>\n{"name": "update_task", "args": {"id": 7, "priority": "urgent"}}\n</tool_call>';
+  const o = parseQwen25ToolCallBlocks(raw);
+  assert.equal(o.length, 1);
+  assert.equal(o[0].name, 'UPDATE_TASK');
+  assert.deepEqual(o[0].args, { id: 7, priority: 'urgent' });
+});
+
 test('parseQwen25ToolCallBlocks: arguments as JSON string', () => {
   const { parseQwen25ToolCallBlocks } = loadQwenToolHelpers(null);
   const raw = '<tool_call>{"name":"get_task_detail","arguments":"{\\"id\\":5}"}</tool_call>';

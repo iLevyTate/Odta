@@ -404,9 +404,16 @@ function _askIsQuestionLike(q){
   if(!s) return false;
   if(s.endsWith('?') || s.endsWith('？')) return true;
   // Leading-word match. Kept conservative: only words that strongly imply a
-  // request for information, not a command. "Find X" stays a command path
-  // because it's plausibly a write-side operation (filter/select).
-  return /^(what|who|when|where|why|how|which|whose|is\b|are\b|do\b|does\b|can\b|could\b|should\b|tell\b|show\b|list\b|summari[sz]e|explain|describe|count|give|name\b)/i.test(s);
+  // request for information or advice, not a command. "Find X" stays a command
+  // path because it's plausibly a write-side operation (filter/select).
+  if(/^(what|who|when|where|why|how|which|whose|is\b|are\b|do\b|does\b|can\b|could\b|should\b|tell\b|show\b|list\b|summari[sz]e|explain|describe|count|give|name\b|help\b)/i.test(s)) return true;
+  // Advice / help-me phrasings that ask the assistant to reason about the
+  // user's tasks rather than mutate them ("help me figure out what to do").
+  // These read as questions even when they don't start with an interrogative.
+  // Safe here: none of these are leading imperative verbs, so the write-retry
+  // path (gated on _askIsImperative) is unaffected — the only effect is that
+  // an empty ops result earns a grounded prose answer instead of silence.
+  return /\b(help me|figure out|i need to|i want to|i have to)\b/i.test(s);
 }
 
 // Build a prose-answer prompt that runs in addition to the ops pipeline when
@@ -423,6 +430,57 @@ function _askProseSystemPrompt(){
     '- Do not output JSON, code fences, tool calls, or any kind of operation. Plain prose only.',
     '- Refer to tasks by name (not by id) so the answer reads naturally.',
   ].join('\n');
+}
+
+/**
+ * Run a grounded, prose-only answer turn over the same task/list/calendar
+ * context the ops pipeline used. Shared by both the "ops came back empty but
+ * the user asked a question" path and the parse-failure fallback so a
+ * question-shaped query never dead-ends on "Couldn't parse a valid plan."
+ * Best-effort: returns '' (and never throws) when nothing usable comes back.
+ * @returns {Promise<{ chatAnswer: string, proseText: string }>}
+ */
+async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
+  opts = opts || {};
+  try{
+    const proseMsgs = [
+      { role: 'system', content: _askProseSystemPrompt() },
+      ...priorMsgs,
+      { role: 'user',   content: _askUserPrompt(q, contextLines) },
+    ];
+    const proseTimeoutMs = Math.max(10000, ((cfg && cfg.timeoutSec) || 30) * 1000);
+    const proseTimeoutCtl = new AbortController();
+    const proseTimer = setTimeout(() => proseTimeoutCtl.abort(), proseTimeoutMs);
+    const proseSignal = (() => {
+      const ctl = new AbortController();
+      const bail = () => ctl.abort();
+      if(opts.signal){
+        if(opts.signal.aborted) bail();
+        else opts.signal.addEventListener('abort', bail, { once: true });
+      }
+      proseTimeoutCtl.signal.addEventListener('abort', bail, { once: true });
+      return ctl.signal;
+    })();
+    let proseText = '';
+    try{
+      const full = await genGenerate({
+        messages: proseMsgs,
+        maxTokens: 384,
+        temperature: 0.4,
+        onToken: (t) => {
+          proseText += t;
+          if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
+        },
+        signal: proseSignal,
+      });
+      if(!proseText) proseText = full || '';
+    }finally{
+      clearTimeout(proseTimer);
+    }
+    return { chatAnswer: _extractProseAnswer(proseText), proseText };
+  }catch(e){
+    return { chatAnswer: '', proseText: '' };
+  }
 }
 
 /**
@@ -577,6 +635,13 @@ async function cognitaskRun(query, opts){
   if(mergedSignal && mergedSignal.aborted){
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: timeoutCtl.signal.aborted ? 'TIMEOUT' : 'ABORTED' };
   }
+  // A direct genAbort() (e.g. the Stop button in Settings) interrupts the
+  // generator without aborting our mergedSignal, so the loop exits with a
+  // GEN_ABORTED-style error and no parsed ops. Surface that as a clean
+  // "Stopped." rather than the misleading "Couldn't parse a valid plan."
+  if(!gotParse && lastError && /abort/i.test(String(lastError.message || ''))){
+    return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'ABORTED' };
+  }
 
   if(!gotParse || lastFinal == null){
     // Free-form chat fallback: if the model produced prose instead of a
@@ -589,6 +654,18 @@ async function cognitaskRun(query, opts){
     if(chatAnswer){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
       return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer };
+    }
+    // The first pass produced no parseable ops and no usable prose (e.g. the
+    // model emitted a malformed fragment that got scrubbed to nothing). For a
+    // question-shaped query — "help me figure out what to do", "what's next?" —
+    // run a dedicated grounded prose pass before surfacing PARSE_FAILED so the
+    // user gets a real answer instead of "Couldn't parse a valid plan."
+    if(_askIsQuestionLike(q)){
+      const { chatAnswer: proseAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
+      if(proseAnswer){
+        if(typeof pushAskHistory === 'function') pushAskHistory(q);
+        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer };
+      }
     }
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'PARSE_FAILED:' + (lastError && lastError.message ? lastError.message : 'no_ops') };
   }
@@ -695,47 +772,11 @@ async function cognitaskRun(query, opts){
     // failures fall through to the original empty result. Independent
     // timeout so a slow prose turn can't trip the op-pipeline timeout.
     if(_askIsQuestionLike(q)){
-      try{
-        const proseMsgs = [
-          { role: 'system', content: _askProseSystemPrompt() },
-          ...priorMsgs,
-          { role: 'user',   content: _askUserPrompt(q, contextLines) },
-        ];
-        const proseTimeoutMs = Math.max(10000, (cfg.timeoutSec || 30) * 1000);
-        const proseTimeoutCtl = new AbortController();
-        const proseTimer = setTimeout(() => proseTimeoutCtl.abort(), proseTimeoutMs);
-        const proseSignal = (() => {
-          const ctl = new AbortController();
-          const bail = () => ctl.abort();
-          if(opts.signal){
-            if(opts.signal.aborted) bail();
-            else opts.signal.addEventListener('abort', bail, { once: true });
-          }
-          proseTimeoutCtl.signal.addEventListener('abort', bail, { once: true });
-          return ctl.signal;
-        })();
-        let proseText = '';
-        try{
-          const full = await genGenerate({
-            messages: proseMsgs,
-            maxTokens: 384,
-            temperature: 0.4,
-            onToken: (t) => {
-              proseText += t;
-              if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
-            },
-            signal: proseSignal,
-          });
-          if(!proseText) proseText = full || '';
-        }finally{
-          clearTimeout(proseTimer);
-        }
-        const chatAnswer = _extractProseAnswer(proseText);
-        if(chatAnswer){
-          if(typeof pushAskHistory === 'function') pushAskHistory(q);
-          return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer };
-        }
-      }catch(e){ /* prose pass is best-effort */ }
+      const { chatAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
+      if(chatAnswer){
+        if(typeof pushAskHistory === 'function') pushAskHistory(q);
+        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer };
+      }
     }
     return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds };
   }
