@@ -65,3 +65,9 @@ test('nlparse: strips matched chrono span from task title', () => {
 test('nlparse: debounced live preview hook exists', () => {
   assert.match(src, /scheduleLiveParsePreview/, 'live preview scheduler exported');
 });
+
+test('nlparse: chrono time merges with an existing dueDate instead of clobbering it', () => {
+  assert.match(src, /function _chronoHasTime/, 'time detection helper exists');
+  assert.match(src, /base\.props\.dueDate && !hasDate/, 'keep sync dueDate when chrono only parsed a clock');
+  assert.match(src, /_localDateTimeFromParts/, 'reminder datetime built from day + clock');
+});

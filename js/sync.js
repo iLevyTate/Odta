@@ -29,6 +29,8 @@ let _lastConnectCode    = null;
 let _reconnectAttempt   = 0;
 let _reconnectTimerId   = null;
 const SYNC_RECONNECT_BACKOFFS_MS = [2000, 4000, 8000, 16000, 30000];
+let _syncApplying = false;
+let _syncAckTimer = null;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -170,7 +172,7 @@ function _packState() {
     cfg,
     theme,
     syncTaskDels, syncListDels, syncGoalDels,
-    stateEpoch,
+    stateEpoch, stateNonce,
     pomosInCycle, phase, logIdCtr,
   };
 }
@@ -231,14 +233,58 @@ function _syncMergeSessionHist(a, b) {
   return out.length > _SYNC_MAX_SH_MERGE ? out.slice(-_SYNC_MAX_SH_MERGE) : out;
 }
 
-function _mergeState(remote) {
-  try {
-    if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return;
-    if (_syncIncomingPayloadInvalid(remote)) {
-      console.warn('[sync] rejected oversized or invalid sync payload');
-      return;
-    }
+function _taskSyncLm(t){
+  if(!t) return 0;
+  return _clampSyncTs(t.lastModified || t.completedAt || 0);
+}
 
+function _localHadSyncWins(remote){
+  const remoteTaskMap = new Map((remote.tasks || []).filter(Boolean).map(t => [t.id, t]));
+  for(const t of tasks){
+    if(!t || t.id == null) continue;
+    const rt = remoteTaskMap.get(t.id);
+    if(!rt) return true;
+    if(_taskSyncLm(t) > _taskSyncLm(rt)) return true;
+  }
+  const remoteListMap = new Map((remote.lists || []).filter(l => l && l.id != null).map(l => [l.id, l]));
+  for(const l of lists){
+    if(!l || l.id == null) continue;
+    const rl = remoteListMap.get(l.id);
+    if(!rl) return true;
+    if(_listOrGoalLM(l) > _listOrGoalLM(rl)) return true;
+  }
+  const remoteGoalMap = new Map((remote.goals || []).filter(g => g && g.id != null).map(g => [g.id, g]));
+  for(const g of goals){
+    if(!g || g.id == null) continue;
+    const rg = remoteGoalMap.get(g.id);
+    if(!rg) return true;
+    if(_listOrGoalLM(g) > _listOrGoalLM(rg)) return true;
+  }
+  return false;
+}
+
+function _scheduleSyncAck(){
+  if(_syncApplying) return;
+  if(_syncAckTimer) clearTimeout(_syncAckTimer);
+  _syncAckTimer = setTimeout(() => {
+    _syncAckTimer = null;
+    if(!_conn || !_conn.open || _syncApplying) return;
+    try { _conn.send({ type: 'patch', payload: _packState() }); }
+    catch(e){ console.warn('[Sync] ack patch', e); }
+  }, 300);
+}
+
+function _mergeState(remote, opts){
+  opts = opts || {};
+  if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return;
+  if (_syncIncomingPayloadInvalid(remote)) {
+    console.warn('[sync] rejected oversized or invalid sync payload');
+    return;
+  }
+
+  const hadLocalWins = _localHadSyncWins(remote);
+  _syncApplying = true;
+  try {
   const repair = (typeof _repairTask === 'function') ? _repairTask : (t=>t);
 
   let mergedTaskDels = _mergeDelMapPair(
@@ -355,13 +401,18 @@ function _mergeState(remote) {
     if (remote.logIdCtr != null) logIdCtr = Math.max(logIdCtr, Math.max(0, parseInt(remote.logIdCtr, 10) || 0));
     if (remote.pomosInCycle != null) pomosInCycle = Math.max(pomosInCycle, Math.max(0, parseInt(remote.pomosInCycle, 10) || 0));
   }
+
+  if(typeof persistAfterSyncMerge === 'function') persistAfterSyncMerge(re, rn);
+  else if(typeof saveState === 'function') saveState('sync');
   } catch (e) {
     console.warn('[sync] mergeState failed', e);
+  } finally {
+    _syncApplying = false;
   }
 
   _lastSyncAt = Date.now();
-  saveState('auto');
-  if (typeof renderAll === 'function') renderAll();
+  if(typeof renderAll === 'function') renderAll();
+  if(hadLocalWins || opts.isInitialState) _scheduleSyncAck();
 }
 
 // ── Connection handling ──────────────────────────────────────────────────────
@@ -392,6 +443,7 @@ function syncAcceptInbound(){
   _pendingInboundConn = null;
   syncHideIncomingBanner();
   if(_conn){ try{ _conn.close(); }catch(e){} _conn = null; }
+  _lastConnectCode = _idToCode(conn.peer);
   _wireConn(conn);
 }
 
@@ -420,7 +472,7 @@ function _wireConn(conn) {
   conn.on('data', (msg) => {
     if (!msg || !msg.type) return;
     if (msg.type === 'state') {
-      _mergeState(msg.payload);
+      _mergeState(msg.payload, { isInitialState: true });
     } else if (msg.type === 'patch') {
       _mergeState(msg.payload);
     } else if (msg.type === 'ping') {
@@ -711,6 +763,7 @@ window.addEventListener('beforeunload', () => {
 let _broadcastTimer = null;
 let _lastBroadcastAt = 0;
 function syncBroadcast() {
+  if(_syncApplying) return;
   if (!_conn || !_conn.open) return;
   // Throttle: max 1 broadcast per 500ms to avoid flooding on rapid saves
   const now = Date.now();

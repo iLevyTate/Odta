@@ -29,3 +29,10 @@ test('mobile CSS gives smart-add controls adequate touch targets', () => {
   assert.match(css, /\.task-enhance-btn[^{]*\{[^}]*min-width:44px/s, '44px min touch width');
   assert.match(css, /\.task-input-wrap\{overflow:visible\}/, 'input wrap does not clip action buttons');
 });
+
+test('smart add predicts list and life area like bulk import', () => {
+  assert.match(ai, /async function _buildSmartAddSuggestions[\s\S]*?predictMetadata[\s\S]*?predictListId/, 'shared enrich helper routes list + metadata');
+  assert.match(ai, /shouldApplySmartAdd[\s\S]*?max-width:640px/, 'mobile submit uses smart-add routing when intel is ready');
+  assert.match(ai, /_focusListForRoutedTask[\s\S]*?activeListId\s*=\s*listId/, 'switches active list so routed tasks are visible');
+  assert.match(ai, /data-action="smartAddRemove" data-arg="listId"/, 'list chip is removable in preview');
+});

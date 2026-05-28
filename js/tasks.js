@@ -201,6 +201,77 @@ window.scheduleIntelDupRefresh = scheduleIntelDupRefresh;
 window.invalidateDupMap = function(){ window._dupSimMap = null; };
 
 // Parse natural language tokens from input: @priority, #tag, !star, ~recur, today/tomorrow/mon-sun
+function _qaPad2(n){ return String(n).padStart(2,'0'); }
+
+function _qaLocalDateTime(dayIso, hour, minute){
+  if(!dayIso) return null;
+  return dayIso + 'T' + _qaPad2(hour) + ':' + _qaPad2(minute);
+}
+
+function _qaParseClock(hourStr, minuteStr, ampm){
+  let hour = parseInt(hourStr, 10);
+  let minute = minuteStr != null && minuteStr !== '' ? parseInt(minuteStr, 10) : 0;
+  if(Number.isNaN(hour) || Number.isNaN(minute)) return null;
+  if(ampm){
+    const ap = String(ampm).toLowerCase().replace(/\./g, '');
+    if(ap.startsWith('p') && hour < 12) hour += 12;
+    if(ap.startsWith('a') && hour === 12) hour = 0;
+  }
+  if(hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+function formatRemindAtLabel(remindAt){
+  if(!remindAt) return '';
+  const m = String(remindAt).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if(!m) return remindAt;
+  const hour = parseInt(m[2], 10);
+  const ap = hour >= 12 ? 'pm' : 'am';
+  const h12 = hour % 12 || 12;
+  return h12 + ':' + m[3] + ' ' + ap;
+}
+if(typeof window !== 'undefined') window.formatRemindAtLabel = formatRemindAtLabel;
+
+/** Strip clock phrases and set remindAt (uses dueDate, else today). */
+function _applyQuickAddTime(text, props){
+  const dayIso = props.dueDate || (typeof todayISO === 'function' ? todayISO() : null);
+  if(!dayIso) return text;
+  let m;
+
+  if(/\b(at\s+)?noon\b|\bmidday\b/i.test(text)){
+    props.remindAt = _qaLocalDateTime(dayIso, 12, 0);
+    if(!props.dueDate) props.dueDate = dayIso;
+    return text.replace(/\b(at\s+)?noon\b|\bmidday\b/ig, ' ');
+  }
+  if(/\b(at\s+)?midnight\b/i.test(text)){
+    props.remindAt = _qaLocalDateTime(dayIso, 0, 0);
+    if(!props.dueDate) props.dueDate = dayIso;
+    return text.replace(/\b(at\s+)?midnight\b/ig, ' ');
+  }
+
+  m = text.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b/i);
+  if(m){
+    const clock = _qaParseClock(m[1], m[2], m[3]);
+    if(clock){
+      props.remindAt = _qaLocalDateTime(dayIso, clock.hour, clock.minute);
+      if(!props.dueDate) props.dueDate = dayIso;
+      return text.replace(m[0], ' ');
+    }
+  }
+
+  m = text.match(/\b(?:at\s+)?([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if(m){
+    const clock = _qaParseClock(m[1], m[2], null);
+    if(clock){
+      props.remindAt = _qaLocalDateTime(dayIso, clock.hour, clock.minute);
+      if(!props.dueDate) props.dueDate = dayIso;
+      return text.replace(m[0], ' ');
+    }
+  }
+
+  return text;
+}
+
 function parseQuickAdd(raw){
   let text=raw;
   const props={};
@@ -282,6 +353,7 @@ function parseQuickAdd(raw){
       text=text.replace(dayMatch[0],'');
     }
   }
+  text = _applyQuickAddTime(text, props);
   return{name:text.replace(/\s+/g,' ').trim(),props};
 }
 
@@ -398,8 +470,25 @@ window.syncQaHintVisibility=syncQaHintVisibility;
  */
 function onTaskInputKey(event){
   if(event.key==='Enter' && !event.isComposing){
-    if(window._smartAddPreview) applySmartAddAndSubmit();
-    else addTask();
+    const inp=event.target;
+    const raw=(inp && typeof inp.value==='string') ? inp.value : '';
+    if(raw.trim().charAt(0)==='?' && typeof openCmdK==='function'){
+      event.preventDefault();
+      const rest=raw.trim().slice(1).trim();
+      if(inp) inp.value='';
+      window._smartAddPreview=null;
+      if(typeof clearLiveParsePreview==='function') clearLiveParsePreview();
+      if(typeof maybeShowEnhanceBtn==='function') maybeShowEnhanceBtn();
+      openCmdK({ask:true, prefill:rest});
+      return;
+    }
+    if(window._smartAddPreview){
+      applySmartAddAndSubmit();
+    } else if(typeof shouldApplySmartAdd === 'function' && shouldApplySmartAdd()){
+      applySmartAddAndSubmit();
+    } else {
+      addTask();
+    }
     return;
   }
   if(event.key==='Escape'){
@@ -453,6 +542,19 @@ function updateLiveParsePreview(){
     let label=props.dueDate;
     if(typeof prettyDate==='function'){ try{ label=prettyDate(props.dueDate); }catch(_){} }
     chips.push(_qpcChip('due', label, 'Due date'));
+  }
+  if(props.remindAt){
+    const tLabel = typeof formatRemindAtLabel === 'function' ? formatRemindAtLabel(props.remindAt) : props.remindAt;
+    chips.push(_qpcChip('due', '\u23f0 ' + tLabel, 'Reminder time'));
+  }
+  if(typeof checkTaskSpelling === 'function'){
+    const spell = checkTaskSpelling(raw);
+    const mk = typeof _qpcSpellChip === 'function' ? _qpcSpellChip : null;
+    if(mk){
+      spell.forEach(issue => {
+        if(issue.suggestions && issue.suggestions[0]) chips.push(mk(issue.word, issue.suggestions[0]));
+      });
+    }
   }
   if(!chips.length){ clearLiveParsePreview(); return; }
   // Build via DOM, not innerHTML — keeps user-controlled text safe even though
@@ -3774,13 +3876,16 @@ function addBlockedBy(taskId,blockerIdStr){
   const blockerId=parseInt(blockerIdStr);if(!blockerId||blockerId===taskId)return;
   if(!t.blockedBy)t.blockedBy=[];
   if(!t.blockedBy.includes(blockerId))t.blockedBy.push(blockerId);
+  if(typeof window._syncTaskModalSnapshot==='function') window._syncTaskModalSnapshot(taskId,{ blockedBy: t.blockedBy.slice() });
   renderBlockedBy(taskId);saveState('user');
 }
 function removeBlockedBy(taskId,blockerId){
   const t=findTask(taskId);if(!t)return;
   t.blockedBy=(t.blockedBy||[]).filter(id=>id!==blockerId);
+  if(typeof window._syncTaskModalSnapshot==='function') window._syncTaskModalSnapshot(taskId,{ blockedBy: t.blockedBy.slice() });
   renderBlockedBy(taskId);saveState('user');
 }
+window.removeBlockedBy = removeBlockedBy;
 function renderBlockedBy(taskId){
   const t=findTask(taskId);if(!t)return;
   const el=document.getElementById('mdBlockedBy');if(!el)return;

@@ -313,7 +313,106 @@ function validateOps(raw, ctx){
   return out;
 }
 
+/**
+ * Render a short human-readable schema block that the LLM system prompt
+ * enumerates. Generated once at load time from TOOL_SCHEMA above.
+ */
+function toolSchemaPromptBlock(){
+  const lines = [];
+  Object.keys(TOOL_SCHEMA).forEach(name => {
+    const s = TOOL_SCHEMA[name];
+    const req = s.required.length ? s.required.join(',') : '';
+    const opt = s.optional.length ? s.optional.map(x => x + '?').join(',') : '';
+    const args = [req, opt].filter(Boolean).join(',');
+    lines.push('- ' + name + '(' + args + ')');
+  });
+  return lines.join('\n');
+}
+
+/**
+ * Tolerant parser: strip code fences, find first balanced [...] block,
+ * return parsed Array or throw.
+ */
+function parseOpsJson(text){
+  if(typeof text !== 'string') throw new Error('NOT_STRING');
+  let s = text;
+  s = s.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+  let open = -1;
+  let offset = 0;
+  for(const line of s.split('\n')){
+    const t = line.replace(/^\s+/, '');
+    if(t.charAt(0) === '['){ open = offset + (line.length - t.length); break; }
+    offset += line.length + 1;
+  }
+  if(open < 0) open = s.indexOf('[');
+  if(open < 0) throw new Error('NO_ARRAY');
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let end = -1;
+  for(let i = open; i < s.length; i++){
+    const c = s[i];
+    if(inStr){
+      if(esc){ esc = false; continue; }
+      if(c === '\\'){ esc = true; continue; }
+      if(c === '"') inStr = false;
+      continue;
+    }
+    if(c === '"'){ inStr = true; continue; }
+    if(c === '['){ depth++; continue; }
+    if(c === ']'){ depth--; if(depth === 0){ end = i + 1; break; } }
+  }
+  if(end < 0) throw new Error('UNBALANCED_ARRAY');
+  const slice = s.slice(open, end);
+  return JSON.parse(slice);
+}
+
+/**
+ * OpenAI / Qwen2.5-style tool list for native tool-calling models.
+ * Parameter types are a best-effort hint; validateOps is still authoritative.
+ */
+function buildOpenAIToolsFromToolSchema(){
+  const out = [];
+  for(const name of Object.keys(TOOL_SCHEMA)){
+    const def = TOOL_SCHEMA[name];
+    const required = (def && Array.isArray(def.required)) ? def.required.slice() : [];
+    const optional = (def && Array.isArray(def.optional)) ? def.optional : [];
+    const seen = new Set();
+    const properties = {};
+    for(const k of required.concat(optional)){
+      if(seen.has(k)) continue;
+      seen.add(k);
+      if(k === 'parts'){
+        properties[k] = {
+          type: 'array',
+          description: 'Subtasks, each { name, effort? }',
+          items: { type: 'object', additionalProperties: true },
+        };
+        continue;
+      }
+      let t = 'string';
+      if(k === 'id' || k === 'listId' || k === 'newParentId' || k === 'parentId' || k === 'checkId' || k === 'blockerId' || k === 'limit' || k === 'estimateMin')
+        t = 'integer';
+      properties[k] = { type: t, description: k };
+    }
+    out.push({
+      type: 'function',
+      function: {
+        name: name,
+        description: 'Task manager operation: ' + name,
+        parameters: { type: 'object', properties, required: required.length ? required : [] },
+      },
+    });
+  }
+  return out;
+}
+
 if(typeof window !== 'undefined'){
   window.TOOL_SCHEMA = TOOL_SCHEMA;
   window.validateOps = validateOps;
+  window.toolSchemaPromptBlock = toolSchemaPromptBlock;
+  window.parseOpsJson = parseOpsJson;
+  window.buildOpenAIToolsFromToolSchema = buildOpenAIToolsFromToolSchema;
+  window.ASK_MAX_OPS = ASK_MAX_OPS;
+  window.coerceToolArg = _coerceArg;
 }

@@ -162,7 +162,7 @@
     --z-popover:100;
     --z-fab:500;
     --z-modal:1000;
-    --z-dialog:1100;
+    --z-dialog:9200;
     --z-toast:1200;
     --z-overlay:1450;
     --z-cmdk:1500;
@@ -1139,6 +1139,9 @@
     background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);
     white-space:nowrap;line-height:1.4;
   }
+  button.qpc{
+    appearance:none;font:inherit;cursor:pointer;
+  }
   .qpc--danger {background:var(--danger-bg); border-color:var(--danger-border); color:var(--danger)}
   .qpc--warning{background:var(--warning-bg);border-color:var(--warning-border);color:var(--warning)}
   .qpc--accent {background:var(--accent-bg); border-color:var(--accent-border); color:var(--accent)}
@@ -1241,6 +1244,7 @@
   }
   .qpc--recur  {background:var(--purple-bg); border-color:var(--purple-border); color:var(--purple)}
   .qpc--due    {background:var(--accent-bg); border-color:var(--accent-border); color:var(--accent)}
+  .qpc--spell  {background:var(--warning-bg);border-color:var(--warning-border);color:var(--warning); font-style:italic}
 
   /* Depth border colors refined */
   .task-item.depth-1{border-left:2px solid var(--accent-border)}
@@ -1973,9 +1977,9 @@
   }
   /* ===== DENSITY MODES =====
      Comfortable: roomy, secondary row visible always (no hover required).
-     Cozy: default, secondary row reveals on hover/focus (existing behavior).
-     Compact: tight rows, smaller checkbox, subtler signals — for power users
-              with long lists. Secondary row stays gated to hover. */
+     Cozy: default — secondary row (status, tags) always visible; density from padding.
+     Compact: tight rows, smaller checkbox — secondary row always visible so status
+              is not clipped under the checkbox. */
   .task-list--comfortable .task-row-primary{padding:14px 16px;min-height:56px;column-gap:var(--space-6)}
   .task-list--comfortable .task-item{padding-block-end:2px}
   .task-list--cozy .task-row-primary{padding:11px 14px;min-height:48px}
@@ -1984,8 +1988,13 @@
   .task-list--compact .task-row-primary .task-checkbox{width:18px;height:18px;min-width:18px;border-width:1.5px}
   .task-list--compact .task-sig{padding:1px 6px;font-size:11px}
   .task-list--compact .task-row-secondary{padding:0 10px 6px 36px}
+  /* Cozy & compact: always expand the status row. Collapsed 0fr left only the
+     top of the badge visible under the checkbox (unreadable sliver). */
+  .task-list--cozy .task-row-secondary-wrap,
+  .task-list--compact .task-row-secondary-wrap{grid-template-rows:1fr}
   .task-row-secondary-wrap{
     display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease-out);
+    overflow:hidden;
   }
   .task-item:hover .task-row-secondary-wrap,
   .task-item:focus-within .task-row-secondary-wrap{grid-template-rows:1fr}
@@ -2600,10 +2609,9 @@
     .task-row-actions{opacity:.5!important;gap:0!important}
     .task-row-actions:hover{opacity:1!important}
     .ta-btn{width:32px;height:32px;font-size:13px}
-    /* Hide sub-items (tags) until tapped — reduces row height */
-    .task-row-secondary-wrap{display:none!important}
-    .task-item.expanded .task-row-secondary-wrap{display:grid!important;grid-template-rows:1fr!important}
-    .task-item.expanded .task-row-secondary{padding:0 14px 10px 46px!important}
+    /* Status row always visible on mobile (was display:none with no .expanded toggle) */
+    .task-row-secondary-wrap{display:grid!important;grid-template-rows:1fr!important}
+    .task-row-secondary{padding:0 14px 8px 46px!important}
 
     /* Signals (date chip, recur icon): single small indicator only */
     .task-signals{gap:3px}
@@ -4419,3 +4427,183 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
     font-size:9pt; color:rgb(85,85,85);
   }
 }
+
+/* ── Generative Ask (restored) ── */
+.gen-load-ribbon{position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;gap:8px;min-width:min(440px,94vw);max-width:94vw;padding:11px 15px;border-radius:12px;background:var(--bg-1);border:1px solid var(--border-strong);box-shadow:0 10px 36px rgba(0,0,0,.22)}
+.gen-load-ribbon[hidden]{display:none!important}
+.gen-load-ribbon__track{position:relative;height:7px;background:var(--bg-3);border-radius:999px;overflow:hidden}
+.gen-load-ribbon__bar{height:100%;width:0%;background:var(--accent);border-radius:999px;transition:width .22s ease-out}
+.gen-load-ribbon__txt{font-size:12px;color:var(--text-1);line-height:1.4;font-weight:600}
+@keyframes genRibbonIndet{
+  0%{transform:translateX(-100%)}
+  100%{transform:translateX(320%)}
+}
+.gen-load-ribbon__track--indeterminate .gen-load-ribbon__bar{width:38%!important;transition:none;animation:genRibbonIndet 1.35s ease-in-out infinite}
+@media (max-width:480px){
+  .gen-load-ribbon{padding:9px 12px;min-width:min(360px,96vw)}
+  .gen-load-ribbon__txt{font-size:11px}
+}
+.intel-start-list{margin:8px 0 10px 1.1em;padding:0;font-size:12px;line-height:1.55;color:var(--text-2)}
+.intel-start-list li{margin:4px 0}
+
+.md-breakdown-body{display:flex;flex-direction:column;gap:8px;padding:4px 0 2px}
+.md-breakdown-list{display:flex;flex-direction:column;gap:4px}
+.md-breakdown-row{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer}
+.md-breakdown-row:hover{border-color:var(--accent)}
+.md-breakdown-row input[type="checkbox"]{flex-shrink:0;accent-color:var(--accent)}
+.md-breakdown-name{flex:1;word-break:break-word;color:var(--text-1)}
+.md-breakdown-effort{flex-shrink:0;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:rgba(61,139,204,.12);border:1px solid rgba(61,139,204,.28);color:var(--accent)}
+.md-breakdown-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.md-breakdown-btn{padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;color:var(--text-1);cursor:pointer;margin-top:8px}
+.md-breakdown-btn:hover{border-color:var(--accent)}
+.md-breakdown-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.md-breakdown-btn--primary:hover{filter:brightness(1.1)}
+
+.cmdk-ask-toggle{
+  margin-right:10px;padding:6px 12px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  background:var(--bg-2);color:var(--text-3);border:1px solid var(--border);border-radius:999px;cursor:pointer;font-family:inherit;flex-shrink:0;
+}
+.cmdk-ask-toggle:hover{background:var(--bg-3);color:var(--text-2)}
+.cmdk-ask-toggle--active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.cmdk-panel--ask .cmdk-input{color:var(--accent)}
+.cmdk-ask-reply{
+  padding:14px 16px;max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background:var(--bg-2);border-bottom:1px solid var(--border);font-size:13px;color:var(--text-1);
+}
+.cmdk-ask-hint{font-size:12px;color:var(--text-3);line-height:1.5}
+.cmdk-ask-hint strong{color:var(--text-2)}
+.cmdk-ask-streaming{display:flex;flex-direction:column;gap:10px}
+.cmdk-ask-row{display:flex;align-items:center;gap:10px}
+.cmdk-ask-spinner{
+  display:inline-block;width:12px;height:12px;border-radius:50%;
+  border:2px solid var(--border);border-top-color:var(--accent);
+  animation:cmdk-ask-spin 0.8s linear infinite;flex-shrink:0;
+}
+@keyframes cmdk-ask-spin{to{transform:rotate(360deg)}}
+.cmdk-ask-label{font-size:12px;color:var(--text-2);font-weight:500;flex:1}
+.cmdk-ask-details{font-size:11px;color:var(--text-3)}
+.cmdk-ask-details summary{cursor:pointer;user-select:none;padding:2px 0}
+.cmdk-ask-details summary:hover{color:var(--text-2)}
+.cmdk-ask-stream{
+  margin:6px 0 0;font-family:var(--font-mono);font-size:11.5px;line-height:1.45;color:var(--text-3);
+  background:var(--bg-1);border:1px solid var(--border);border-radius:6px;padding:10px 12px;
+  max-height:26vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;
+}
+.cmdk-ask-stop{
+  padding:4px 10px;font-size:11px;font-weight:600;font-family:inherit;
+  background:transparent;color:var(--danger);border:1px solid var(--danger);border-radius:4px;cursor:pointer;flex-shrink:0;
+}
+.cmdk-ask-stop:hover{background:rgba(231,76,60,.08)}
+.cmdk-ask-error{color:var(--danger);font-size:13px;line-height:1.5}
+.cmdk-ask-error button{margin-left:8px;vertical-align:middle}
+.cmdk-ask-empty{color:var(--text-3);font-size:13px;font-style:italic}
+.cmdk-ask-done{color:var(--success,#2ecc71);font-size:13px;font-weight:500}
+.cmdk-ask-answer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-sm,8px);background:var(--bg-1);border:1px solid var(--border-subtle)}
+.cmdk-ask-answer-body{color:var(--text-1);font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.cmdk-ask-answer-foot{color:var(--text-3);font-size:11px;letter-spacing:.2px}
+.cmdk-ask-rejected{margin-top:8px;border:1px solid var(--border-subtle);border-radius:var(--r-sm,8px);background:var(--bg-1);padding:6px 10px}
+.cmdk-ask-rejected summary{cursor:pointer;color:var(--warning);font-size:12px;font-weight:500}
+.cmdk-ask-rejected-list{margin:6px 0 0;padding-left:18px;color:var(--text-2);font-size:12px;line-height:1.55}
+.cmdk-ask-rejected-list li{word-break:break-word}
+.cmdk-ask-rejected-more{font-style:italic;color:var(--text-3)}
+
+/* Chat-style Ask conversation. Reply container scrolls; bubbles are right
+   (user) and left (assistant) aligned. The existing per-state classes
+   (.cmdk-ask-answer-body, .cmdk-ask-error, .cmdk-ask-done, .cmdk-ask-empty,
+   .cmdk-ask-rejected) are reused inside the assistant bubble so we don't
+   duplicate styling. */
+#cmdkAskReply{max-height:46vh;max-height:min(46vh, calc(var(--vv-height, 46dvh) - 180px));overflow-y:auto;padding-right:2px;scroll-behavior:smooth}
+/* When the soft keyboard is open, shrink the chat scroll area further so the
+   input field stays visible. 180→260 budget covers the input row, the foot
+   hint, and the "+ New chat" toolbar without clipping any of them. */
+.kb-open #cmdkAskReply{max-height:calc(var(--vv-height, 60dvh) - 260px)}
+.cmdk-ask-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 8px;border-bottom:1px solid var(--border-subtle);margin-bottom:10px;position:sticky;top:0;background:var(--bg-0,inherit);z-index:1}
+.cmdk-ask-bar-btn{appearance:none;background:transparent;border:1px solid var(--border-subtle);color:var(--text-2);font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;line-height:1.4}
+.cmdk-ask-bar-btn:hover{color:var(--text-1);border-color:var(--text-3)}
+.cmdk-ask-bar-count{color:var(--text-3);font-size:11px;letter-spacing:.3px}
+.cmdk-ask-turn{display:flex;margin-bottom:10px}
+.cmdk-ask-turn--q{justify-content:flex-end}
+.cmdk-ask-turn--a{justify-content:flex-start}
+.cmdk-ask-bubble{max-width:88%;padding:10px 12px;border-radius:14px;line-height:1.5;font-size:13px;word-break:break-word;white-space:pre-wrap}
+.cmdk-ask-bubble--q{background:var(--accent,#3d8bcc);color:#fff;border-bottom-right-radius:4px;font-weight:500}
+.cmdk-ask-bubble--a{background:var(--bg-1);color:var(--text-1);border:1px solid var(--border-subtle);border-bottom-left-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.cmdk-ask-bubble--a .cmdk-ask-rejected{margin-top:4px}
+
+/* Source badge + bulk-destructive warning inside the pending-ops preview */
+.pending-source-badge{
+  display:inline-block;margin-left:8px;padding:2px 8px;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  background:var(--accent-bg);color:var(--accent);border-radius:999px;vertical-align:middle;
+}
+.pending-mass-warn{
+  margin:0 0 10px;padding:10px 12px;font-size:12px;line-height:1.5;color:var(--text-1);
+  background:rgba(241,196,15,.08);border:1px solid rgba(241,196,15,.35);border-radius:8px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* GENERATIVE AI — Settings subsection                                        */
+/* ══════════════════════════════════════════════════════════════════════════ */
+.gen-settings{display:flex;flex-direction:column;gap:10px;width:100%}
+.gen-settings-lead{font-size:11px;color:var(--text-3);line-height:1.55;margin:2px 0 0}
+.gen-settings-lead strong{color:var(--text-2)}
+.gen-settings-lead em{font-style:italic;color:var(--text-2)}
+.gen-settings-lead code,.gen-settings-lead kbd{font-family:var(--font-mono);font-size:10.5px;background:var(--bg-2);border:1px solid var(--border);padding:1px 5px;border-radius:3px;color:var(--text-2)}
+.gen-settings-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.gen-settings-lbl{font-size:12px;color:var(--text-2);min-width:80px}
+.gen-settings select,.gen-settings input[type=number]{
+  flex:1;min-width:140px;padding:6px 10px;background:var(--bg-2);border:1px solid var(--border);border-radius:5px;
+  color:var(--text-1);font-family:inherit;font-size:12px;
+}
+.gen-settings select:disabled,.gen-settings input:disabled{opacity:.5;cursor:not-allowed}
+.gen-settings-note{font-size:11px;color:var(--text-3);line-height:1.4}
+.gen-settings-warn{font-size:11px;color:var(--warning,#e67e22);line-height:1.4;padding:6px 10px;background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.3);border-radius:5px}
+.gen-settings-status{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.gen-settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.gen-settings-actions--secondary{margin-top:6px;padding-top:8px;border-top:1px dashed var(--border)}
+.gen-settings-hint{font-size:11px;color:var(--text-4);line-height:1.5;margin:6px 0 0}
+
+/* Ask promo chip (discoverability outside Cmd+K) */
+.ask-promo-chip{
+  margin:0;display:inline-flex;align-items:center;gap:6px;padding:5px 10px;
+  background:var(--bg-2);border:1px solid var(--border);color:var(--text-3);
+  border-radius:999px;font-size:11px;font-family:inherit;cursor:pointer;
+}
+.ask-promo-chip .ask-promo-ic{display:inline-flex;align-items:center;flex-shrink:0}
+.ask-promo-chip:hover{color:var(--accent);border-color:var(--accent)}
+.ask-promo-chip kbd{
+  font-family:var(--font-mono);font-size:10px;background:var(--bg-1);border:1px solid var(--border);
+  padding:1px 5px;border-radius:3px;color:var(--text-2);
+}
+.ask-promo-label--touch{display:none}
+@media (max-width:640px),(pointer:coarse){
+  .ask-promo-label--kbd{display:none}
+  .ask-promo-label--touch{display:inline}
+}
+
+.gen-settings-row--apply-mode{align-items:center}
+.gen-apply-mode-seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.gen-apply-mode-btn{
+  padding:6px 12px;font-size:12px;font-family:inherit;background:var(--bg-2);color:var(--text-2);
+  border:none;border-right:1px solid var(--border);cursor:pointer;
+}
+.gen-apply-mode-btn:last-child{border-right:none}
+.gen-apply-mode-btn--active{background:var(--accent);color:var(--text-on-inverse)}
+.gen-apply-mode-btn:disabled{opacity:.5;cursor:not-allowed}
+.gen-settings-hint--tight{margin-top:4px}
+
+.cmdk-apply-mode{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0}
+.cmdk-apply-mode-btn{
+  padding:5px 10px;font-size:11px;font-family:inherit;background:var(--bg-2);color:var(--text-3);
+  border:none;border-right:1px solid var(--border);cursor:pointer;
+}
+.cmdk-apply-mode-btn:last-child{border-right:none}
+.cmdk-apply-mode-btn--active{background:color-mix(in srgb,var(--accent) 18%,var(--bg-2));color:var(--accent);font-weight:600}
+
+.cmdk-ask-starters{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 0}
+.cmdk-ask-starter-chip{
+  padding:5px 10px;font-size:11px;font-family:inherit;border-radius:999px;
+  border:1px solid var(--border);background:var(--bg-2);color:var(--text-2);cursor:pointer;
+}
+.cmdk-ask-starter-chip:hover{border-color:var(--accent);color:var(--accent)}
+
+.cmdk-ask-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.cmdk-ask-done--applied{color:var(--success,#27ae60)}

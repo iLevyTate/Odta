@@ -47,6 +47,8 @@ window.ODTAULAI_CONFIG = Object.freeze({
   STORAGE_KEYS: Object.freeze({
     STATE:              'stupind_state',
     ARCHIVE:            'stupind_archive',
+    GEN_CFG:            'stupind_gen_cfg',
+    GEN_HISTORY:        'stupind_gen_history',
     CARD_DENSITY:       'stupind_card_density',
     SHOW_DONE_ALL:      'stupind_show_done_all',
     SWIPE_TIP_DISMISSED:'odtaulai_swipe_tip_dismissed',

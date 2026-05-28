@@ -24,18 +24,32 @@ function makeMergeRun() {
   return new Function(`
     var SYNC_VERSION = 1;
     var _lastSyncAt = 0;
+    var _syncApplying = false;
+    var _syncAckTimer = null;
+    var _conn = null;
     var tasks, lists, goals, taskIdCtr, listIdCtr, goalIdCtr, activeListId;
     var timeLog, sessionHistory, intervals, intIdCtr, totalPomos, totalBreaks, totalFocusSec;
-    var syncTaskDels, syncListDels, syncGoalDels, stateEpoch;
+    var syncTaskDels, syncListDels, syncGoalDels, stateEpoch, stateNonce;
     var cfg, theme, logIdCtr, pomosInCycle, phase;
-    function saveState() { }
+    var _saveReason = null;
+    function persistAfterSyncMerge(remoteEpoch, remoteNonce){
+      const _localEpoch = stateEpoch || 0;
+      const _remoteEpoch = remoteEpoch || 0;
+      const _localNonce = stateNonce || 0;
+      const _remoteNonce = remoteNonce || 0;
+      if(_remoteEpoch > 0) stateEpoch = Math.max(_localEpoch, _remoteEpoch);
+      if(_remoteEpoch > _localEpoch || (_remoteEpoch === _localEpoch && _remoteEpoch > 0 && _remoteNonce > _localNonce)){
+        stateNonce = _remoteNonce;
+      }
+    }
+    function saveState(reason) { _saveReason = reason; }
     function renderAll() { }
     function rebuildTaskIdIndex() { }
     function repairOrphanedTaskParents() { }
     function _repairTask(t) { return t; }
     ${clamp}
     ${mergeBlock}
-    return function run(init, remote) {
+    return function run(init, remote, opts) {
       tasks = init.tasks || [];
       lists = init.lists || [];
       goals = init.goals || [];
@@ -54,15 +68,17 @@ function makeMergeRun() {
       syncListDels = { ...(init.syncListDels || {}) };
       syncGoalDels = { ...(init.syncGoalDels || {}) };
       stateEpoch = init.stateEpoch || 0;
+      stateNonce = init.stateNonce || 0;
       cfg = init.cfg && typeof init.cfg === 'object' ? { ...init.cfg } : {};
       theme = init.theme || 'dark';
       logIdCtr = init.logIdCtr || 0;
       pomosInCycle = init.pomosInCycle || 0;
       phase = init.phase || 'work';
-      _mergeState(remote);
+      _saveReason = null;
+      _mergeState(remote, opts || {});
       return {
-        tasks, lists, goals, taskIdCtr, listIdCtr, goalIdCtr, syncTaskDels, syncListDels, syncGoalDels, stateEpoch,
-        timeLog, cfg, theme, totalPomos, totalFocusSec,
+        tasks, lists, goals, taskIdCtr, listIdCtr, goalIdCtr, syncTaskDels, syncListDels, syncGoalDels, stateEpoch, stateNonce,
+        timeLog, cfg, theme, totalPomos, totalFocusSec, saveReason: _saveReason,
       };
     };
   `)();
@@ -152,4 +168,58 @@ test('merge: invalid syncV is rejected without mutating tasks', () => {
   const o = run({ tasks: t0, taskIdCtr: 1, stateEpoch: 0 }, bad);
   assert.equal(o.tasks.length, 1);
   assert.equal(o.tasks[0].name, 'keep');
+});
+
+test('merge: bidirectional offline edits union tasks from both devices', () => {
+  const run = makeMergeRun();
+  let local = {
+    tasks: [{ id: 1, name: 'A edited', lastModified: 100 }],
+    taskIdCtr: 2,
+    stateEpoch: 1000,
+  };
+  local = run(local, {
+    tasks: [{ id: 2, name: 'B created', lastModified: 200 }],
+    taskIdCtr: 2,
+    stateEpoch: 2000,
+  });
+  assert.equal(local.tasks.length, 2);
+  assert.ok(local.tasks.some(t => t.id === 1 && t.name === 'A edited'));
+  assert.ok(local.tasks.some(t => t.id === 2 && t.name === 'B created'));
+
+  local = run(local, {
+    tasks: [{ id: 1, name: 'A edited', lastModified: 100 }],
+    taskIdCtr: 2,
+    stateEpoch: 1000,
+  });
+  assert.equal(local.tasks.length, 2);
+});
+
+test('merge: persistAfterSyncMerge advances stateEpoch to max of local and remote', () => {
+  const run = makeMergeRun();
+  const o = run(
+    { tasks: [], taskIdCtr: 0, stateEpoch: 100, stateNonce: 1 },
+    { tasks: [], taskIdCtr: 0, stateEpoch: 500, stateNonce: 3 },
+  );
+  assert.equal(o.stateEpoch, 500);
+  assert.equal(o.stateNonce, 3);
+});
+
+test('merge: uses persistAfterSyncMerge (not auto save) after merge', () => {
+  const run = makeMergeRun();
+  const o = run(
+    { tasks: [{ id: 1, name: 'local', lastModified: 5 }], taskIdCtr: 1, stateEpoch: 0 },
+    { tasks: [{ id: 1, name: 'remote', lastModified: 10 }], taskIdCtr: 1, stateEpoch: 1 },
+  );
+  assert.equal(o.saveReason, null, 'persistAfterSyncMerge handles persist without saveState auto');
+  assert.equal(o.stateEpoch, 1);
+});
+
+test('merge: remote task lastModified is not re-stamped on receive', () => {
+  const run = makeMergeRun();
+  const remoteLm = 424242;
+  const o = run(
+    { tasks: [], taskIdCtr: 1, stateEpoch: 0 },
+    { tasks: [{ id: 1, name: 'from peer', lastModified: remoteLm }], taskIdCtr: 1, stateEpoch: 1 },
+  );
+  assert.equal(o.tasks[0].lastModified, remoteLm);
 });
