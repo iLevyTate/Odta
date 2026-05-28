@@ -280,7 +280,7 @@ window.taskInputLiveUpdate = function(){
   else if(typeof updateLiveParsePreview === 'function') updateLiveParsePreview();
 };
 window.addTaskOrApplyPreview = function(){
-  if(window._smartAddPreview && typeof applySmartAddAndSubmit === 'function') applySmartAddAndSubmit();
+  if(typeof shouldApplySmartAdd === 'function' && shouldApplySmartAdd() && typeof applySmartAddAndSubmit === 'function') applySmartAddAndSubmit();
   else if(typeof addTask === 'function') addTask();
 };
 window.qtLabelEnterKey = function(e){

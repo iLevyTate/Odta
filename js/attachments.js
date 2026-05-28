@@ -86,7 +86,7 @@ async function addImageAttachment(taskId, file){
   if(!t) return null;
   const existing = await listTaskAttachments(taskId);
   if(countAttachmentsByKind(existing, 'image') >= ATTACH_MAX_IMAGES){
-    if(typeof toast === 'function') toast('Max ' + ATTACH_MAX_IMAGES + ' photos per task');
+    if(typeof showExportToast === 'function') showExportToast('Max ' + ATTACH_MAX_IMAGES + ' photos per task');
     return null;
   }
   const id = _newAttachId();
@@ -107,7 +107,7 @@ async function addAudioAttachment(taskId, blob, mime){
   if(!t) return null;
   const existing = await listTaskAttachments(taskId);
   if(countAttachmentsByKind(existing, 'audio') >= ATTACH_MAX_AUDIO){
-    if(typeof toast === 'function') toast('Max ' + ATTACH_MAX_AUDIO + ' voice notes per task');
+    if(typeof showExportToast === 'function') showExportToast('Max ' + ATTACH_MAX_AUDIO + ' voice notes per task');
     return null;
   }
   const id = _newAttachId();

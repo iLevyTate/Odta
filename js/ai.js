@@ -1864,6 +1864,41 @@ async function _aiFeatureGuard(label, fn){
   }
 }
 
+async function _buildSmartAddSuggestions(raw){
+  const cleaned = {};
+  if(typeof predictMetadata === 'function'){
+    const sugg = await predictMetadata(raw, 5);
+    const PR = ['urgent','high','normal','low','none'];
+    const EFF = ['xs','s','m','l','xl'];
+    const EN = ['high','low'];
+    if(sugg.priority && PR.includes(sugg.priority) && sugg.priority !== 'none') cleaned.priority = sugg.priority;
+    if(sugg.category && typeof hasClassificationCategory === 'function' && hasClassificationCategory(sugg.category)) cleaned.category = sugg.category;
+    if(sugg.effort && EFF.includes(sugg.effort)) cleaned.effort = sugg.effort;
+    if(sugg.energyLevel && EN.includes(sugg.energyLevel)) cleaned.energyLevel = sugg.energyLevel;
+    if(Array.isArray(sugg.tags)) cleaned.tags = sugg.tags.filter(t => typeof t === 'string' && t.length && t.length < 25).slice(0, 5);
+    if(sugg.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(sugg.dueDate)) cleaned.dueDate = sugg.dueDate;
+  }
+  if(typeof predictListId === 'function'){
+    try{
+      const lid = await predictListId(raw, { minScore: 0.30, minMargin: 0 });
+      if(lid != null) cleaned.listId = lid;
+    }catch(_){ /* best-effort */ }
+  }
+  return cleaned;
+}
+
+function shouldApplySmartAdd(){
+  if(window._smartAddPreview) return true;
+  if(typeof matchMedia !== 'function' || !matchMedia('(max-width:640px)').matches) return false;
+  return typeof isIntelReady === 'function' && isIntelReady();
+}
+
+function _focusListForRoutedTask(listId){
+  if(listId == null || showAllLists || activeListId === listId) return;
+  activeListId = listId;
+  if(typeof syncFilterBar === 'function') syncFilterBar();
+}
+
 async function smartAddEnhance(){
   if(typeof isIntelReady !== 'function' || !isIntelReady()){
     _setIntelStatus('error', 'Model still loading — check the AI chip or open Tools');
@@ -1885,18 +1920,7 @@ async function smartAddEnhance(){
   }
 
   try{
-    const sugg = await predictMetadata(raw, 5);
-    const PR = ['urgent','high','normal','low','none'];
-    const EFF = ['xs','s','m','l','xl'];
-    const EN = ['high','low'];
-
-    const cleaned = {};
-    if(sugg.priority && PR.includes(sugg.priority) && sugg.priority !== 'none') cleaned.priority = sugg.priority;
-    if(sugg.category && typeof hasClassificationCategory === 'function' && hasClassificationCategory(sugg.category)) cleaned.category = sugg.category;
-    if(sugg.effort && EFF.includes(sugg.effort)) cleaned.effort = sugg.effort;
-    if(sugg.energyLevel && EN.includes(sugg.energyLevel)) cleaned.energyLevel = sugg.energyLevel;
-    if(Array.isArray(sugg.tags)) cleaned.tags = sugg.tags.filter(t => typeof t === 'string' && t.length && t.length < 25).slice(0, 5);
-    if(sugg.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(sugg.dueDate)) cleaned.dueDate = sugg.dueDate;
+    const cleaned = await _buildSmartAddSuggestions(raw);
 
     if(Object.keys(cleaned).length === 0){
       if(prev){
@@ -1941,7 +1965,11 @@ function _renderSmartAddChips(s){
     const cdef = (typeof getCategoryDef === 'function') ? getCategoryDef(s.category) : null;
     const catLbl = cdef ? cdef.label : s.category;
     const catIc = (cdef && cdef.icon) || CAT_ICON[s.category] || 'pin';
-    chips.push(`<span class="sa-chip" data-tip="Category — tap to remove" data-action="smartAddRemove" data-arg="category"><span class="sa-chip-ic">${ic(catIc)}</span> ${esc(catLbl)} ×</span>`);
+    chips.push(`<span class="sa-chip" data-tip="Life area — tap to remove" data-action="smartAddRemove" data-arg="category"><span class="sa-chip-ic">${ic(catIc)}</span> ${esc(catLbl)} ×</span>`);
+  }
+  if(s.listId != null){
+    const listLbl = _listNameById(s.listId);
+    chips.push(`<span class="sa-chip" data-tip="List — tap to remove" data-action="smartAddRemove" data-arg="listId"><span class="sa-chip-ic">${ic('list')}</span> ${esc(listLbl)} ×</span>`);
   }
   if(s.effort) chips.push(`<span class="sa-chip" data-tip="${escAttr(effortTips[s.effort] || 'Effort')} — tap to remove" data-action="smartAddRemove" data-arg="effort">effort: ${esc(String(s.effort).toUpperCase())} ×</span>`);
   if(s.energyLevel) chips.push(`<span class="sa-chip" data-tip="Energy — tap to remove" data-action="smartAddRemove" data-arg="energyLevel"><span class="sa-chip-ic">${ic(s.energyLevel === 'high' ? 'flame' : 'leaf')}</span> ${esc(s.energyLevel)} ×</span>`);
@@ -1983,7 +2011,10 @@ async function applySmartAddAndSubmit(){
   const inp = gid('taskInput');
   const raw = (inp?.value || '').trim();
   if(!raw){ window._smartAddPreview = null; return; }
-  const sugg = window._smartAddPreview || {};
+  let sugg = window._smartAddPreview ? { ...window._smartAddPreview } : {};
+  if(!Object.keys(sugg).length && shouldApplySmartAdd()){
+    sugg = await _buildSmartAddSuggestions(raw);
+  }
 
   ensureDefaultList();
   let parsed;
@@ -2004,16 +2035,21 @@ async function applySmartAddAndSubmit(){
   tasks.push(smartT);
   if(typeof _taskIndexRegister === 'function') _taskIndexRegister(smartT);
 
+  _focusListForRoutedTask(smartT.listId);
+
   inp.value = '';
   window._smartAddPreview = null;
   const prev = document.getElementById('smartAddPreview');
   if(prev){ prev.innerHTML = ''; prev.hidden = true; }
   const btn = document.getElementById('taskEnhanceBtn');
   if(btn) btn.hidden = true;
+  if(typeof clearLiveParsePreview === 'function') clearLiveParsePreview();
+  try{ inp.focus({ preventScroll: true }); }catch(_){ inp.focus(); }
 
   renderTaskList();
   if(typeof renderBanner === 'function') renderBanner();
   if(typeof renderLists === 'function') renderLists();
+  if(typeof announceTaskAdd === 'function') announceTaskAdd(smartT.name);
   saveState('user');
 }
 
@@ -2071,6 +2107,7 @@ window.smartAddEnhance = smartAddEnhance;
 window.smartAddRemove = smartAddRemove;
 window.smartAddRemoveTag = smartAddRemoveTag;
 window.applySmartAddAndSubmit = applySmartAddAndSubmit;
+window.shouldApplySmartAdd = shouldApplySmartAdd;
 window.maybeShowEnhanceBtn = maybeShowEnhanceBtn;
 window.aiAlign = aiAlign;
 window.aiToggleValue = aiToggleValue;

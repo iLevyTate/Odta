@@ -1139,6 +1139,9 @@
     background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);
     white-space:nowrap;line-height:1.4;
   }
+  button.qpc{
+    appearance:none;font:inherit;cursor:pointer;
+  }
   .qpc--danger {background:var(--danger-bg); border-color:var(--danger-border); color:var(--danger)}
   .qpc--warning{background:var(--warning-bg);border-color:var(--warning-border);color:var(--warning)}
   .qpc--accent {background:var(--accent-bg); border-color:var(--accent-border); color:var(--accent)}
@@ -1241,6 +1244,7 @@
   }
   .qpc--recur  {background:var(--purple-bg); border-color:var(--purple-border); color:var(--purple)}
   .qpc--due    {background:var(--accent-bg); border-color:var(--accent-border); color:var(--accent)}
+  .qpc--spell  {background:var(--warning-bg);border-color:var(--warning-border);color:var(--warning); font-style:italic}
 
   /* Depth border colors refined */
   .task-item.depth-1{border-left:2px solid var(--accent-border)}
@@ -1973,9 +1977,9 @@
   }
   /* ===== DENSITY MODES =====
      Comfortable: roomy, secondary row visible always (no hover required).
-     Cozy: default, secondary row reveals on hover/focus (existing behavior).
-     Compact: tight rows, smaller checkbox, subtler signals — for power users
-              with long lists. Secondary row stays gated to hover. */
+     Cozy: default — secondary row (status, tags) always visible; density from padding.
+     Compact: tight rows, smaller checkbox — secondary row always visible so status
+              is not clipped under the checkbox. */
   .task-list--comfortable .task-row-primary{padding:14px 16px;min-height:56px;column-gap:var(--space-6)}
   .task-list--comfortable .task-item{padding-block-end:2px}
   .task-list--cozy .task-row-primary{padding:11px 14px;min-height:48px}
@@ -1984,8 +1988,13 @@
   .task-list--compact .task-row-primary .task-checkbox{width:18px;height:18px;min-width:18px;border-width:1.5px}
   .task-list--compact .task-sig{padding:1px 6px;font-size:11px}
   .task-list--compact .task-row-secondary{padding:0 10px 6px 36px}
+  /* Cozy & compact: always expand the status row. Collapsed 0fr left only the
+     top of the badge visible under the checkbox (unreadable sliver). */
+  .task-list--cozy .task-row-secondary-wrap,
+  .task-list--compact .task-row-secondary-wrap{grid-template-rows:1fr}
   .task-row-secondary-wrap{
     display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease-out);
+    overflow:hidden;
   }
   .task-item:hover .task-row-secondary-wrap,
   .task-item:focus-within .task-row-secondary-wrap{grid-template-rows:1fr}
@@ -2600,10 +2609,9 @@
     .task-row-actions{opacity:.5!important;gap:0!important}
     .task-row-actions:hover{opacity:1!important}
     .ta-btn{width:32px;height:32px;font-size:13px}
-    /* Hide sub-items (tags) until tapped — reduces row height */
-    .task-row-secondary-wrap{display:none!important}
-    .task-item.expanded .task-row-secondary-wrap{display:grid!important;grid-template-rows:1fr!important}
-    .task-item.expanded .task-row-secondary{padding:0 14px 10px 46px!important}
+    /* Status row always visible on mobile (was display:none with no .expanded toggle) */
+    .task-row-secondary-wrap{display:grid!important;grid-template-rows:1fr!important}
+    .task-row-secondary{padding:0 14px 8px 46px!important}
 
     /* Signals (date chip, recur icon): single small indicator only */
     .task-signals{gap:3px}

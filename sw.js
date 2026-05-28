@@ -40,6 +40,7 @@ const ASSETS = [
   './js/attachments.js',
   './js/timer-dock.js',
   './js/tasks.js',
+  './js/spellcheck.js',
   './js/intel.js',
   './js/embed-store.js',
   './js/nlparse.js',

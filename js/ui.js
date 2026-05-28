@@ -785,6 +785,7 @@ function showQuickAddSyntaxHint(){
   pop.setAttribute('aria-label', 'Quick-add syntax cheatsheet');
   const items = [
     ['tomorrow / today / next mon', 'Set due date'],
+    ['at 3pm / 14:30 / noon', 'Set reminder time'],
     ['fri / sat / sun (next occurrence)', 'Day-of-week shortcuts'],
     ['in 3 days', 'Relative date'],
     ['@urgent / @high / @normal / @low', 'Priority'],
@@ -810,7 +811,7 @@ function showQuickAddSyntaxHint(){
   pop.appendChild(tbl);
   const ex2 = document.createElement('div');
   ex2.className = 'task-syntax-popover-example';
-  ex2.innerHTML = 'Example: <code>Buy milk tomorrow @urgent #shopping</code>';
+  ex2.innerHTML = 'Example: <code>Call dentist tomorrow at 2pm @urgent</code>';
   pop.appendChild(ex2);
   document.body.appendChild(pop);
   // Anchor positioning — beneath the input, right-aligned to its trailing edge
@@ -1542,6 +1543,16 @@ function _commitChipChange(t){
   if(typeof renderTaskList === 'function') renderTaskList();
   if(typeof showSaveIndicator === 'function') showSaveIndicator();
 }
+// Keep modal snapshot aligned with immediate link/group mutations (relatedTo,
+// blockedBy, parentId) so closeTaskDetail's revert pass can't undo them.
+function _syncTaskModalSnapshot(taskId, fields){
+  if(!_taskModalSnapshot || editingTaskId !== taskId || !fields || typeof fields !== 'object') return;
+  Object.keys(fields).forEach(f => {
+    const v = fields[f];
+    _taskModalSnapshot[f] = (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : v;
+  });
+}
+window._syncTaskModalSnapshot = _syncTaskModalSnapshot;
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail
@@ -1871,7 +1882,10 @@ async function refreshMdSimilarTasks(id){
     body.textContent='';
     sim.forEach(({ t: ot, sim: s }) => {
       const btn=document.createElement('button');btn.type='button';btn.className='similar-task-row';
-      btn.onclick=function(){closeTaskDetail();openTaskDetail(parseInt(ot.id,10)||0)};
+      btn.onclick=async function(){
+        await closeTaskDetail({ skipRevert: true });
+        openTaskDetail(parseInt(ot.id,10)||0);
+      };
       const nm=document.createElement('span');nm.className='st-name';nm.textContent=ot.name.slice(0,48);btn.appendChild(nm);
       const sc=document.createElement('span');sc.className='st-sim';sc.textContent=s.toFixed(2);btn.appendChild(sc);
       body.appendChild(btn);
@@ -1936,9 +1950,9 @@ async function clusterSimilarTasks(){
   const anchorPrevEntry = prevParents.find(p => p.id === id);
   const anchorPrevParent = anchorPrevEntry ? anchorPrevEntry.parentId : null;
   group.forEach(t => { t.parentId = parent.id; });
-  // The detail modal reverts the anchor to its open-time snapshot on close;
-  // sync the new parent into the snapshot so closing doesn't pop it back out.
-  if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = parent.id;
+  // The detail modal reverts to the open-time snapshot on close — sync parentId
+  // for the anchor so grouping survives Cancel / navigation.
+  _syncTaskModalSnapshot(id, { parentId: parent.id });
 
   if(typeof saveState === 'function') saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();
@@ -1948,7 +1962,7 @@ async function clusterSimilarTasks(){
     const pid = parent.id;
     showActionToast('Grouped ' + group.length + ' tasks under "' + name + '"', 'Undo', () => {
       prevParents.forEach(p => { const t = findTask(p.id); if(t) t.parentId = p.parentId; });
-      if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = anchorPrevParent == null ? null : anchorPrevParent;
+      _syncTaskModalSnapshot(id, { parentId: anchorPrevParent == null ? null : anchorPrevParent });
       if(typeof _taskIndexRemove === 'function') _taskIndexRemove(pid);
       tasks = tasks.filter(t => t.id !== pid);
       if(typeof saveState === 'function') saveState('user');
@@ -2709,11 +2723,25 @@ let _mdVoiceSession = null;
 
 function _pickMdAudioMime(){
   if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (typeof navigator.platform === 'string' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const candidates = isApple
+    ? ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
   for(let i = 0; i < candidates.length; i++){
     if(MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
   }
   return '';
+}
+
+function _voiceToast(msg){
+  if(typeof showExportToast === 'function') showExportToast(msg);
+}
+
+function _needsWholeBlobRecording(){
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (typeof navigator.platform === 'string' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isApple || (typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches);
 }
 
 function _abortMdVoiceRecording(){
@@ -2840,55 +2868,69 @@ async function renderMdAttachments(taskId){
     recBtn.onclick = async () => {
       if(_mdVoiceSession && _mdVoiceSession.taskId === taskId && _mdVoiceSession.recorder.state !== 'inactive'){
         _mdVoiceSession.saveOnStop = true;
-        try{ if(_mdVoiceSession.recorder.state === 'recording') _mdVoiceSession.recorder.requestData(); }catch(_){}
-        _mdVoiceSession.recorder.stop();
+        try{
+          if(_mdVoiceSession.recorder.state === 'recording') _mdVoiceSession.recorder.requestData();
+        }catch(_){}
+        try{ _mdVoiceSession.recorder.stop(); }catch(_){
+          _abortMdVoiceRecording();
+          _voiceToast('Could not stop recording — try again');
+        }
         return;
       }
       if(_mdVoiceSession) _abortMdVoiceRecording();
+      if(!window.isSecureContext){
+        _voiceToast('Microphone needs a secure connection (HTTPS or localhost)');
+        return;
+      }
       try{
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const chunks = [];
         const mime = _pickMdAudioMime();
         const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
         const blobType = mime || recorder.mimeType || 'audio/webm';
-        recorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+        const session = { taskId, recorder, stream, recBtn, saveOnStop: false, chunks: [], blobType };
+        recorder.ondataavailable = e => { if(e.data && e.data.size) session.chunks.push(e.data); };
         recorder.onstop = async () => {
           stream.getTracks().forEach(t => { try{ t.stop(); }catch(_){} });
-          const session = _mdVoiceSession;
           _mdVoiceSession = null;
-          const btn = session && session.recBtn;
-          if(btn){
-            btn.textContent = 'Record voice';
-            btn.classList.remove('on');
-          }
-          if(!session || !session.saveOnStop) return;
+          recBtn.textContent = 'Record voice';
+          recBtn.classList.remove('on');
+          if(!session.saveOnStop) return;
+          session.saveOnStop = false;
+          // iOS/Safari often delivers the blob only after stop — give dataavailable a tick.
+          await new Promise(r => setTimeout(r, 120));
+          const chunks = session.chunks;
           if(!chunks.length){
-            if(typeof toast === 'function') toast('No audio captured — try again');
+            _voiceToast('No audio captured — hold Stop a moment longer, then try again');
             return;
           }
           const blob = new Blob(chunks, { type: blobType });
           if(blob.size < 1){
-            if(typeof toast === 'function') toast('Recording too short');
+            _voiceToast('Recording too short');
             return;
           }
           if(typeof addAudioAttachment === 'function'){
             await addAudioAttachment(taskId, blob, blobType);
             _commitAttachmentChange(taskId);
+            _voiceToast('Voice note saved');
             renderMdAttachments(taskId);
           }
         };
         recorder.onerror = () => {
-          if(typeof toast === 'function') toast('Recording failed');
+          _voiceToast('Recording failed');
           _abortMdVoiceRecording();
           recBtn.textContent = 'Record voice';
           recBtn.classList.remove('on');
         };
-        _mdVoiceSession = { taskId, recorder, stream, recBtn, saveOnStop: false };
-        recorder.start(250);
+        _mdVoiceSession = session;
+        if(_needsWholeBlobRecording()) recorder.start();
+        else recorder.start(250);
         recBtn.textContent = 'Stop';
         recBtn.classList.add('on');
       }catch(e){
-        if(typeof toast === 'function') toast('Microphone access denied or unavailable');
+        const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError');
+        _voiceToast(denied
+          ? 'Microphone permission denied — allow mic access in browser settings'
+          : 'Microphone unavailable');
       }
     };
     if(_mdVoiceSession && _mdVoiceSession.taskId === taskId){
@@ -3014,6 +3056,9 @@ function miniTimerToggle(){
 // surface for users who don't have a keyboard handy.
 // Relocate the add-task cluster into the bottom sheet (mobile) and focus it.
 function openQuickAddSheet(){
+  // Sheet markup lives outside tab panels; still ensure Tasks is active so the
+  // new task appears in the list the user is looking at.
+  if(typeof showTab==='function') showTab('tasks');
   const host=document.getElementById('quickAddHost');
   const slot=document.getElementById('quickAddSheetSlot');
   if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
@@ -3022,6 +3067,7 @@ function openQuickAddSheet(){
   if(inp) requestAnimationFrame(()=>{
     try{ inp.focus(); inp.select&&inp.select(); }catch(_){}
     if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+    if(typeof showVoiceButtonIfSupported === 'function') showVoiceButtonIfSupported();
   });
 }
 // Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
@@ -3647,13 +3693,29 @@ function showVoiceButtonIfSupported(){
   if(!btn) return;
   btn.hidden = !(_voiceSupport());
 }
+function _voiceErrorMessage(e){
+  const code = e && e.error;
+  if(code === 'not-allowed') return 'Microphone permission denied — allow mic access in browser settings';
+  if(code === 'service-not-allowed') return 'Speech recognition is not available here (try HTTPS or a supported browser)';
+  if(code === 'no-speech') return 'No speech detected — try again';
+  if(code === 'network') return 'Speech recognition needs a network connection on this device';
+  if(code === 'aborted') return '';
+  return code ? ('Voice input failed (' + code + ')') : 'Voice input failed';
+}
 function toggleVoiceInput(){
   if(_voiceActive){ stopVoiceInput(); return; }
   startVoiceInput();
 }
 function startVoiceInput(){
   const Ctor = _voiceSupport();
-  if(!Ctor) return;
+  if(!Ctor){
+    _voiceToast('Speech recognition is not supported in this browser');
+    return;
+  }
+  if(!window.isSecureContext){
+    _voiceToast('Voice input needs a secure connection (HTTPS or localhost)');
+    return;
+  }
   if(_voiceRec){ try{ _voiceRec.abort(); }catch(_){} }
   const rec = new Ctor();
   rec.continuous = false;
@@ -3674,9 +3736,12 @@ function startVoiceInput(){
     if(inp){
       inp.value = (baseValue ? (baseValue + ' ') : '') + txt.trim();
       if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+      if(typeof scheduleLiveParsePreview === 'function') scheduleLiveParsePreview();
     }
   };
   rec.onerror = function(e){
+    const msg = _voiceErrorMessage(e);
+    if(msg) _voiceToast(msg);
     console.warn('[voice] recognition error', e && e.error);
     stopVoiceInput();
   };
@@ -3686,7 +3751,13 @@ function startVoiceInput(){
     if(btn) btn.classList.remove('on');
   };
   _voiceRec = rec;
-  try{ rec.start(); }catch(e){ console.warn('[voice] start failed', e); }
+  try{
+    rec.start();
+  }catch(e){
+    console.warn('[voice] start failed', e);
+    _voiceToast('Could not start voice input — tap the mic again');
+    stopVoiceInput();
+  }
 }
 function stopVoiceInput(){
   if(_voiceRec){ try{ _voiceRec.stop(); }catch(_){} }
@@ -4135,7 +4206,11 @@ function renderRelatedTasks(taskId){
     chip.type = 'button';
     chip.className = 'related-chip';
     chip.textContent = '#' + rid + ' ' + (other.name || '').slice(0, 40);
-    chip.onclick = function(){ closeTaskDetail(); openTaskDetail(rid); };
+    chip.onclick = async function(){
+      _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
+      await closeTaskDetail({ skipRevert: true });
+      openTaskDetail(rid);
+    };
     const x = document.createElement('span');
     x.className = 'related-x';
     x.textContent = '×';
@@ -4143,6 +4218,7 @@ function renderRelatedTasks(taskId){
     x.onclick = function(ev){
       ev.stopPropagation();
       t.relatedTo.splice(idx, 1);
+      _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
       renderRelatedTasks(taskId);
       if(typeof saveState==='function') saveState('user');
     };
@@ -4162,6 +4238,7 @@ function renderRelatedTasks(taskId){
     if(!findTask(n)){ alert('No task with id #' + n); return; }
     if(!Array.isArray(t.relatedTo)) t.relatedTo = [];
     if(!t.relatedTo.includes(n)) t.relatedTo.push(n);
+    _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
     renderRelatedTasks(taskId);
     if(typeof saveState==='function') saveState('user');
   };

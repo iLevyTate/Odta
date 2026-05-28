@@ -195,7 +195,7 @@
       <label class="sr-only" for="taskInput">New task</label>
       <div class="task-input-wrap">
         <input class="task-input" id="taskInput" placeholder="Add a task… or paste multiple lines to import"
-          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="true"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="true" lang="en"
           enterkeyhint="send"
           data-oninput="taskInputLiveUpdate"
           data-onkeydown="onTaskInputKey">
@@ -246,18 +246,6 @@
     </div>
     <div class="qa-more-panel" id="qaMorePanel" hidden></div>
     </div></div>
-
-    <!-- Mobile thumb-zone add sheet. The FAB moves #quickAddHost into the slot
-         below; brain-dump mode keeps it open so multiple tasks can be added. -->
-    <div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
-      <div class="modal">
-        <div class="modal-head">
-          <h2 class="modal-title">Add a task</h2>
-          <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
-        </div>
-        <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
-      </div>
-    </div>
 
     <!-- Compact filter bar — four triggers open bottom sheets so the task list
          is no longer buried under five stacked, clipping scroll strips. Labels
@@ -795,6 +783,19 @@
   <button type="button" class="timer-dock-qt" id="timerDockQt" hidden data-action="showTab" data-arg="focus" title="Quick timers"></button>
 </div>
 
+<!-- Mobile thumb-zone add sheet. Lives outside tab panels so it stays visible
+     when the FAB opens it from Timer/Tools/Settings (tab panels use [hidden]).
+     The FAB moves #quickAddHost into the slot; brain-dump mode keeps it open. -->
+<div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title">Add a task</h2>
+      <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
+  </div>
+</div>
+
 <!-- Floating Quick-Add button (mobile / touch). Always-on quick capture so a
      user on Timer / Tools / Settings can drop a task without scrolling or
      tab-hunting. Hidden on desktop — Cmd/Ctrl+N covers that case. -->
@@ -942,7 +943,7 @@
     <h2 class="sr-only" id="taskModalTitle">Task details</h2>
     <div class="modal-head">
       <button type="button" class="task-checkbox" id="mdCheckbox" data-action="toggleTaskDone"></button>
-      <input class="mfield-in mdName-input" id="mdName" placeholder="Task name" aria-label="Task name">
+      <input class="mfield-in mdName-input" id="mdName" placeholder="Task name" aria-label="Task name" spellcheck="true" lang="en">
       <button type="button" class="modal-close" data-action="closeTaskDetail" aria-label="Close task">✕</button>
     </div>
     <div class="modal-body">
@@ -1168,6 +1169,7 @@
 <script src="js/attachments.js"></script>
 <script src="js/timer-dock.js"></script>
 <script src="js/tasks.js"></script>
+<script src="js/spellcheck.js"></script>
 <script src="js/intel.js"></script>
 <script src="js/embed-store.js"></script>
 <script src="js/nlparse.js"></script>
