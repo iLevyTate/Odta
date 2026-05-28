@@ -14,7 +14,28 @@
  */
 
 import puppeteer from 'puppeteer';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gotoSmokeStable, isKnownSmokeNoise, smokePuppeteerLaunchOptions } from './smoke-console-utils.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SHOT_DIR = path.join(__dirname, '..', 'tests', 'screenshots');
+await mkdir(SHOT_DIR, { recursive: true });
+
+/** Puppeteer screenshot writes can race on Windows (file lock / AV); retry briefly. */
+async function shot(page, name, opts = {}) {
+  const filePath = path.join(SHOT_DIR, name);
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    if (i) await new Promise(r => setTimeout(r, 150 * i));
+    try {
+      await page.screenshot({ path: filePath, fullPage: false, timeout: 5000, ...opts });
+      return;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
 
 const URL = process.env.SMOKE_URL || 'http://localhost:8080/';
 const browser = await puppeteer.launch(smokePuppeteerLaunchOptions({ protocolTimeout: 120000 }));
@@ -101,7 +122,7 @@ for (const t of tabs) {
   if (display === 'none') issues.push(`Tab ${t}: pane has display:none after click`);
   if (display === null) issues.push(`Tab ${t}: pane element not found`);
   try {
-    await page.screenshot({ path: `tests/screenshots/exhaustive-${t}.png`, fullPage: false, timeout: 5000 });
+    await shot(page, `exhaustive-${t}.png`);
   } catch(e) { issues.push(`Tab ${t}: screenshot failed: ${e.message.slice(0,80)}`); }
 }
 
@@ -171,7 +192,7 @@ if (taskInput) {
       return m ? { exists: true, classes: m.className, display: getComputedStyle(m).display, hidden: m.hidden } : { exists: false };
     });
     if (!opened.exists) issues.push('Task modal element not in DOM');
-    else if ((opened.hidden || opened.display === 'none') && !opened.classes.includes('open')) {
+    else if (!opened.classes.includes('open')) {
       issues.push(`Task detail modal did NOT open after row click (classes=${opened.classes}, display=${opened.display}, hidden=${opened.hidden})`);
     } else {
       console.log(`[MODAL]  opened OK`);
@@ -181,10 +202,11 @@ if (taskInput) {
         await new Promise(r => setTimeout(r, 400));
         const afterClose = await page.evaluate(() => {
           const m = document.getElementById('taskModal');
-          return m ? { classes: m.className, display: getComputedStyle(m).display, hidden: m.hidden } : null;
+          return m ? { classes: m.className, open: m.classList.contains('open') } : null;
         });
-        if (afterClose && (afterClose.classes.includes('open') || (!afterClose.hidden && afterClose.display !== 'none'))) {
-          issues.push(`Close button did NOT close the modal (classes=${afterClose.classes}, display=${afterClose.display})`);
+        // Overlays stay display:flex when closed — visibility/opacity hide them.
+        if (afterClose && afterClose.open) {
+          issues.push(`Close button did NOT close the modal (classes=${afterClose.classes})`);
         } else console.log(`[MODAL]  closed cleanly`);
       }
     }
@@ -205,7 +227,7 @@ const cmdkOpen = await page.evaluate(() => {
   return { found: true, classes: o.className, display: cs.display, hidden: o.hidden };
 });
 if (!cmdkOpen.found) issues.push('cmdkOverlay element not found');
-else if (cmdkOpen.display === 'none' && !cmdkOpen.classes.includes('open')) {
+else if (!cmdkOpen.classes.includes('open')) {
   issues.push(`Command palette didn't open on Ctrl+K (classes=${cmdkOpen.classes}, display=${cmdkOpen.display})`);
 }
 await page.keyboard.press('Escape');
@@ -219,12 +241,11 @@ if (whatNextBtn) {
   const wnOpen = await page.evaluate(() => {
     const o = document.getElementById('whatNextOverlay');
     if (!o) return { found: false };
-    const cs = getComputedStyle(o);
-    return { found: true, display: cs.display, hidden: o.hidden };
+    return { found: true, classes: o.className, open: o.classList.contains('open') };
   });
   if (!wnOpen.found) issues.push('whatNextOverlay element not found');
-  else if (wnOpen.hidden || wnOpen.display === 'none') {
-    issues.push(`What-next overlay didn't open (display=${wnOpen.display}, hidden=${wnOpen.hidden})`);
+  else if (!wnOpen.open) {
+    issues.push(`What-next overlay didn't open (classes=${wnOpen.classes})`);
   }
   await page.evaluate(() => {
     const o = document.getElementById('whatNextOverlay');
@@ -337,7 +358,7 @@ for (const w of [960, 640, 360]) {
   }, 'tasks');
   if (!ok) issues.push(`Responsive ${w}px wide: Tasks tab pane not visible`);
   try {
-    await page.screenshot({ path: `tests/screenshots/exhaustive-w${w}.png`, fullPage: false, timeout: 5000 });
+    await shot(page, `exhaustive-w${w}.png`);
   } catch (e) {
     issues.push(`Responsive ${w}px: screenshot failed: ${String(e.message).slice(0, 80)}`);
   }

@@ -470,8 +470,25 @@ window.syncQaHintVisibility=syncQaHintVisibility;
  */
 function onTaskInputKey(event){
   if(event.key==='Enter' && !event.isComposing){
-    if(typeof shouldApplySmartAdd === 'function' && shouldApplySmartAdd()) applySmartAddAndSubmit();
-    else addTask();
+    const inp=event.target;
+    const raw=(inp && typeof inp.value==='string') ? inp.value : '';
+    if(raw.trim().charAt(0)==='?' && typeof openCmdK==='function'){
+      event.preventDefault();
+      const rest=raw.trim().slice(1).trim();
+      if(inp) inp.value='';
+      window._smartAddPreview=null;
+      if(typeof clearLiveParsePreview==='function') clearLiveParsePreview();
+      if(typeof maybeShowEnhanceBtn==='function') maybeShowEnhanceBtn();
+      openCmdK({ask:true, prefill:rest});
+      return;
+    }
+    if(window._smartAddPreview){
+      applySmartAddAndSubmit();
+    } else if(typeof shouldApplySmartAdd === 'function' && shouldApplySmartAdd()){
+      applySmartAddAndSubmit();
+    } else {
+      addTask();
+    }
     return;
   }
   if(event.key==='Escape'){

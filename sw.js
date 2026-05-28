@@ -46,6 +46,8 @@ const ASSETS = [
   './js/nlparse.js',
   './js/intel-features.js',
   './js/tool-schema.js',
+  './js/gen.js',
+  './js/ask.js',
   './js/ui.js',
   './js/ai.js',
   './js/sync.js',

@@ -324,6 +324,12 @@ window.openTaskDetailAndCloseWhatNext = function(id){
   if(typeof openTaskDetail === 'function') openTaskDetail(Number(id));
   if(typeof closeWhatNext === 'function') closeWhatNext();
 };
+window.selectGenModelFromSelect = function(){
+  if(typeof selectGenModel === 'function') selectGenModel(this.value);
+};
+window.setGenTimeoutFromInput = function(){
+  if(typeof setGenTimeout === 'function') setGenTimeout(this.value);
+};
 window.checklistAddOnEnter = function(e){
   if(!e || e.key !== 'Enter') return;
   const taskId = Number(this.dataset.taskId);
@@ -767,6 +773,8 @@ document.addEventListener('visibilitychange', () => {
 if(typeof renderSyncPanel==='function') renderSyncPanel();
 
 if(typeof renderAIPanel==='function') renderAIPanel();
+if(typeof renderGenSettings==='function') renderGenSettings();
+if(typeof syncAskPromoChip==='function') syncAskPromoChip();
 // Bottom-sheet swipe-to-dismiss on the task detail modal (mobile only).
 if(typeof _initTaskModalSwipeDismiss==='function') _initTaskModalSwipeDismiss();
 // Drag-drop reorder via Sortable.js — replaces the broken native HTML5 drag

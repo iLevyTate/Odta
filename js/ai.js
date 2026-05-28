@@ -1,4 +1,4 @@
-// ========== AMBIENT INTELLIGENCE (embeddings + rules — no generative LLM) ==========
+// ========== AMBIENT INTELLIGENCE (embeddings + optional generative Ask) ==========
 // Preview/undo, Schwartz values UI, smart-add chips. Task mutations via executeIntelOp.
 
 const INTEL_CFG_KEY = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.INTEL_CFG) || 'stupind_intel_cfg';
@@ -21,15 +21,143 @@ function _loadCfg(){
 }
 function _saveCfg(){ try{ localStorage.setItem(INTEL_CFG_KEY, JSON.stringify(_cfg)); }catch(e){} }
 
-// Tracks the embedding model's load state for the header AI chip.
+// Track the two model states independently so the header chip can show
+// both without one stomping the other (embedding = ambient/always-on,
+// generative = opt-in LLM for Ask mode).
 let _embedChipState = 'idle';
 let _embedChipMsg = '';
+let _genChipState = 'idle';
+let _genChipMsg = '';
+
+function _composeChipState(){
+  // Error wins. Then loading. Then ready. Otherwise idle.
+  if(_embedChipState === 'error' || _genChipState === 'error'){
+    const which = _genChipState === 'error' ? 'LLM' : 'Embedding';
+    const raw = _genChipState === 'error' ? _genChipMsg : _embedChipMsg;
+    return { state: 'error', msg: `${which}: ${raw || 'load failed'}` };
+  }
+  if(_embedChipState === 'loading' || _embedChipState === 'working' || _embedChipState === 'syncing' ||
+     _genChipState === 'loading' || _genChipState === 'working' || _genChipState === 'syncing'){
+    if(_genChipState === 'loading' || _genChipState === 'working' || _genChipState === 'syncing'){
+      return { state: 'loading', msg: _genChipMsg || 'Loading LLM…' };
+    }
+    return { state: 'loading', msg: _embedChipMsg || 'Loading model…' };
+  }
+  if(_embedChipState === 'ready' || _genChipState === 'ready'){
+    const embedOk = _embedChipState === 'ready';
+    const genOk = _genChipState === 'ready';
+    const genBk = genOk && typeof getGenDevice === 'function' ? _formatGenBackend(getGenDevice()) : '';
+    const genSuffix = genBk ? ' · ' + genBk : '';
+    let summary = 'Task understanding ready';
+    if(embedOk && genOk) summary = 'Embeddings + LLM ready' + genSuffix;
+    else if(genOk) summary = 'LLM ready' + genSuffix;
+    return { state: 'ready', msg: summary };
+  }
+  return { state: 'idle', msg: 'Task understanding (on-device)' };
+}
+
+/** Human-readable backend for the generative pipeline (after load). */
+function _formatGenBackend(dev){
+  if(dev === 'webgpu') return 'WebGPU';
+  if(dev === 'wasm') return 'WASM (CPU)';
+  return '';
+}
+
+function _hideGenLoadRibbon(){
+  const el = document.getElementById('genLoadRibbon');
+  if(el) el.hidden = true;
+}
+
+/**
+ * Fixed footer ribbon + Settings progress row while an LLM download/rehydrate runs.
+ * @param {number} v 0–100
+ * @param {{ status?:string, file?:string }|null} ev
+ */
+function _syncGenDownloadProgress(v, ev){
+  const pct = Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  const bar = document.getElementById('genProgressBar');
+  const pctEl = document.getElementById('genProgressPct');
+  const txt = document.getElementById('genProgressTxt');
+  const statusEl = document.getElementById('genSettingsStatus');
+  const status = ev && ev.status ? String(ev.status) : '';
+  const file = ev && ev.file ? ' · ' + String(ev.file).split('/').pop() : '';
+  const line = (status + file).trim().slice(0, 88) || 'Fetching ONNX shards…';
+  if(bar) bar.style.width = pct + '%';
+  if(pctEl) pctEl.textContent = pct + '%';
+  if(txt) txt.textContent = line;
+  if(statusEl) statusEl.textContent = pct >= 100 ? 'Initializing model…' : `Downloading weights · ${pct}%`;
+  const chipLine = pct >= 100 ? 'Initializing…' : (line.length > 48 ? line.slice(0, 45) + '…' : line);
+  _genChipState = 'loading';
+  _genChipMsg = pct >= 100 ? 'Initializing model…' : pct + '% · ' + chipLine;
+  const c = _composeChipState();
+  _renderHeaderAIChip(c.state, c.msg);
+  const ribbon = document.getElementById('genLoadRibbon');
+  const ribbonBar = document.getElementById('genLoadRibbonBar');
+  const ribbonTrack = document.getElementById('genLoadRibbonTrack');
+  const ribbonTxt = document.getElementById('genLoadRibbonTxt');
+  if(ribbon){
+    ribbon.hidden = false;
+    if(pct >= 100){
+      // Download is done but pipeline init (WebGPU shader compile / WASM
+      // instantiation) can take several seconds. Switch to an animated
+      // indeterminate bar so the user knows work is still in progress.
+      if(ribbonTrack) ribbonTrack.classList.add('gen-load-ribbon__track--indeterminate');
+      if(ribbonBar) ribbonBar.style.width = '40%';
+      if(ribbonTxt) ribbonTxt.textContent = 'On-device LLM · Initializing model…';
+    }else{
+      if(ribbonTrack) ribbonTrack.classList.remove('gen-load-ribbon__track--indeterminate');
+      if(ribbonBar) ribbonBar.style.width = pct + '%';
+      if(ribbonTxt) ribbonTxt.textContent = `On-device LLM · ${pct}% — ${line}`;
+    }
+  }
+}
+
+function _showGenLoadRibbonIndeterminate(detail){
+  const ribbon = document.getElementById('genLoadRibbon');
+  const ribbonBar = document.getElementById('genLoadRibbonBar');
+  const ribbonTrack = document.getElementById('genLoadRibbonTrack');
+  const ribbonTxt = document.getElementById('genLoadRibbonTxt');
+  if(!ribbon) return;
+  ribbon.hidden = false;
+  if(ribbonTrack) ribbonTrack.classList.add('gen-load-ribbon__track--indeterminate');
+  if(ribbonBar) ribbonBar.style.width = '40%';
+  if(ribbonTxt) ribbonTxt.textContent = detail || 'On-device LLM…';
+}
+
+/** Set the generative-LLM chip sub-state without affecting embedding state. */
+function syncGenChip(state, msg){
+  const wasReady = _genChipState === 'ready';
+  _genChipState = state || 'idle';
+  _genChipMsg = msg || '';
+  if(_genChipState !== 'loading' && _genChipState !== 'working' && _genChipState !== 'syncing'){
+    _hideGenLoadRibbon();
+  }
+  const c = _composeChipState();
+  _renderHeaderAIChip(c.state, c.msg);
+  // If the LLM just transitioned to ready and the Ask sheet is sitting in the
+  // "need-model" empty state, refresh it so the inline Download button is
+  // replaced with a normal idle prompt the user can submit immediately.
+  // Avoids the "I downloaded the model… now what?" dead end.
+  if(_genChipState === 'ready' && !wasReady && typeof document !== 'undefined'){
+    const reply = document.getElementById('cmdkAskReply');
+    if(reply && reply.querySelector('.cmdk-ask-enable')){
+      reply.textContent = '';
+      const ok = document.createElement('div');
+      ok.className = 'cmdk-ask-done';
+      ok.textContent = 'Local AI is ready — type your request and press Enter.';
+      reply.appendChild(ok);
+    }
+  }
+}
 
 /** Header pill: model load / ready / error — visible on every tab */
 function syncHeaderAIChip(state, msg){
+  // Record embedding state (legacy callers pass embedding updates here), then
+  // re-render the composed chip.
   _embedChipState = state || 'idle';
   _embedChipMsg = msg || '';
-  _renderHeaderAIChip(_embedChipState, _embedChipMsg);
+  const c = _composeChipState();
+  _renderHeaderAIChip(c.state, c.msg);
 }
 
 function _renderHeaderAIChip(state, msg){
@@ -43,9 +171,21 @@ function _renderHeaderAIChip(state, msg){
   chip.classList.add(cls);
   const busy = state === 'loading' || state === 'working' || state === 'syncing';
   chip.setAttribute('aria-busy', busy ? 'true' : 'false');
-  // First-run badge: until the embedding model has loaded once, tag the chip
-  // with a small "setup" dot so users notice it's an action, not passive.
-  const firstRun = state === 'idle' && !(typeof isIntelReady === 'function' && isIntelReady());
+  // First-run badge: until the model has been downloaded at least once,
+  // tag the chip with a small "setup" dot so users notice it's an action
+  // rather than a passive status indicator. Cleared automatically as soon
+  // as the model state advances past idle.
+  const firstRun = state === 'idle' && (() => {
+    try{
+      if(typeof isGenDownloaded === 'function' && typeof getGenCfg === 'function'){
+        const cfg = getGenCfg() || {};
+        if(cfg.modelId && isGenDownloaded(cfg.modelId)) return false;
+      }
+    }catch(_){}
+    // Embedding model: never downloaded either?
+    try{ if(typeof isIntelReady === 'function' && isIntelReady()) return false; }catch(_){}
+    return true;
+  })();
   chip.classList.toggle('ai-chip--firstrun', firstRun);
   const label = chip.querySelector('.ai-chip-label');
   if(label){
@@ -81,6 +221,7 @@ function _renderHeaderAIChip(state, msg){
 }
 
 /** Semantic search checkbox: disabled until embeddings are ready (avoids silent no-op). */
+
 function syncSemanticSearchUi(){
   const cb = document.getElementById('taskSearchSemantic');
   const lab = cb && cb.closest('.task-search-semantic');
@@ -108,10 +249,15 @@ function syncSemanticSearchUi(){
 
 function headerAIClick(){
   const chip = document.getElementById('headerAIChip');
-  if(chip && chip.classList.contains('ai-chip--err') && _embedChipState === 'error'
-     && typeof intelRetryLoad === 'function'){
-    intelRetryLoad();
-    return;
+  if(chip && chip.classList.contains('ai-chip--err')){
+    if(_genChipState === 'error' && typeof openGenSettingsFromAsk === 'function'){
+      openGenSettingsFromAsk();
+      return;
+    }
+    if(_embedChipState === 'error' && typeof intelRetryLoad === 'function'){
+      intelRetryLoad();
+      return;
+    }
   }
   if(typeof showTab === 'function') showTab('tools');
 }
@@ -1171,27 +1317,63 @@ function intelHardBulkConfirmNeeded(pendingOps, destructiveLevel){
   return destructiveLevel === 'hard';
 }
 
-async function intelApplyPending(){
-  const hasDelete = _pendingOps.some(o => o.name === 'DELETE_TASK');
-  const dangerAck = document.getElementById('pendingDangerAck');
-  if(hasDelete && (!dangerAck || !dangerAck.checked)){
-    _setIntelStatus('error', 'Confirm permanent delete below');
-    return;
-  }
-  if(intelHardBulkConfirmNeeded(_pendingOps, _pendingDestructive)){
-    const msg = 'Proposed changes include bulk destructive actions (delete/move to list). Apply anyway?';
-    if(typeof showAppConfirm === 'function'){
-      if(!(await showAppConfirm(msg))){ _setIntelStatus('ready', 'Cancelled'); return; }
-    }else if(typeof window !== 'undefined' && typeof window.confirm === 'function'){
-      if(!window.confirm(msg)){ _setIntelStatus('ready', 'Cancelled'); return; }
-    }
-  }
+/** Auto-apply / one-shot confirm: deletes or warn/hard bulk batches. */
+function askDestructiveConfirmNeeded(ops, destructiveLevel){
+  if(!Array.isArray(ops) || !ops.length) return false;
+  if(ops.some(o => o && o.name === 'DELETE_TASK')) return true;
+  return destructiveLevel === 'warn' || destructiveLevel === 'hard';
+}
 
+function _formatOpSummaryLabel(op){
+  if(!op || !op.name) return '';
+  const st = _describeOpStructured(op);
+  if(st.kind === 'simple') return st.title + (st.taskName ? ': ' + st.taskName : '');
+  if(st.kind === 'listMove') return st.title + ': ' + st.fromList + ' → ' + st.toList;
+  if(st.kind === 'update'){
+    const t = op.args && op.args.id ? findTask(op.args.id) : null;
+    const nm = _intelPreviewShortNameFromTaskArgs(t, op.args || {}, 40);
+    return 'Update ' + (nm || ('#' + op.args.id));
+  }
+  return op.name;
+}
+
+function summarizeOpsLabels(ops, max){
+  max = max == null ? 5 : max;
+  if(!Array.isArray(ops)) return [];
+  return ops.slice(0, max).map(_formatOpSummaryLabel).filter(Boolean);
+}
+
+function _allSelectedOpsFromList(pendingOps){
   const selOps = [];
-  for(let idx = 0; idx < _pendingOps.length; idx++){
+  for(let idx = 0; idx < pendingOps.length; idx++){
+    const op = pendingOps[idx];
+    if(!op || !op.name) continue;
+    if(op.name !== 'UPDATE_TASK'){
+      const next = { name: op.name, args: { ...op.args } };
+      if(op._previewCategory) next._previewCategory = op._previewCategory;
+      selOps.push(next);
+      continue;
+    }
+    const nextArgs = { id: op.args.id };
+    Object.keys(op.args || {}).forEach(f => {
+      if(f === 'id') return;
+      if(op.args[f] !== undefined) nextArgs[f] = op.args[f];
+    });
+    if(nextArgs.valuesAlignment !== undefined && op.args.valuesNote){
+      nextArgs.valuesNote = op.args.valuesNote;
+    }
+    if(Object.keys(nextArgs).length <= 1) continue;
+    selOps.push({ name: 'UPDATE_TASK', args: nextArgs });
+  }
+  return selOps;
+}
+
+function _selectedOpsFromPendingDom(pendingOps){
+  const selOps = [];
+  for(let idx = 0; idx < pendingOps.length; idx++){
     const master = document.querySelector('#intelPendingOps .pending-op-master[data-op-idx="' + idx + '"]');
     if(!master || !master.checked) continue;
-    const op = _pendingOps[idx];
+    const op = pendingOps[idx];
 
     if(op.name !== 'UPDATE_TASK'){
       const next = { name: op.name, args: { ...op.args } };
@@ -1213,8 +1395,59 @@ async function intelApplyPending(){
     if(Object.keys(nextArgs).length <= 1) continue;
     selOps.push({ name: 'UPDATE_TASK', args: nextArgs });
   }
+  return selOps;
+}
 
-  if(!selOps.length){ intelRejectPending(); return; }
+async function _enrichClassifyOps(list){
+  const classifyIdx = [];
+  list.forEach((op, i) => { if(op && op.name === 'CLASSIFY_TASK') classifyIdx.push(i); });
+  await Promise.all(classifyIdx.map(async (i) => {
+    const op = list[i];
+    if(typeof predictClassifyCategory !== 'function') return;
+    const id = op.args && op.args.id;
+    try{
+      const pred = await predictClassifyCategory(id);
+      if(pred && pred.skip) op._previewCategory = { skip: true, beforeCat: pred.beforeCat };
+      else if(pred && pred.nextCat) op._previewCategory = { nextCat: pred.nextCat, beforeCat: pred.beforeCat, confidence: pred.confidence };
+      else if(pred == null) op._previewCategory = { skip: true, reason: 'embed_unavailable', beforeCat: (op.args && findTask(op.args.id)) ? (findTask(op.args.id).category || null) : null };
+    }catch(_){
+      op._previewCategory = { skip: true, reason: 'embed_unavailable' };
+    }
+  }));
+}
+
+/**
+ * Headless apply path for Ask auto-apply and inline chat Apply.
+ * Caller must run destructive confirms before setting confirmedDestructive.
+ *
+ * @returns {Promise<{ ok:boolean, applied:number, failures:string[], snaps:Array, labels:string[], cancelled?:boolean, reason?:string }>}
+ */
+async function applyOpsBatch(selOps, meta, opts){
+  meta = meta || {};
+  opts = opts || {};
+  if(!Array.isArray(selOps) || !selOps.length){
+    return { ok: false, applied: 0, failures: [], snaps: [], labels: [] };
+  }
+
+  const destructiveLevel = meta.destructiveLevel || 'none';
+  const hasDelete = selOps.some(o => o && o.name === 'DELETE_TASK');
+
+  if(hasDelete && !opts.confirmedDestructive){
+    let ackOk = false;
+    if(typeof document !== 'undefined'){
+      const dangerAck = document.getElementById('pendingDangerAck');
+      ackOk = !!(dangerAck && dangerAck.checked);
+    }
+    if(!ackOk){
+      return { ok: false, applied: 0, failures: [], snaps: [], labels: [], cancelled: true, reason: 'DELETE_ACK' };
+    }
+  }
+
+  const source = meta.source || null;
+  const showToast = opts.showToast !== false;
+  const clearPending = opts.clearPending !== false;
+
+  await _enrichClassifyOps(selOps);
 
   const snaps = [];
   let applied = 0;
@@ -1237,19 +1470,18 @@ async function intelApplyPending(){
     }
   }
 
+  const labels = summarizeOpsLabels(selOps, 8);
+
   if(snaps.length){
-    const sourceTag = _pendingSource ? ` via ${_pendingSource}` : '';
+    const sourceTag = source ? ` via ${source}` : '';
     _pushUndo(`${applied} change${applied !== 1 ? 's' : ''}${sourceTag}`, snaps);
     saveState('user');
     if(typeof renderTaskList === 'function') renderTaskList();
     if(typeof renderBanner === 'function') renderBanner();
     if(typeof renderLists === 'function') renderLists();
     _renderUndoBtn();
-    // Action toast with Undo — the Tools-tab "Undo" button is easy to miss
-    // and Cmd+Z had no surface to bind to. The toast routes through the
-    // ring buffer in utils.js so Cmd+Z keeps working after the toast fades.
-    if(typeof showActionToast === 'function'){
-      const label = `Applied ${applied} change${applied !== 1 ? 's' : ''}${_pendingSource ? ' (' + _pendingSource + ')' : ''}`;
+    if(showToast && typeof showActionToast === 'function'){
+      const label = `Applied ${applied} change${applied !== 1 ? 's' : ''}${source ? ' (' + source + ')' : ''}`;
       showActionToast(label, 'Undo', () => {
         if(typeof aiUndo === 'function') aiUndo();
       }, 6000);
@@ -1260,6 +1492,7 @@ async function intelApplyPending(){
       else if(s.id) changedIds.add(s.id);
     });
     setTimeout(() => {
+      if(typeof document === 'undefined') return;
       changedIds.forEach(id => {
         const row = document.querySelector('.task-item[data-task-id="' + id + '"]');
         if(row){
@@ -1270,11 +1503,7 @@ async function intelApplyPending(){
     }, 50);
   }
 
-  // Surface per-op failure reasons. The previous version only counted them,
-  // leaving "2 failed" with no path to learn why short of opening DevTools
-  // (#6 in UX audit). showActionToast + a "Show why" button reveals the
-  // failure list in a follow-up toast.
-  if(failures.length){
+  if(failures.length && showToast){
     if(typeof showActionToast === 'function'){
       showActionToast(
         `${failures.length} change${failures.length !== 1 ? 's' : ''} could not be applied`,
@@ -1291,11 +1520,44 @@ async function intelApplyPending(){
       showExportToast(`${failures.length} failed — ${failures.slice(0, 2).join('; ')}${failures.length > 2 ? '…' : ''}`);
     }
   }
-  _pendingOps = [];
-  _pendingDestructive = 'none';
-  _pendingSource = null;
-  _renderPendingOps();
-  _setIntelStatus('ready', failures.length ? `Applied ${applied}, ${failures.length} failed` : `Applied ${applied}`);
+
+  if(clearPending){
+    _pendingOps = [];
+    _pendingDestructive = 'none';
+    _pendingSource = null;
+    _renderPendingOps();
+  }
+
+  if(typeof _setIntelStatus === 'function'){
+    _setIntelStatus('ready', failures.length ? `Applied ${applied}, ${failures.length} failed` : `Applied ${applied}`);
+  }
+
+  return { ok: applied > 0 || !failures.length, applied, failures, snaps, labels };
+}
+
+async function intelApplyPending(){
+  const hasDelete = _pendingOps.some(o => o.name === 'DELETE_TASK');
+  const dangerAck = document.getElementById('pendingDangerAck');
+  if(hasDelete && (!dangerAck || !dangerAck.checked)){
+    _setIntelStatus('error', 'Confirm permanent delete below');
+    return;
+  }
+  if(intelHardBulkConfirmNeeded(_pendingOps, _pendingDestructive)){
+    const msg = 'Proposed changes include bulk destructive actions (delete/move to list). Apply anyway?';
+    if(typeof showAppConfirm === 'function'){
+      if(!(await showAppConfirm(msg))){ _setIntelStatus('ready', 'Cancelled'); return; }
+    }else if(typeof window !== 'undefined' && typeof window.confirm === 'function'){
+      if(!window.confirm(msg)){ _setIntelStatus('ready', 'Cancelled'); return; }
+    }
+  }
+
+  const selOps = _selectedOpsFromPendingDom(_pendingOps);
+  if(!selOps.length){ intelRejectPending(); return; }
+
+  await applyOpsBatch(selOps, { source: _pendingSource, destructiveLevel: _pendingDestructive }, {
+    confirmedDestructive: true,
+    clearPending: true,
+  });
 }
 
 function _setIntelStateClass(el, state){
@@ -1313,6 +1575,81 @@ function _setIntelStatus(state, msg){
   syncHeaderAIChip(state, msg);
 }
 
+
+function _llmWithTimeout(promise, ms){
+  if(!promise || typeof promise.then !== 'function') return Promise.resolve(null);
+  const timeout = new Promise(resolve => setTimeout(() => resolve(null), ms));
+  return Promise.race([
+    promise.then(v => v == null ? null : v, () => null),
+    timeout,
+  ]);
+}
+
+/** Min per-field confidence across the fields actually being changed by this op. */
+function _opMinFieldConfidence(op){
+  const fc = op && op._fieldConfidence;
+  if(!fc || !op.args) return 1;
+  let min = 1;
+  for(const k of Object.keys(op.args)){
+    if(k === 'id') continue;
+    const entry = fc[k];
+    if(entry && typeof entry.confidence === 'number' && entry.confidence < min){
+      min = entry.confidence;
+    }
+  }
+  return min;
+}
+
+/**
+ * Walk `ops` (UPDATE_TASK) and ask the LLM to prune low-confidence fields
+ * plus attach a short rationale. Only runs when the LLM is loaded and when
+ * at least one field on that op scored < `lowConfThreshold`. Hard-capped at
+ * `maxRefines` calls so harmonize doesn't hang for a minute on a 500-task
+ * workspace. Silently no-ops on any failure.
+ */
+async function _refineOpsWithLLM(ops, { lowConfThreshold = 0.7, maxRefines = 6, perCallMs = 12000 } = {}){
+  if(typeof isGenReady !== 'function' || !isGenReady()) return 0;
+  if(typeof genRefineTaskUpdate !== 'function') return 0;
+  let refined = 0;
+  let attempts = 0;
+  for(const op of ops){
+    if(op.name !== 'UPDATE_TASK') continue;
+    if(attempts >= maxRefines) break;
+    if(_opMinFieldConfidence(op) >= lowConfThreshold) continue;
+    const t = findTask(op.args.id);
+    if(!t) continue;
+    const proposed = { ...op.args };
+    delete proposed.id;
+    const fieldConfMap = {};
+    if(op._fieldConfidence){
+      for(const k of Object.keys(proposed)){
+        const e = op._fieldConfidence[k];
+        fieldConfMap[k] = e && typeof e.confidence === 'number' ? Number(e.confidence.toFixed(2)) : null;
+      }
+    }
+    attempts++;
+    const res = await _llmWithTimeout(
+      genRefineTaskUpdate({ name: t.name, description: t.description, tags: t.tags }, proposed, fieldConfMap),
+      perCallMs,
+    );
+    if(!res) continue;
+    // Prune fields the LLM dropped; keep `id` and `valuesNote` (tied to valuesAlignment).
+    const nextArgs = { id: op.args.id };
+    for(const [k, v] of Object.entries(res.accept || {})) nextArgs[k] = v;
+    if(nextArgs.valuesAlignment && op.args.valuesNote) nextArgs.valuesNote = op.args.valuesNote;
+    // An LLM that drops everything is a strong "no" — skip the op entirely.
+    const kept = Object.keys(nextArgs).filter(k => k !== 'id');
+    if(!kept.length){
+      op._rejectedByLLM = true;
+      op._rationale = res.rationale || 'LLM suggested no change';
+      continue;
+    }
+    op.args = nextArgs;
+    if(res.rationale) op._rationale = res.rationale;
+    refined++;
+  }
+  return refined;
+}
 
 async function aiAlign(){
   if(typeof isIntelReady !== 'function' || !isIntelReady()){
@@ -1659,6 +1996,90 @@ function intelRetryLoad(){
 }
 
 
+async function runMdBreakdown(){
+  const body = document.getElementById('mdBreakdownBody');
+  if(!body) return;
+  if(typeof isGenReady !== 'function' || !isGenReady()){
+    body.innerHTML = '<span class="intel-muted">Load the on-device LLM (Settings → Generative Ask) to break tasks down.</span>';
+    return;
+  }
+  const id = typeof editingTaskId !== 'undefined' ? editingTaskId : null;
+  const t = id != null && typeof findTask === 'function' ? findTask(id) : null;
+  if(!t){
+    body.innerHTML = '<span class="intel-muted">Open a task first.</span>';
+    return;
+  }
+
+  body.dataset.loaded = '1';
+  body.innerHTML = '<span class="intel-muted">Thinking through subtasks…</span>';
+
+  try{
+    const res = await _llmWithTimeout(
+      genBreakdownTask({ name: t.name, description: t.description }, { maxSubtasks: 6 }),
+      20000,
+    );
+    if(!res || !Array.isArray(res.subtasks) || !res.subtasks.length){
+      body.innerHTML = '<span class="intel-muted">LLM didn\u2019t return usable subtasks. Try adding a short description and retry.</span>'
+        + ' <button type="button" class="md-breakdown-btn" data-action="runMdBreakdown">Retry</button>';
+      return;
+    }
+    window._mdBreakdownSuggestion = { taskId: t.id, subtasks: res.subtasks };
+    const rows = res.subtasks.map((s, i) => `
+      <label class="md-breakdown-row">
+        <input type="checkbox" data-idx="${i}" checked>
+        <span class="md-breakdown-name">${esc(s.name)}</span>
+        ${s.effort ? `<span class="md-breakdown-effort">${esc(String(s.effort).toUpperCase())}</span>` : ''}
+      </label>`).join('');
+    body.innerHTML = `
+      <div class="md-breakdown-list">${rows}</div>
+      ${res.rationale ? `<div class="pending-rationale">${esc(res.rationale)}</div>` : ''}
+      <div class="md-breakdown-actions">
+        <button type="button" class="md-breakdown-btn" data-action="runMdBreakdown">Re-run</button>
+        <button type="button" class="md-breakdown-btn md-breakdown-btn--primary" data-action="acceptMdBreakdown">Add as subtasks</button>
+      </div>`;
+  }catch(err){
+    console.warn('[breakdown]', err);
+    body.innerHTML = '<span class="intel-muted">Something went wrong. Try again.</span>'
+      + ' <button type="button" class="md-breakdown-btn" data-action="runMdBreakdown">Retry</button>';
+  }
+}
+
+function acceptMdBreakdown(){
+  const sugg = window._mdBreakdownSuggestion;
+  const body = document.getElementById('mdBreakdownBody');
+  if(!sugg || !body) return;
+  const parent = typeof findTask === 'function' ? findTask(sugg.taskId) : null;
+  if(!parent){ body.innerHTML = '<span class="intel-muted">Parent task not found.</span>'; return; }
+
+  const selected = Array.from(body.querySelectorAll('input[type="checkbox"][data-idx]'))
+    .filter(cb => cb.checked)
+    .map(cb => sugg.subtasks[parseInt(cb.dataset.idx, 10)])
+    .filter(Boolean);
+  if(!selected.length){ return; }
+
+  const defaults = typeof defaultTaskProps === 'function' ? defaultTaskProps() : {};
+  const nowStr = typeof timeNowFull === 'function' ? timeNowFull() : new Date().toISOString();
+  const added = [];
+  for(const s of selected){
+    const id = (typeof taskIdCtr === 'number') ? (++taskIdCtr) : (Date.now() + Math.floor(Math.random() * 1000));
+    const child = Object.assign(
+      { id, name: s.name, totalSec: 0, sessions: 0, created: nowStr, parentId: parent.id, collapsed: false },
+      defaults,
+      { listId: parent.listId, effort: s.effort || null },
+    );
+    tasks.push(child);
+    if(typeof _taskIndexRegister === 'function') _taskIndexRegister(child);
+    added.push(child.id);
+  }
+  if(parent.collapsed) parent.collapsed = false;
+
+  body.innerHTML = `<span class="intel-muted">Added ${added.length} subtask${added.length === 1 ? '' : 's'}.</span>`;
+  window._mdBreakdownSuggestion = null;
+
+  if(typeof renderTaskList === 'function') renderTaskList();
+  if(typeof saveState === 'function') saveState('user');
+}
+
 async function intelFindDuplicatesUI(){
   if(!isIntelReady()){ _setIntelStatus('error', 'Model not ready'); return; }
   const sec = document.getElementById('intelDupSection');
@@ -1787,6 +2208,19 @@ async function intelAutoOrganize(){
       ops = v.valid;
       destructiveLevel = v.destructiveLevel;
     }
+        if(typeof isGenReady === 'function' && isGenReady() && typeof genExplainMove === 'function'){
+      _setIntelStatus('working', 'Explaining moves with LLM…');
+      const listById = new Map(lists.map(l => [l.id, l]));
+      const MAX = 8;
+      for(let i = 0; i < Math.min(MAX, ops.length); i++){
+        const op = ops[i];
+        const t = findTask(op.args.id);
+        const dest = listById.get(op.args.listId);
+        if(!t || !dest) continue;
+        const note = await _llmWithTimeout(genExplainMove({ name: t.name }, dest.name || ''), 8000);
+        if(note) op._rationale = note;
+      }
+    }
     await acceptProposedOps(ops, { source: 'auto-organize', destructiveLevel });
   }catch(err){
     console.warn('[auto-organize]', err);
@@ -1828,6 +2262,14 @@ function maybeShowEnhanceBtn(){
   const len = inp.value.trim().length;
   const showable = (typeof isIntelReady === 'function' && isIntelReady()) && len >= 3;
   btn.hidden = !(showable);
+  // LLM freeform parse button: only offered when a generative model is loaded.
+  // Shown for longer inputs (≥8 chars) where nlparse + embeddings struggle.
+  const parseBtn = document.getElementById('taskParseBtn');
+  if(parseBtn){
+    const llmOn = typeof isGenReady === 'function' && isGenReady();
+    const canParse = llmOn && len >= 8;
+    parseBtn.hidden = !(canParse);
+  }
   if((len < 3 || window._smartAddPreview) && !btn.disabled){
     window._smartAddPreview = null;
     const prev = document.getElementById('smartAddPreview');
@@ -1953,6 +2395,92 @@ async function smartAddEnhance(){
   }
 }
 
+
+async function smartAddParseWithLLM(){
+  if(_intelBusy) return;
+  if(typeof isGenReady !== 'function' || !isGenReady()) return;
+  if(typeof genParseFreeform !== 'function') return;
+
+  const inp = document.getElementById('taskInput');
+  const btn = document.getElementById('taskParseBtn');
+  const prev = document.getElementById('smartAddPreview');
+  const raw = (inp?.value || '').trim();
+  if(!raw || raw.length < 8) return;
+
+  _intelBusy = true;
+  if(btn){
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.dataset.prevHtml = btn.innerHTML;
+    btn.innerHTML = (window.icon && window.icon('harmonize', { size: 14, cls: 'is-spin' })) || '';
+  }
+
+  try{
+    const parsed = await _llmWithTimeout(genParseFreeform(raw), 12000);
+    if(!parsed || !parsed.name){
+      if(prev){
+        prev.innerHTML = '<span class="smart-add-empty">LLM couldn\u2019t parse that — try adding more context.</span>';
+        prev.hidden = false;
+      }
+      return;
+    }
+
+    // Rewrite the input to the cleaner imperative name so parseQuickAdd
+    // handles submit cleanly. Keep the cursor at end of the new name.
+    if(parsed.name && parsed.name !== raw){
+      inp.value = parsed.name;
+      try{ inp.setSelectionRange(parsed.name.length, parsed.name.length); }catch(_){}
+    }
+
+    const PR = ['urgent','high','normal','low'];
+    const EFF = ['xs','s','m','l','xl'];
+    const cleaned = {};
+    if(parsed.priority && PR.includes(parsed.priority)) cleaned.priority = parsed.priority;
+    if(parsed.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dueDate)) cleaned.dueDate = parsed.dueDate;
+    if(parsed.effort && EFF.includes(parsed.effort)) cleaned.effort = parsed.effort;
+    if(Array.isArray(parsed.tags) && parsed.tags.length) cleaned.tags = parsed.tags.slice(0, 5);
+
+    if(Object.keys(cleaned).length === 0){
+      window._smartAddPreview = null;
+      if(prev){
+        prev.innerHTML = parsed.rationale
+          ? `<span class="smart-add-empty">${esc(parsed.rationale)}</span>`
+          : '<span class="smart-add-empty">Parsed — press Enter to add.</span>';
+        prev.hidden = false;
+      }
+    } else {
+      window._smartAddPreview = cleaned;
+      _renderSmartAddChips(cleaned);
+      if(parsed.rationale && prev){
+        prev.insertAdjacentHTML(
+          'beforeend',
+          `<div class="pending-rationale">${esc(parsed.rationale)}</div>`,
+        );
+      }
+    }
+  }catch(err){
+    // User clicked the Parse-with-LLM button; surface the failure with a
+    // Retry instead of leaving them staring at a "loading" state that
+    // already cleared.
+    console.warn('[smart-add:llm]', err);
+    const msg = (err && err.message) ? String(err.message).slice(0, 120) : 'parse failed';
+    if(typeof showActionToast === 'function'){
+      showActionToast('Parse with LLM failed: ' + msg, 'Retry', () => smartAddParseWithLLM());
+    }
+  }finally{
+    _intelBusy = false;
+    if(btn){
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      if(btn.dataset.prevHtml != null){
+        btn.innerHTML = btn.dataset.prevHtml;
+        delete btn.dataset.prevHtml;
+      } else {
+        btn.innerHTML = (window.icon && window.icon('wand')) || '';
+      }
+    }
+  }
+}
 
 function _renderSmartAddChips(s){
   const prev = document.getElementById('smartAddPreview');
@@ -2082,6 +2610,15 @@ function openWhatNext(){
   // open/close mechanism as every other overlay (focus trap + prev-focus
   // restore + ESC handling). 'palette' variant: no body lock, no swipe.
   Modal.open('whatNextOverlay', { variant:'palette', onRequestClose:()=>closeWhatNext() });
+  if(ranked.length >= 1 && typeof isGenReady === 'function' && isGenReady() && typeof genExplainRanking === 'function'){
+    const top = ranked[0].t;
+    const alts = ranked.slice(1).map(x => ({ name: x.t.name }));
+    _llmWithTimeout(genExplainRanking({ name: top.name }, alts), 9000).then(note => {
+      if(!note) return;
+      const el = document.getElementById('wnWhy');
+      if(el){ el.textContent = note; el.hidden = false; }
+    }).catch(() => {});
+  }
 }
 
 function closeWhatNext(){
@@ -2104,6 +2641,7 @@ window.executeClassifyTaskOp = executeClassifyTaskOp;
 window.predictClassifyCategory = predictClassifyCategory;
 window.renderAIPanel = renderAIPanel;
 window.smartAddEnhance = smartAddEnhance;
+window.smartAddParseWithLLM = smartAddParseWithLLM;
 window.smartAddRemove = smartAddRemove;
 window.smartAddRemoveTag = smartAddRemoveTag;
 window.applySmartAddAndSubmit = applySmartAddAndSubmit;
@@ -2115,6 +2653,8 @@ window.aiUndo = aiUndo;
 window.openWhatNext = openWhatNext;
 window.closeWhatNext = closeWhatNext;
 window.toggleTaskSearchSemantic = toggleTaskSearchSemantic;
+window.runMdBreakdown = runMdBreakdown;
+window.acceptMdBreakdown = acceptMdBreakdown;
 window.intelFindDuplicatesUI = intelFindDuplicatesUI;
 window.intelMergeDuplicatePair = intelMergeDuplicatePair;
 window.intelReembedAll = intelReembedAll;
@@ -2130,6 +2670,373 @@ window.headerAIClick = headerAIClick;
 window.acceptProposedOps = acceptProposedOps;
 window.intelReclassifyUncategorized = intelReclassifyUncategorized;
 window.intelHardBulkConfirmNeeded = intelHardBulkConfirmNeeded;
+window.applyOpsBatch = applyOpsBatch;
+window.askDestructiveConfirmNeeded = askDestructiveConfirmNeeded;
+window.summarizeOpsLabels = summarizeOpsLabels;
+window._allSelectedOpsFromList = _allSelectedOpsFromList;
+
+let _askLoadError = null;
+
+function renderGenSettings(){
+  const host = document.getElementById('genAISettings');
+  if(!host) return;
+  const cfg = (typeof getGenCfg === 'function') ? getGenCfg() : { enabled:false, modelId:'', dtype:'q4', timeoutSec:30, downloadedIds:[] };
+  const presets = (typeof getGenPresets === 'function') ? getGenPresets() : [];
+  const ready = typeof isGenReady === 'function' && isGenReady();
+  const loading = typeof isGenLoading === 'function' && isGenLoading();
+  const dev = typeof getGenDevice === 'function' ? getGenDevice() : null;
+  const devLbl = _formatGenBackend(dev) || (dev ? String(dev) : '');
+  const ramHint = typeof window._mobileRamHint === 'function' ? window._mobileRamHint() : null;
+  const cached = typeof isGenDownloaded === 'function' ? isGenDownloaded(cfg.modelId) : !!cfg.downloaded;
+  const liveModel = typeof getGenModel === 'function' ? getGenModel() : null;
+  const readyThisModel = ready && liveModel === cfg.modelId;
+  const webgpuApi = typeof navigator !== 'undefined' && navigator.gpu && typeof navigator.gpu.requestAdapter === 'function';
+
+  const preset = presets.find(p => p.id === cfg.modelId) || presets[0];
+  const sizeMb = preset ? preset.sizeMb : 230;
+  const lastErr = typeof getGenLastError === 'function' ? getGenLastError() : null;
+
+  let statusText;
+  if(!cfg.enabled) statusText = 'Disabled — toggle on to download & use.';
+  else if(readyThisModel) statusText = `Ready on ${devLbl || 'device'} · ${preset ? preset.label : cfg.modelId}`;
+  else if(loading) statusText = 'Fetching weights, then binding WebGPU or WASM…';
+  else if(lastErr) statusText = 'Load failed — see details below.';
+  else if(cached) statusText = 'Weights cached — click Load (or wait for auto-restore).';
+  else statusText = `Not downloaded (~${sizeMb} MB one-time fetch).`;
+
+  let actionLabel;
+  if(!cfg.enabled) actionLabel = 'Enable above first';
+  else if(loading) actionLabel = 'Loading…';
+  else if(readyThisModel) actionLabel = 'Reload model';
+  else if(cached) actionLabel = 'Pre-load model';
+  else actionLabel = `Download model (~${sizeMb} MB)`;
+  const actionDisabled = !cfg.enabled || loading;
+
+  // Prefer the per-model cached error (hides stale errors after switching presets);
+  // fall back to gen.js's last error for load failures that happen before we
+  // had a chance to key them by model (e.g. alt-slug retry failures).
+  const errForThisModel = (_askLoadError && _askLoadError.modelId === cfg.modelId)
+    ? _askLoadError.message
+    : (lastErr || '');
+
+  const busy = loading || (typeof isGenGenerating === 'function' && isGenGenerating());
+  const disableSelect = !cfg.enabled || busy;
+  const historySize = (typeof getAskHistory === 'function') ? getAskHistory().length : 0;
+
+  host.innerHTML = `
+    <div class="gen-settings">
+      <div class="srow srow--spread">
+        <span class="sr-lbl sr-lbl--lg">Enable generative Ask (beta)</span>
+        <div class="toggle ${cfg.enabled ? 'on' : ''}" id="genEnableToggle" data-action="toggleGenEnabled" role="switch" aria-checked="${cfg.enabled}"><div class="tknob"></div></div>
+      </div>
+      <p class="gen-settings-lead">
+        Adds an <strong>Edit</strong> mode to the command palette (<kbd>Ctrl/⌘ + K</kbd>, then prefix <code>?</code>). A tiny instruct-tuned model runs <em>on this device</em>; nothing you type leaves the browser. Choose review-first or auto-apply below; destructive batches always confirm once.
+      </p>
+      <div class="gen-settings-row gen-settings-row--apply-mode">
+        <span class="gen-settings-lbl">When AI proposes changes</span>
+        <div class="gen-apply-mode-seg" role="group" aria-label="Apply mode default">
+          <button type="button" class="gen-apply-mode-btn ${cfg.askApplyMode === 'review' ? 'gen-apply-mode-btn--active' : ''}" data-action="setGenAskApplyMode" data-arg="review" ${cfg.enabled ? '' : 'disabled'}>Review first</button>
+          <button type="button" class="gen-apply-mode-btn ${cfg.askApplyMode === 'auto' ? 'gen-apply-mode-btn--active' : ''}" data-action="setGenAskApplyMode" data-arg="auto" ${cfg.enabled ? '' : 'disabled'}>Apply automatically</button>
+        </div>
+      </div>
+      <p class="gen-settings-hint gen-settings-hint--tight">Auto-apply still asks once before deletes or bulk list moves. Undo is always available. Override per chat session in Cmd+K.</p>
+      <div class="gen-settings-row">
+        <label for="genModelSelect" class="gen-settings-lbl">Model</label>
+        <select id="genModelSelect" data-onchange="selectGenModelFromSelect" ${disableSelect ? 'disabled' : ''} title="${busy ? 'Disabled while busy' : ''}">
+          ${presets.map(p => {
+            const pCached = typeof isGenDownloaded === 'function' && isGenDownloaded(p.id);
+            const tag = pCached ? ' ✓ cached' : '';
+            return `<option value="${esc(p.id)}" ${p.id === cfg.modelId ? 'selected' : ''}>${esc(p.label)} · ${p.sizeMb} MB${esc(tag)}</option>`;
+          }).join('')}
+        </select>
+      </div>
+      ${preset ? `<div class="gen-settings-note">${esc(preset.note)}</div>` : ''}
+      ${cfg.enabled && !loading ? `<div class="gen-settings-note">${webgpuApi ? 'This browser exposes <strong>WebGPU</strong> — the LLM tries it first, then falls back to <strong>WASM</strong> if binding fails.' : 'No <code>navigator.gpu</code> — the LLM will run on <strong>WASM (CPU)</strong> only.'}</div>` : ''}
+      ${ramHint === 'low' ? `<div class="gen-settings-warn">Your device reports low RAM. The 135M preset is recommended.</div>` : ''}
+      ${ramHint === 'ios-unknown' && (preset && preset.sizeMb > 150) ? `<div class="gen-settings-warn">On iOS the WASM fallback uses extra RAM. If the tab reloads during generation, switch to the 135M preset.</div>` : ''}
+      <div class="gen-settings-row">
+        <label for="genTimeout" class="gen-settings-lbl" title="Max time allowed for generating a response">Max generation time (sec)</label>
+        <input type="number" id="genTimeout" class="sinput" min="5" max="120" value="${cfg.timeoutSec}" data-onchange="setGenTimeoutFromInput" ${cfg.enabled ? '' : 'disabled'}>
+      </div>
+      <div class="gen-settings-status" id="genSettingsStatus">${esc(statusText)}</div>
+      <div id="genProgressWrap" class="intel-progress-wrap" ${loading ? '' : 'hidden'}>
+        <div class="intel-progress-track"><div class="intel-progress-bar progress-bar" id="genProgressBar"></div></div>
+        <div class="intel-progress-info"><span id="genProgressPct">0%</span> <span id="genProgressTxt"></span></div>
+      </div>
+      ${errForThisModel ? `<div class="gen-settings-warn" id="genSettingsError" role="alert">${esc(errForThisModel)}</div>` : ''}
+      <div class="gen-settings-actions">
+        ${loading
+          ? '<button type="button" class="btn-ghost btn-sm" data-action="genAbortLoad">Cancel download</button>'
+          : `<button type="button" class="btn-primary btn-sm" id="genDownloadBtn" data-action="genDownloadClick" ${actionDisabled ? 'disabled' : ''}>
+              ${esc(actionLabel)}
+            </button>`}
+        ${readyThisModel && !loading ? '<button type="button" class="btn-ghost btn-sm" data-action="genAbort">Abort generation</button>' : ''}
+      </div>
+      <div class="gen-settings-actions gen-settings-actions--secondary">
+        <button type="button" class="btn-ghost btn-sm" data-action="genClearAskHistory" ${historySize ? '' : 'disabled'}>Clear Ask history (${historySize})</button>
+        <button type="button" class="btn-ghost btn-sm" data-action="genClearCache">Clear LLM cache</button>
+      </div>
+      <p class="gen-settings-hint">
+        Progress also appears in the <strong>footer bar</strong> and the header chip (percentage) while files download. After load, status shows <strong>WebGPU</strong> (GPU) or <strong>WASM (CPU)</strong> — whichever actually bound.
+      </p>
+      <p class="gen-settings-hint">
+        Weights live in the browser HTTP cache. "Clear LLM cache" removes any caches we control; to force a full purge use the browser's own "Clear site data".
+      </p>
+    </div>`;
+
+  // Keep the task-input promo chip in sync with gen state on every render
+  // (toggle, model switch, download, error, clear — all route through here).
+  if(typeof syncAskPromoChip === 'function') syncAskPromoChip();
+}
+
+function toggleGenEnabled(){
+  if(typeof getGenCfg !== 'function') return;
+  const cfg = getGenCfg();
+  cfg.enabled = !cfg.enabled;
+  saveGenCfg(cfg);
+  if(!cfg.enabled){
+    // Disabling must stop any in-flight generation and clear stale errors so
+    // re-enabling later starts from a clean slate.
+    _askLoadError = null;
+    if(typeof clearGenLastError === 'function') clearGenLastError();
+    if(typeof genAbort === 'function'){ try{ genAbort(); }catch(e){} }
+    if(typeof genAbortLoad === 'function'){ try{ genAbortLoad(); }catch(e){} }
+  } else if(typeof intelLoad === 'function' && typeof isIntelReady === 'function' && !isIntelReady()){
+    // When enabling, warm up the embedding loader in the background so the
+    // first Ask turn has semantic retrieval ready. Cheap no-op if loaded.
+    intelLoad(() => {}).catch(e => console.warn('[ai] embedding warmup failed', e));
+  }
+  renderGenSettings();
+}
+
+function selectGenModel(id){
+  const cfg = getGenCfg();
+  const presets = getGenPresets();
+  const p = presets.find(x => x.id === id);
+  if(!p) return;
+  if(cfg.modelId === p.id) return;
+  cfg.modelId = p.id;
+  cfg.dtype = p.dtype;
+  // Do NOT clear the per-model download record — `isGenDownloaded(id)` is the
+  // source of truth. Legacy `cfg.downloaded` is re-derived by _loadGenCfg().
+  saveGenCfg(cfg);
+  _askLoadError = null; // errors were about the previous model
+  if(typeof clearGenLastError === 'function') clearGenLastError();
+  renderGenSettings();
+}
+
+function setGenTimeout(v){
+  const cfg = getGenCfg();
+  const n = parseInt(v, 10);
+  if(!Number.isFinite(n) || n < 5 || n > 120) return;
+  cfg.timeoutSec = n;
+  saveGenCfg(cfg);
+}
+
+function setGenAskApplyMode(mode){
+  if(typeof getGenCfg !== 'function' || typeof saveGenCfg !== 'function') return;
+  if(mode !== 'auto' && mode !== 'review') return;
+  const cfg = getGenCfg();
+  if(cfg.askApplyMode === mode) return;
+  cfg.askApplyMode = mode;
+  saveGenCfg(cfg);
+  if(typeof _cmdkInitApplyModeFromCfg === 'function') _cmdkInitApplyModeFromCfg();
+  renderGenSettings();
+}
+
+async function genDownloadClick(){
+  if(typeof genLoad !== 'function') return;
+  const cfg = getGenCfg();
+  if(!cfg.enabled){ cfg.enabled = true; saveGenCfg(cfg); }
+  _askLoadError = null;
+  if(typeof clearGenLastError === 'function') clearGenLastError();
+
+  const targetModelId = cfg.modelId;
+
+  // Render once up-front so the Cancel button replaces the Download button
+  // and the progress track appears immediately (not after the first chunk).
+  renderGenSettings();
+
+  const txt = () => document.getElementById('genProgressTxt');
+  const initTxt = txt(); if(initTxt) initTxt.textContent = 'preparing…';
+  syncGenChip('loading', '0% · preparing');
+  _showGenLoadRibbonIndeterminate('Downloading LLM weight files…');
+
+  // Safety net: force-hide the ribbon after 5 minutes even if genLoad hangs.
+  const ribbonTimeout = setTimeout(() => {
+    const r = document.getElementById('genLoadRibbon');
+    if(r && !r.hidden){
+      console.warn('[ai] download ribbon safety timeout — forcing hide');
+      _hideGenLoadRibbon();
+    }
+  }, 5 * 60 * 1000);
+
+  // Monotonic aggregator: HF emits per-file progress that would otherwise snap
+  // back to 0% each time a new shard starts downloading.
+  const onProgress = _makeProgressAggregator((v, ev) => {
+    _syncGenDownloadProgress(v, ev);
+  });
+
+  try{
+    await genLoad(targetModelId, cfg.dtype, onProgress);
+    // gen.js.markGenDownloaded() was already called by genLoad for whichever
+    // slug actually resolved (primary or alt), so we just mirror the legacy
+    // boolean for any external readers still consulting it.
+    const freshCfg = getGenCfg();
+    freshCfg.downloaded = true;
+    saveGenCfg(freshCfg);
+    syncGenChip('ready', '');
+    if(typeof syncAskPromoChip === 'function') syncAskPromoChip();
+    // LLM-dependent surfaces (parse-with-LLM button) may need to appear now.
+    if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+  }catch(e){
+    const msg = (e && e.message) ? e.message : 'Load failed';
+    _askLoadError = { modelId: targetModelId, message: msg };
+    syncGenChip('error', 'LLM load failed');
+    if(typeof showExportToast === 'function'){
+      const short = msg.length > 80 ? msg.slice(0, 77) + '…' : msg;
+      showExportToast('LLM download failed: ' + short);
+    }
+  }finally{
+    clearTimeout(ribbonTimeout);
+    _hideGenLoadRibbon();
+    renderGenSettings();
+  }
+}
+
+/** Called from the Ask palette "Open Settings" fallback so the user lands
+ *  directly on the LLM section (G6). */
+function openGenSettingsFromAsk(){
+  try{
+    if(typeof showTab === 'function') showTab('settings');
+    if(typeof closeCmdK === 'function') closeCmdK();
+    const host = document.getElementById('genAISettings');
+    if(!host) return;
+    // Expand the Integrations accordion if it's collapsed.
+    const details = host.closest('details');
+    if(details && !details.open) details.open = true;
+    requestAnimationFrame(() => {
+      host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const btn = document.getElementById('genDownloadBtn');
+      if(btn && !btn.disabled) btn.focus();
+    });
+  }catch(e){ /* best-effort */ }
+}
+
+async function genClearAskHistory(){
+  if(typeof clearAskHistory === 'function'){ clearAskHistory(); }
+  renderGenSettings();
+  _setIntelStatus('ready', 'Ask history cleared');
+}
+
+async function genClearCache(){
+  if(typeof clearLLMCache !== 'function') return;
+  // Clearing cached weights invalidates our per-model downloaded record — the
+  // next Load will actually hit the network again.
+  try{
+    const cfg = getGenCfg();
+    cfg.downloadedIds = [];
+    cfg.downloaded = false;
+    saveGenCfg(cfg);
+  }catch(_){ /* best-effort */ }
+  let removed = 0;
+  try{ removed = await clearLLMCache(); }catch(e){}
+  const msg = removed
+    ? `Removed ${removed} cached LLM entr${removed === 1 ? 'y' : 'ies'}. For a full purge use "Clear site data".`
+    : 'No app-owned LLM caches to remove. Weights may still be in the browser HTTP cache — use "Clear site data" to purge.';
+  _setIntelStatus('ready', msg.slice(0, 120));
+  renderGenSettings();
+}
+
+window.renderGenSettings = renderGenSettings;
+window.toggleGenEnabled = toggleGenEnabled;
+window.selectGenModel = selectGenModel;
+window.setGenTimeout = setGenTimeout;
+window.setGenAskApplyMode = setGenAskApplyMode;
+window.genDownloadClick = genDownloadClick;
+window.openGenSettingsFromAsk = openGenSettingsFromAsk;
+window.genClearAskHistory = genClearAskHistory;
+window.genClearCache = genClearCache;
+
+/**
+ * After reload, re-load LLM weights from HTTP cache if the user had enabled
+ * gen + previously downloaded (so Ask shows "ready" without a manual click).
+ * Failures are silent — Settings → Load still works.
+ */
+async function genAutoRehydrateIfCached(){
+  if(typeof getGenCfg !== 'function' || typeof genLoad !== 'function') return;
+  if(typeof isGenDownloaded !== 'function' || typeof isGenReady !== 'function') return;
+  const cfg = getGenCfg();
+  if(!cfg || !cfg.enabled) return;
+  if(!isGenDownloaded(cfg.modelId)) return;
+  if(isGenReady() && typeof getGenModel === 'function' && getGenModel() === cfg.modelId) return;
+
+  // Safety net: force-hide the ribbon after 90s even if genLoad hangs
+  // (e.g. stalled fetch, browser cache corruption, WebGPU driver timeout).
+  const ribbonTimeout = setTimeout(() => {
+    const r = document.getElementById('genLoadRibbon');
+    if(r && !r.hidden){
+      console.warn('[ai] rehydrate ribbon safety timeout — forcing hide');
+      _hideGenLoadRibbon();
+      if(typeof syncGenChip === 'function') syncGenChip('idle', '');
+    }
+  }, 90 * 1000);
+
+  try{
+    if(typeof syncGenChip === 'function'){
+      syncGenChip('loading', '0% · rehydrating');
+      _showGenLoadRibbonIndeterminate('Restoring LLM from browser cache…');
+    }
+    const dtype = cfg.dtype || 'q4';
+    const onProgress = (typeof _makeProgressAggregator === 'function')
+      ? _makeProgressAggregator((v, ev) => { _syncGenDownloadProgress(v, ev); })
+      : () => {};
+    await genLoad(cfg.modelId, dtype, onProgress);
+    if(typeof syncGenChip === 'function') syncGenChip('ready', '');
+    if(typeof syncAskPromoChip === 'function') syncAskPromoChip();
+    if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+  }catch(e){
+    console.warn('[ai] LLM auto-rehydrate failed', e);
+    if(typeof syncGenChip === 'function') syncGenChip('idle', '');
+  }finally{
+    clearTimeout(ribbonTimeout);
+    _hideGenLoadRibbon();
+  }
+}
+
+function _scheduleGenAutoRehydrate(){
+  const run=()=>{ genAutoRehydrateIfCached().catch(e => console.warn('[ai] auto-rehydrate scheduler', e)); };
+  if(typeof requestIdleCallback==='function') requestIdleCallback(run,{timeout:4000});
+  else setTimeout(run, 500);
+}
+if(typeof document!=='undefined'){
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>{ setTimeout(_scheduleGenAutoRehydrate, 500); });
+  else setTimeout(_scheduleGenAutoRehydrate, 500);
+}
+window.genAutoRehydrateIfCached = genAutoRehydrateIfCached;
+
+// Visibility guard: catch any lingering ribbon when the tab regains focus.
+// Covers edge cases where genLoad resolved while the tab was backgrounded
+// and the DOM update was suppressed by the browser.
+document.addEventListener('visibilitychange', function _ribbonVisGuard(){
+  if(document.hidden) return;
+  const r = document.getElementById('genLoadRibbon');
+  if(!r || r.hidden) return;
+  // If the gen module is no longer loading, the ribbon shouldn't be visible.
+  if(typeof isGenLoading === 'function' && !isGenLoading()){
+    console.warn('[ai] visibilitychange — ribbon was stale, hiding');
+    _hideGenLoadRibbon();
+    // Also sync the chip to a coherent state.
+    if(typeof isGenReady === 'function' && isGenReady()){
+      syncGenChip('ready', '');
+    } else {
+      syncGenChip('idle', '');
+    }
+  }
+});
+
+window.selectGenModelFromSelect = function(){ if(typeof selectGenModel==='function') selectGenModel(this.value); };
+window.setGenTimeoutFromInput = function(){ if(typeof setGenTimeout==='function') setGenTimeout(this.value); };
 
 document.addEventListener('click', function _smartAddTagDelegate(e){
   const prev = document.getElementById('smartAddPreview');

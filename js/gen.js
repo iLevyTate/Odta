@@ -6,7 +6,9 @@
 // same Hugging Face CDN already used by the embedding model.
 
 const _GC = window.ODTAULAI_CONFIG || {};
-const GEN_TRANSFORMERS_CDN = _GC.TRANSFORMERS_CDN || 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.1';
+const _gabs = (rel) => { try { return new URL(rel, (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '')).href; } catch (_) { return rel; } };
+const GEN_TRANSFORMERS_URL = _GC.TRANSFORMERS_URL || _gabs('js/vendor/transformers/transformers.min.mjs');
+const GEN_TRANSFORMERS_WASM_DIR = _GC.TRANSFORMERS_WASM_DIR || _gabs('js/vendor/transformers/');
 const GEN_CFG_KEY  = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_CFG)     || 'stupind_gen_cfg';
 const GEN_HIST_KEY = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_HISTORY) || 'stupind_gen_history';
 
@@ -63,7 +65,7 @@ function clearGenLastError(){ _genLastError = null; }
 
 async function _importTransformers(){
   if(_genTransformersMod) return _genTransformersMod;
-  _genTransformersMod = await import(GEN_TRANSFORMERS_CDN);
+  _genTransformersMod = await import(GEN_TRANSFORMERS_URL);
   return _genTransformersMod;
 }
 
@@ -119,6 +121,7 @@ function _loadGenCfg(){
   }
   if(!cfg.dtype)  cfg.dtype  = GEN_MODEL_PRESETS[0].dtype;
   if(typeof cfg.timeoutSec !== 'number') cfg.timeoutSec = _defaultTimeoutSec();
+  if(cfg.askApplyMode !== 'auto' && cfg.askApplyMode !== 'review') cfg.askApplyMode = 'review';
 
   // Per-model download record. Back-compat for installs predating downloadedIds:
   // legacy `downloaded:true` means the currently-selected model was the last
@@ -278,7 +281,8 @@ async function genLoad(modelId, dtype, onProgress){
       throw e;
     }
     env.allowLocalModels = false;
-    env.useBrowserCache = true;
+    env.backends.onnx.wasm.wasmPaths = GEN_TRANSFORMERS_WASM_DIR;
+  env.useBrowserCache = true;
 
     // On WebGPU we prefer q4f16 (int4 weights + fp16 activations) when the
     // caller's stored dtype is plain q4; on WASM we use q4 (fp16 activations

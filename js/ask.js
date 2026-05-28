@@ -153,7 +153,7 @@ function _askSystemPrompt(){
     'User: move the rent task to Personal\n→ [{"name":"UPDATE_TASK","args":{"id":<id>,"listName":"Personal"}}]',
     'User: snooze task 7 for a week\n→ [{"name":"UPDATE_TASK","args":{"id":7,"hiddenUntil":"<+7d>"}}]',
     'User: mark all my #errands as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
-    'User: archive everything already completed last week\n→ [{"name":"ARCHIVE_TASK","args":{"id":<id>}}, ...]',
+    'User: mark everything already completed last week as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
     'User: what should I do next?\n→ []',
     'User: nevermind\n→ []',
   ].join('\n');
