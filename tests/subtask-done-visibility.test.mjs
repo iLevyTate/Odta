@@ -38,6 +38,7 @@ function loadFn(smartView, showCompletedAllChecked) {
     smartView,
     todayISO: () => '2026-05-27',
     gid: (id) => id === 'showCompletedAll' ? { checked: showCompletedAllChecked } : null,
+    _pinVisibleTaskIds: new Set(),
   };
   vm.createContext(sandbox);
   const script = block + '\n_subtaskAllowedUnderShownParent;';

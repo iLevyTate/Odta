@@ -19,10 +19,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function loadParser(fixedTodayISO) {
   const src = readFileSync(join(root, 'js', 'tasks.js'), 'utf8');
+  const h = src.indexOf('function _qaPad2(n)');
   const s = src.indexOf('function parseQuickAdd(raw)');
   const e = src.indexOf('async function addTask()', s);
-  assert.ok(s >= 0 && e > s, 'slice parseQuickAdd');
-  const block = src.slice(s, e);
+  assert.ok(h >= 0 && s >= 0 && e > s, 'slice parseQuickAdd helpers');
+  const block = src.slice(h, e);
   return new Function('todayISO',
     `${block}\nreturn parseQuickAdd;`,
   )(() => fixedTodayISO);
@@ -181,4 +182,27 @@ test('parseQuickAdd: multiple date phrases — cascade priority decides (today >
   const r3 = parse('haircut friday today');
   assert.equal(r3.props.dueDate, '2026-04-27');
   assert.match(r3.name, /friday/);
+});
+
+test('parseQuickAdd: clock phrases set remindAt and default dueDate to today', () => {
+  const parse = loadParser('2026-05-28');
+  const r = parse('call mom at 3pm');
+  assert.equal(r.name, 'call mom');
+  assert.equal(r.props.dueDate, '2026-05-28');
+  assert.equal(r.props.remindAt, '2026-05-28T15:00');
+});
+
+test('parseQuickAdd: time combines with an existing due date instead of replacing it', () => {
+  const parse = loadParser('2026-05-28');
+  const r = parse('meeting tomorrow at 2pm');
+  assert.equal(r.name, 'meeting');
+  assert.equal(r.props.dueDate, '2026-05-29');
+  assert.equal(r.props.remindAt, '2026-05-29T14:00');
+});
+
+test('parseQuickAdd: 24-hour and noon aliases parse offline', () => {
+  const parse = loadParser('2026-05-28');
+  assert.equal(parse('standup 09:30').props.remindAt, '2026-05-28T09:30');
+  assert.equal(parse('lunch at noon tomorrow').props.remindAt, '2026-05-29T12:00');
+  assert.equal(parse('wrap at midnight today').props.remindAt, '2026-05-28T00:00');
 });

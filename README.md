@@ -2,7 +2,8 @@
   ╔══════════════════════════════════════════════════════════════════════════╗
   ║   Odta — On-Device Task App Using Local Ambient Intelligence             ║
   ║   A Pomodoro + ClickUp-style task manager that understands meaning,      ║
-  ║   on your device, offline. No accounts. No telemetry. No cloud LLM.      ║
+  ║   on your device, offline. No accounts. No telemetry. Embeddings by default;  ║
+  ║   optional on-device Ask (generative) — never cloud.                          ║
   ╚══════════════════════════════════════════════════════════════════════════╝
 -->
 
@@ -103,9 +104,10 @@
 
 A compact sentence-embedding model — **`Xenova/bge-small-en-v1.5`**, 384 dimensions, about 33 MB — loads into your browser via **Transformers.js**. Every task title + description is encoded into a vector. Cosine similarity in that vector space lets the app reason about **meaning and context**, not just keywords.
 
-Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model is served from `assets/models/` on the same origin and precached by the service worker — fully offline from a fresh install. There is **no generative LLM** in this app: no chat, no token streaming, no cloud calls, no API keys.
+Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model is served from `assets/models/` on the same origin and precached by the service worker — fully offline from a fresh install. **Generative Ask is opt-in** (Settings → Integrations → Generative AI): download a local SmolLM2/Qwen causal model (~135–230 MB) for conversational task planning via **Cmd/Ctrl+K → Ask** or a `?` prefix in the task input. Embeddings stay on by default; no cloud LLM, no API keys, no token streaming to a server.
 
-What you actually get from it:
+What you get from embeddings (always-on when loaded):
+
 
 - **Semantic search** — toggle `◎ Semantic` next to the search box. `"bills"` finds `"pay the electricity"`.
 - **Smart-add suggestions** — type a new task and the app predicts life area, priority, effort, energy, tags, and target list from your existing tasks via kNN.
@@ -115,6 +117,17 @@ What you actually get from it:
 - **Similar tasks** — top neighbors surface in the task detail drawer.
 - **Suggest due date** — kNN over your task history infers a sensible due date for a new task.
 - **Align values only** — narrow button for Schwartz-only alignment if you don't want other fields touched.
+
+**Generative Ask** (opt-in download) adds:
+
+- **Edit mode** in Cmd/Ctrl+K (`?` prefix in task input) — natural language → proposed task ops
+- **Review first** (default) or **Apply automatically** (Settings default + per-session toggle in chat)
+- Destructive batches (delete, bulk list moves) confirm once; undo always available
+
+- **Conversational task chat** — `"group overdue items by list and mark urgent anything due this week"` → previewable ops; auto-apply optional.
+- **Parse wand** on smart-add — freeform sentences the deterministic parser misses.
+- **Break down with AI** — subtask suggestions in the task detail drawer.
+- **LLM rationales** on harmonize moves, auto-organize previews, what-next top pick (when the model is loaded).
 
 ### Impact scoring (Pareto 80/20)
 
@@ -163,7 +176,7 @@ A derived impact score ranks every active task from signals you already have —
 - **Smart views**: All, **Inbox** (untriaged), Today, Week, Overdue, Unscheduled, Starred, **Impact (Pareto)**, **Waiting** (blocked on someone else), **Stuck** (untouched 14+ days), **Snoozed** (hidden until a date), **Habits** (recurring / `~daily` etc.), Done.
 - **Hide recurring from main lists** — optional (on by default): daily/weekly habits stay out of All/Today/Week/etc. and show in **Habits**; open **Filters** → **Display** → uncheck **Hide recurring from main** to mix them into main views.
 - **Group by** priority, status, due date, or list.
-- **Command palette** (`Cmd / Ctrl + K`) — fuzzy over tasks, actions, views, lists, AI commands, theme, sort, sync, everything.
+- **Command palette** (`Cmd / Ctrl + K`) — fuzzy over tasks, actions, views, lists, AI commands, theme, sort, sync, everything. Toggle **Ask** or prefix with `?` for on-device generative planning (requires Generative AI download).
 - **Dark and light themes** with a one-key toggle.
 - **Responsive** down to 320 px; touch-first on mobile; full keyboard on desktop.
 
@@ -439,7 +452,7 @@ Frameworks rot. `git clone`, open in any browser, and in 10 years this will stil
 
 ## Not in scope (deliberately)
 
-- **Any generative LLM** — cloud or on-device. The app is embeddings-only by design: fast, deterministic, no token streaming, no chat loops, no "assistant" personality.
+- **Cloud generative LLM** — no OpenAI/Anthropic/Gemini calls, no subscription "Brain", no server-side chat. On-device generative Ask is optional and stays 100% local.
 - Cloud accounts, user profiles, team features.
 - Analytics. Telemetry. A/B tests. "Engagement."
 - Push notifications to your phone while the app is fully closed (browsers don't allow this without a cloud backend — by design).

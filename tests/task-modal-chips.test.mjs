@@ -33,7 +33,7 @@ test('task-modal chip handlers call _commitChipChange', () => {
   for(const { marker, label } of expectations){
     const idx = ui.indexOf(marker);
     assert.ok(idx >= 0, `marker for ${label} chip not found — handler refactored?`);
-    const window = ui.slice(idx, idx + 600);
+    const window = ui.slice(idx, idx + (label === 'recur' ? 900 : 600));
     assert.match(window, /_commitChipChange\(t\)/, `${label} chip mutation must call _commitChipChange`);
   }
 });

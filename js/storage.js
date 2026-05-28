@@ -295,18 +295,40 @@ function _loadDelMap(obj){
 
 // Save — captures task mutations with per-task lastModified stamp for sync
 let _prevTaskSnapshot = null; // used to detect which tasks changed since last save
-/** @param {'auto'|'unload'|'user'} [reason] — only 'user' shows the save pill (throttled) */
+
+function resetTaskSnapshotBaseline(){
+  _prevTaskSnapshot = {};
+  tasks.forEach(t => { _prevTaskSnapshot[t.id] = {...t}; });
+}
+
+/** Persist after P2P merge — no lastModified bump, no sync broadcast, merge epoch/nonce. */
+function persistAfterSyncMerge(remoteEpoch, remoteNonce){
+  const _localEpoch = typeof stateEpoch === 'number' && stateEpoch > 0 ? stateEpoch : 0;
+  const _remoteEpoch = typeof remoteEpoch === 'number' && remoteEpoch > 0 ? remoteEpoch : 0;
+  const _localNonce = typeof stateNonce === 'number' ? stateNonce : 0;
+  const _remoteNonce = typeof remoteNonce === 'number' ? remoteNonce : 0;
+  if(_remoteEpoch > 0) stateEpoch = Math.max(_localEpoch, _remoteEpoch);
+  if(_remoteEpoch > _localEpoch || (_remoteEpoch === _localEpoch && _remoteEpoch > 0 && _remoteNonce > _localNonce)){
+    stateNonce = _remoteNonce;
+  }
+  resetTaskSnapshotBaseline();
+  saveState('sync');
+}
+
+/** @param {'auto'|'unload'|'user'|'sync'} [reason] — only 'user' shows the save pill (throttled) */
 function saveState(reason){
   if(!reason) reason = 'auto';
+  const isSyncMerge = reason === 'sync';
   // H5: any user-attributed save means the in-memory state is live and must
   // not be overwritten by the async IDB recovery path in loadState().
   if(reason === 'user') window._stateDirty = true;
   if(typeof taskSortBy==='string'&&taskSortBy==='order') taskSortBy='manual';
+  const _intelEmbedIds = [];
+  if(!isSyncMerge){
   // Stamp lastModified on tasks that actually changed since the previous save.
   // This gives sync a reliable "newer wins" comparator without touching every
   // mutation site manually.
   const prev = _prevTaskSnapshot || {};
-  const _intelEmbedIds = [];
   tasks.forEach(t => {
     const p = prev[t.id];
     if (!p) {
@@ -318,6 +340,7 @@ function saveState(reason){
       const fieldsToCompare = ['name','status','priority','dueDate','startDate','description','tags',
         'starred','archived','completedAt','effort','energyLevel','category',
         'valuesAlignment','parentId','listId','url','estimateMin','recur','remindAt','type','blockedBy',
+        'relatedTo','attachments',
         'completions','habitLastRecordedTotalSec',
         'totalSec','sessions','sessionEntries','checklist','notes','_ext'];
       let changed = false;
@@ -332,6 +355,7 @@ function saveState(reason){
       }
     }
   });
+  }
   // Rebuild snapshot for next diff
   _prevTaskSnapshot = {};
   tasks.forEach(t => { _prevTaskSnapshot[t.id] = {...t}; });
@@ -341,8 +365,10 @@ function saveState(reason){
     const t = taskSnap.find(x=>x.id===activeTaskId);
     if(t) t.totalSec += Math.floor((Date.now()-taskStartedAt)/1000);
   }
-  stateEpoch = Date.now();
-  stateNonce = _STATE_TAB_NONCE;
+  if(!isSyncMerge){
+    stateEpoch = Date.now();
+    stateNonce = _STATE_TAB_NONCE;
+  }
   // Pomodoro live-state snapshot. Persisting these lets a tab-reload mid-focus
   // pick up where it left off (wall-clock based) instead of resetting to a
   // fresh 25:00 — losing minutes the user just earned. Mirrors the quick-timer
@@ -450,7 +476,7 @@ function saveState(reason){
   if(window._saveError === null && window._quotaBannerDismissed){
     window._quotaBannerDismissed = false;
   }
-  if(typeof syncBroadcast==='function') syncBroadcast();
+  if(!isSyncMerge && typeof syncBroadcast==='function') syncBroadcast();
   if(reason === 'user') showSaveIndicator();
 
   queueMicrotask(() => {
@@ -948,8 +974,7 @@ function _onStorageFromOtherTab(e){
       showExportToast('Merged updates from another tab');
     }
   }
-  _prevTaskSnapshot = {};
-  tasks.forEach(t => { _prevTaskSnapshot[t.id] = { ...t }; });
+  resetTaskSnapshotBaseline();
   if(typeof requestAnimationFrame === 'function'){
     requestAnimationFrame(() => {
       if(typeof renderAll === 'function') renderAll();
@@ -1858,6 +1883,10 @@ if(typeof setManagedInterval === 'function'){
   setInterval(() => queueAutoSave(), 10000);
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) queueAutoSave(); });
+if(typeof window !== 'undefined'){
+  window.resetTaskSnapshotBaseline = resetTaskSnapshotBaseline;
+  window.persistAfterSyncMerge = persistAfterSyncMerge;
+}
 window.addEventListener('beforeunload', () => saveState('unload'));
 if(typeof window !== 'undefined' && window.addEventListener){
   window.addEventListener('storage', _onStorageFromOtherTab);

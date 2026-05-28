@@ -195,12 +195,13 @@
       <label class="sr-only" for="taskInput">New task</label>
       <div class="task-input-wrap">
         <input class="task-input" id="taskInput" placeholder="Add a task… or paste multiple lines to import"
-          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="true"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="true" lang="en"
           enterkeyhint="send"
           data-oninput="taskInputLiveUpdate"
           data-onkeydown="onTaskInputKey">
-        <button class="task-enhance-btn" id="taskEnhanceBtn" data-action="smartAddEnhance" hidden title="Suggest metadata from your task history (embeddings)" data-icon="sparkles" aria-label="Smart-add suggestions"></button>
-        <button class="task-enhance-btn task-voice-btn" id="taskVoiceBtn" data-action="toggleVoiceInput" hidden title="Voice input (on-device speech recognition)" data-icon="mic" aria-label="Voice input"></button>
+        <button type="button" class="task-enhance-btn" id="taskEnhanceBtn" data-action="smartAddEnhance" hidden title="Suggest metadata from your task history (embeddings)" data-icon="sparkles" aria-label="Smart-add suggestions"></button>
+        <button type="button" class="task-enhance-btn task-enhance-btn--llm" id="taskParseBtn" data-action="smartAddParseWithLLM" hidden title="Parse this freeform sentence with the on-device LLM" data-icon="wand" aria-label="Parse with LLM"></button>
+        <button type="button" class="task-enhance-btn task-voice-btn" id="taskVoiceBtn" data-action="toggleVoiceInput" hidden title="Voice input (on-device speech recognition)" data-icon="mic" aria-label="Voice input"></button>
         <button class="task-enhance-btn task-syntax-hint-btn" id="taskSyntaxHintBtn" data-action="showQuickAddSyntaxHint" title="Show quick-add syntax (tomorrow, @urgent, #tag, ~daily)" aria-label="Quick-add syntax help" type="button">?</button>
       </div>
       <button class="task-add" data-action="addTaskOrApplyPreview">+ Add</button>
@@ -243,21 +244,14 @@
         <span class="qa-more-chevron" aria-hidden="true">▾</span>
         <span class="qa-more-label">More options</span>
       </button>
+      <button type="button" id="askPromoChip" class="ask-promo-chip" hidden data-action="openAskMode" aria-label="Edit tasks with on-device AI" title="Edit tasks with on-device AI">
+        <span class="ask-promo-ic" data-icon="spark" data-icon-size="14" aria-hidden="true"></span>
+        <span class="ask-promo-label ask-promo-label--kbd">Edit · <kbd>Ctrl/⌘+K</kbd> then <kbd>?</kbd></span>
+        <span class="ask-promo-label ask-promo-label--touch">Edit tasks with AI</span>
+      </button>
     </div>
     <div class="qa-more-panel" id="qaMorePanel" hidden></div>
     </div></div>
-
-    <!-- Mobile thumb-zone add sheet. The FAB moves #quickAddHost into the slot
-         below; brain-dump mode keeps it open so multiple tasks can be added. -->
-    <div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
-      <div class="modal">
-        <div class="modal-head">
-          <h2 class="modal-title">Add a task</h2>
-          <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
-        </div>
-        <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
-      </div>
-    </div>
 
     <!-- Compact filter bar — four triggers open bottom sheets so the task list
          is no longer buried under five stacked, clipping scroll strips. Labels
@@ -664,6 +658,10 @@
             <button type="button" class="btn-ghost btn-sm" data-action="showTab" data-arg="tools">Open in Tools</button>
           </div>
           <div class="srow srow--col">
+            <span class="sr-lbl sr-lbl--section">Generative AI (Beta)</span>
+            <div id="genAISettings" class="srow-full"></div>
+          </div>
+          <div class="srow srow--col">
             <span class="sr-lbl sr-lbl--section">Device Sync (Beta)</span>
             <div id="syncPanel" class="srow-full"></div>
           </div>
@@ -795,6 +793,19 @@
   <button type="button" class="timer-dock-qt" id="timerDockQt" hidden data-action="showTab" data-arg="focus" title="Quick timers"></button>
 </div>
 
+<!-- Mobile thumb-zone add sheet. Lives outside tab panels so it stays visible
+     when the FAB opens it from Timer/Tools/Settings (tab panels use [hidden]).
+     The FAB moves #quickAddHost into the slot; brain-dump mode keeps it open. -->
+<div class="modal-overlay sheet quick-add-sheet" id="quickAddSheet" role="dialog" aria-modal="true" aria-label="Add a task" data-action="closeQuickAddSheetOnBackdrop">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title">Add a task</h2>
+      <button type="button" class="modal-close" data-action="closeQuickAddSheet" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body"><div id="quickAddSheetSlot"></div></div>
+  </div>
+</div>
+
 <!-- Floating Quick-Add button (mobile / touch). Always-on quick capture so a
      user on Timer / Tools / Settings can drop a task without scrolling or
      tab-hunting. Hidden on desktop — Cmd/Ctrl+N covers that case. -->
@@ -834,9 +845,16 @@
 <div class="cmdk-overlay" id="cmdkOverlay" role="dialog" aria-modal="true" aria-label="Command palette" data-action="closeCmdKOnBackdrop">
   <div class="cmdk-panel">
     <div class="cmdk-input-row">
-      <input class="cmdk-input" id="cmdkInput" placeholder="Search tasks, actions, views…" data-oninput="renderCmdK" data-onkeydown="cmdkKeydown">
+      <input class="cmdk-input" id="cmdkInput" placeholder="Search tasks, actions, views… (? for Edit)" data-oninput="renderCmdK" data-onkeydown="cmdkKeydown">
+      <div class="cmdk-apply-mode" id="cmdkApplyMode" hidden role="group" aria-label="Apply mode">
+        <button type="button" class="cmdk-apply-mode-btn cmdk-apply-mode-btn--active" data-action="cmdkSetApplyMode" data-arg="review" aria-pressed="true">Review</button>
+        <button type="button" class="cmdk-apply-mode-btn" data-action="cmdkSetApplyMode" data-arg="auto" aria-pressed="false">Auto</button>
+      </div>
+      <button type="button" id="cmdkAskToggle" class="cmdk-ask-toggle" data-action="cmdkToggleAsk" title="Toggle Edit mode (prefix with ?)" aria-pressed="false">Edit</button>
     </div>
-    <p class="cmdk-find-hint" id="cmdkFindHint" hidden>Quick actions &amp; search below</p>
+    <p class="cmdk-find-hint" id="cmdkFindHint" hidden>Quick actions &amp; search below · tap <strong>Edit</strong> or type <kbd>?</kbd> for on-device AI</p>
+    <div class="cmdk-ask-starters" id="cmdkAskStarters" hidden></div>
+    <div class="cmdk-ask-reply" id="cmdkAskReply" hidden></div>
     <div class="cmdk-results" id="cmdkResults"></div>
     <div class="cmdk-foot" id="cmdkFoot"></div>
   </div>
@@ -911,7 +929,7 @@
 <div class="modal-overlay app-dlg-overlay" id="appConfirmModal" role="alertdialog" aria-modal="true" aria-labelledby="appConfirmMessage" data-action="closeAppConfirmOnBackdrop">
   <div class="modal app-dlg">
     <div class="modal-body">
-      <p id="appConfirmMessage" class="app-dlg-msg app-dlg-msg--p"></p>
+      <div id="appConfirmMessage" class="app-dlg-msg app-dlg-msg--body" role="document"></div>
     </div>
     <div class="modal-foot">
       <button type="button" class="mfoot-btn mfoot-cancel" data-action="closeAppConfirm" data-args='[false]'>Cancel</button>
@@ -942,7 +960,7 @@
     <h2 class="sr-only" id="taskModalTitle">Task details</h2>
     <div class="modal-head">
       <button type="button" class="task-checkbox" id="mdCheckbox" data-action="toggleTaskDone"></button>
-      <input class="mfield-in mdName-input" id="mdName" placeholder="Task name" aria-label="Task name">
+      <input class="mfield-in mdName-input" id="mdName" placeholder="Task name" aria-label="Task name" spellcheck="true" lang="en">
       <button type="button" class="modal-close" data-action="closeTaskDetail" aria-label="Close task">✕</button>
     </div>
     <div class="modal-body">
@@ -1121,6 +1139,14 @@
             <div class="mfield-lbl" id="mdBlockedByLbl">Waiting on (blocked by)</div>
             <div id="mdBlockedBy" role="group" aria-labelledby="mdBlockedByLbl"></div>
           </div>
+          <div class="mfield md-similar-wrap" id="mdBreakdownWrap" hidden>
+            <button type="button" class="similar-acc-trigger" id="mdBreakdownTrigger" data-action="toggleBreakdownAccordion">
+              <span>Break down with AI</span><span class="similar-acc-chevron">▼</span>
+            </button>
+            <div class="similar-acc-panel" id="mdBreakdownAccordion">
+              <div id="mdBreakdownBody" class="md-breakdown-body"></div>
+            </div>
+          </div>
           <div class="mfield md-similar-wrap">
             <button type="button" class="similar-acc-trigger" id="mdSimilarTrigger" data-action="toggleSimilarAccordion">
               <span>Similar tasks</span><span class="similar-acc-chevron">▼</span>
@@ -1150,6 +1176,12 @@
   </div>
 </div>
 
+<!-- Visible on every tab while generative weights download or rehydrate -->
+<div id="genLoadRibbon" class="gen-load-ribbon" hidden role="status" aria-live="polite">
+  <div id="genLoadRibbonTrack" class="gen-load-ribbon__track"><div id="genLoadRibbonBar" class="gen-load-ribbon__bar"></div></div>
+  <span id="genLoadRibbonTxt" class="gen-load-ribbon__txt">On-device LLM…</span>
+</div>
+
 <!-- App modules — load order matters (globals first, init last) -->
 <!-- Vendored: SortableJS for touch+mouse drag-drop reorder. Native HTML5 drag
      fails on iOS Safari and is inconsistent on Android; Sortable normalises
@@ -1168,12 +1200,15 @@
 <script src="js/attachments.js"></script>
 <script src="js/timer-dock.js"></script>
 <script src="js/tasks.js"></script>
+<script src="js/spellcheck.js"></script>
 <script src="js/intel.js"></script>
 <script src="js/embed-store.js"></script>
 <script src="js/nlparse.js"></script>
 <script src="js/intel-features.js"></script>
 <script src="js/calfeeds.js"></script>
 <script src="js/tool-schema.js"></script>
+<script src="js/gen.js"></script>
+<script src="js/ask.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/sync.js"></script>

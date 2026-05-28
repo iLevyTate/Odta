@@ -111,7 +111,14 @@
     });
 
     if(v.swipe && typeof bindSheetSwipe === 'function'){
-      bindSheetSwipe(el, function(){ close(id); });
+      bindSheetSwipe(el, function(){
+        const s = _state.get(id);
+        if(s && typeof s.onRequestClose === 'function'){
+          try { s.onRequestClose(); } catch(err){ console.warn('[modal] swipe onRequestClose', err); close(id); }
+        } else {
+          close(id);
+        }
+      });
     }
 
     // Resolve when the overlay's opacity transition completes — matches the

@@ -86,7 +86,7 @@ async function addImageAttachment(taskId, file){
   if(!t) return null;
   const existing = await listTaskAttachments(taskId);
   if(countAttachmentsByKind(existing, 'image') >= ATTACH_MAX_IMAGES){
-    if(typeof toast === 'function') toast('Max ' + ATTACH_MAX_IMAGES + ' photos per task');
+    if(typeof showExportToast === 'function') showExportToast('Max ' + ATTACH_MAX_IMAGES + ' photos per task');
     return null;
   }
   const id = _newAttachId();
@@ -98,6 +98,7 @@ async function addImageAttachment(taskId, file){
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
+  if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   return rec;
 }
 
@@ -106,7 +107,7 @@ async function addAudioAttachment(taskId, blob, mime){
   if(!t) return null;
   const existing = await listTaskAttachments(taskId);
   if(countAttachmentsByKind(existing, 'audio') >= ATTACH_MAX_AUDIO){
-    if(typeof toast === 'function') toast('Max ' + ATTACH_MAX_AUDIO + ' voice notes per task');
+    if(typeof showExportToast === 'function') showExportToast('Max ' + ATTACH_MAX_AUDIO + ' voice notes per task');
     return null;
   }
   const id = _newAttachId();
@@ -118,6 +119,7 @@ async function addAudioAttachment(taskId, blob, mime){
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
+  if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   return rec;
 }
 
@@ -127,6 +129,7 @@ async function removeAttachment(taskId, attachId){
   if(t && Array.isArray(t.attachments)){
     t.attachments = t.attachments.filter(x => x !== attachId);
     if(typeof saveState === 'function') saveState('user');
+    if(typeof _commitAttachmentChange === 'function') _commitAttachmentChange(taskId);
   }
 }
 
@@ -136,8 +139,11 @@ async function deleteAttachmentsForTask(taskId){
 }
 
 function attachmentObjectUrl(rec){
-  if(!rec || !rec.blob) return null;
-  return URL.createObjectURL(rec.blob);
+  if(!rec || rec.blob == null) return null;
+  const b = rec.blob;
+  if(b instanceof Blob) return URL.createObjectURL(b);
+  if(b instanceof ArrayBuffer) return URL.createObjectURL(new Blob([b], { type: rec.mime || '' }));
+  return null;
 }
 
 window.getTaskAttachmentIds = getTaskAttachmentIds;

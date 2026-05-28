@@ -317,54 +317,816 @@ function calToday(){
   renderTaskList();
 }
 window.calNav=calNav;
+
+window.openCmdK=openCmdK;
+window.closeCmdK=closeCmdK;
+window.cmdkToggleAsk=cmdkToggleAsk;
+window.cmdkSetAskMode=cmdkSetAskMode;
+window.cmdkAskSubmit=cmdkAskSubmit;
+window.cmdkAskStop=cmdkAskStop;
+window.openAskMode=openAskMode;
+window.syncAskPromoChip=syncAskPromoChip;
+window.cmdkSetApplyMode=cmdkSetApplyMode;
+window.cmdkAskApplyTurn=cmdkAskApplyTurn;
+window.cmdkAskReviewTurn=cmdkAskReviewTurn;
+window.cmdkAskRejectTurn=cmdkAskRejectTurn;
+window.cmdkAskStarterSubmit=cmdkAskStarterSubmit;
+window._cmdkInitApplyModeFromCfg=_cmdkInitApplyModeFromCfg;
+window.renderCmdK=renderCmdK;
+window.cmdkKeydown=cmdkKeydown;
+window.cmdkRun=cmdkRun;
 window.calToday=calToday;
 
 // ========== COMMAND PALETTE (Cmd+K) ==========
 let cmdkActiveIdx=0,cmdkFilteredItems=[];
-function openCmdK(){
+let cmdkMode='find'; // 'find' | 'ask'
+let _cmdkAskCtl=null;
+let _cmdkAskHistoryIdx=-1;
+let _cmdkAskBusy=false;
+let _cmdkLastReply=null;
+// Multi-turn conversation state for the Ask sheet. Each turn captures the
+// user's question and the assistant's reply so the conversation persists
+// while the palette is open, follow-up turns can reference prior context,
+// and the UI reads as a chat instead of a one-shot command. Cleared on
+// close, on switch back to Find mode, and on "New chat".
+let _cmdkAskTurns = [];
+let _cmdkAskTurnIdSeq = 0;
+// Session apply mode: 'review' | 'auto'. Initialized from GEN_CFG on open;
+// toggled in the Ask header without persisting unless changed in Settings.
+let _cmdkAskApplyMode = 'review';
+const _CMDK_ASK_STARTERS = [
+  'Clean up overdue tasks',
+  'Reprioritize my week',
+  "What's due today?",
+  'Remind me to call mom tomorrow at 9am',
+];
+// How many prior turns are threaded back into the LLM prompt as conversation
+// context. Capped so a long session doesn't blow up the prompt — the on-
+// device model has a fixed context window and the most recent turns are by
+// far the most relevant to a follow-up question.
+const _CMDK_ASK_CONTEXT_TURNS = 4;
+let _cmdkPrevFocus=null;
+function _cmdkInitApplyModeFromCfg(){
+  const cfg = typeof getGenCfg === 'function' ? getGenCfg() : null;
+  _cmdkAskApplyMode = (cfg && cfg.askApplyMode === 'auto') ? 'auto' : 'review';
+  _syncCmdkApplyModeUi();
+}
+function cmdkSetApplyMode(mode){
+  if(mode !== 'auto' && mode !== 'review') return;
+  _cmdkAskApplyMode = mode;
+  _syncCmdkApplyModeUi();
+}
+function _syncCmdkApplyModeUi(){
+  const host = gid('cmdkApplyMode');
+  if(!host) return;
+  host.querySelectorAll('.cmdk-apply-mode-btn').forEach(btn => {
+    const m = btn.getAttribute('data-arg');
+    const on = m === _cmdkAskApplyMode;
+    btn.classList.toggle('cmdk-apply-mode-btn--active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function openCmdK(opts){
+  const openAsk = opts && opts.ask === true;
+  const prefill = (opts && typeof opts.prefill === 'string') ? opts.prefill : '';
   const ov=gid('cmdkOverlay');if(!ov)return;
-  // Render content BEFORE delegating to Modal so the panel is fully built
-  // by the time the open transition runs (no mid-fade DOM growth).
+  cmdkMode=openAsk?'ask':'find';
+  _cmdkAskHistoryIdx=-1;_cmdkLastReply=null;_cmdkAskBusy=false;
+  if(openAsk) _cmdkInitApplyModeFromCfg();
   _applyCmdkMode();
   const inp=gid('cmdkInput');
-  if(inp)inp.value='';
+  if(inp)inp.value=prefill;
   cmdkActiveIdx=0;renderCmdK();
-  // Modal utility owns prev-focus capture/restore, ESC, and Tab-trap.
-  // skipInitialFocus + focus:'#cmdkInput' = the trap watches Tab but we
-  // pick the focus target ourselves (the input, not the first focusable).
   Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true });
+  if(inp && prefill){
+    requestAnimationFrame(()=>{ try{ inp.setSelectionRange(prefill.length, prefill.length); }catch(_){} });
+  }
 }
 function closeCmdK(){
+  _cmdkAbortAsk();
   Modal.close('cmdkOverlay');
+  _cmdkAskTurns = [];
 }
+function _cmdkAbortAsk(){
+  if(_cmdkAskCtl){try{_cmdkAskCtl.abort()}catch(_){}_cmdkAskCtl=null}
+  if(typeof genAbort==='function'){try{genAbort()}catch(_){}}
+  _cmdkAskBusy=false;
+}
+function cmdkSetAskMode(on){
+  // Leaving ask mode mid-generation must actually stop the model, not just
+  // the UI affordance. Otherwise tokens keep decoding in the background and
+  // the next Ask turn sees stale state.
+  if(!on && (_cmdkAskBusy || _cmdkAskCtl)) _cmdkAbortAsk();
+  // Leaving ask mode wipes the conversation so flipping back is a clean
+  // start. Keep turns when toggling into ask mode (no-op).
+  if(!on) _cmdkAskTurns = [];
+  cmdkMode=on?'ask':'find';
+  if(on) _cmdkInitApplyModeFromCfg();
+  _applyCmdkMode();
+  renderCmdK();
+}
+function cmdkToggleAsk(){cmdkSetAskMode(cmdkMode!=='ask')}
 function _cmdkTouchOrNarrowUI(){
   return typeof matchMedia==='function' && (matchMedia('(max-width: 640px)').matches || matchMedia('(pointer: coarse)').matches);
 }
 function _syncCmdkFindHint(){
   const h=gid('cmdkFindHint');
   if(!h)return;
+  if(cmdkMode!=='find'){h.hidden=true;return}
   h.hidden=!_cmdkTouchOrNarrowUI();
 }
 function _applyCmdkMode(){
+  const panel=gid('cmdkOverlay')?.querySelector('.cmdk-panel');
   const input=gid('cmdkInput');
-  if(input) input.placeholder='Search tasks, actions, views…';
+  const tog=gid('cmdkAskToggle');
+  const reply=gid('cmdkAskReply');
+  const results=gid('cmdkResults');
+  if(panel)panel.classList.toggle('cmdk-panel--ask',cmdkMode==='ask');
+  if(input){
+    input.placeholder=cmdkMode==='ask'
+      ?'Describe edits or ask about your tasks — follow-ups stay in context…'
+      :'Search tasks, actions, views… (? for Edit)';
+  }
+  if(tog){
+    tog.textContent = 'Edit';
+    tog.classList.toggle('cmdk-ask-toggle--active',cmdkMode==='ask');
+    tog.setAttribute('aria-pressed',cmdkMode==='ask'?'true':'false');
+    tog.title = 'Toggle Edit mode (prefix with ?)';
+  }
+  const applyMode = gid('cmdkApplyMode');
+  if(applyMode) applyMode.hidden = cmdkMode !== 'ask';
+  const starters = gid('cmdkAskStarters');
+  if(starters) starters.hidden = cmdkMode !== 'ask' || _cmdkAskTurns.length > 0;
+  if(cmdkMode === 'ask') _syncCmdkApplyModeUi();
+  _renderCmdkAskStarters();
+  if(reply){
+    if(cmdkMode==='ask'){
+      reply.hidden=false;
+      // Always render from the canonical _cmdkAskTurns state so opening Ask
+      // mid-conversation (e.g. user toggled find then back) shows the chat,
+      // not a stale fragment.
+      _renderAskConversation();
+    } else {
+      reply.hidden=true; reply.textContent='';
+    }
+  }
+  if(results)results.hidden = !!(cmdkMode==='ask');
   _syncCmdkFindHint();
 }
 function _cmdkFootFindText(){
   const foot=gid('cmdkFoot');if(!foot)return;
   if(_cmdkTouchOrNarrowUI()){
-    foot.textContent='Tap a row to run · outside = close';
+    foot.textContent='Tap a row to run · Ask = on-device AI · outside = close';
   }else{
     const mod=/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform||'')?'⌘':'Ctrl';
     foot.textContent=mod+'/Ctrl+K · ↑↓ · Enter · Esc';
   }
 }
+function _cmdkFootAskText(){
+  const foot=gid('cmdkFoot');if(!foot)return;
+  const mod=/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform||'')?'⌘':'Ctrl';
+  const genReady=typeof isGenReady==='function'&&isGenReady();
+  if(_cmdkTouchOrNarrowUI()){
+    foot.textContent='Enter = run on-device · toggle Ask to browse actions · '+(genReady?'Model ready':'Model not loaded');
+  }else{
+    foot.textContent=mod+'/Ctrl+K · Enter = ask · Esc · '+(genReady?'Model ready':'Model not loaded');
+  }
+}
+// ---- Multi-turn Ask conversation rendering ----------------------------------
+// Each turn in `_cmdkAskTurns` produces a Q bubble + an A bubble. The render
+// is a full rebuild from state because state transitions (streaming → done,
+// error, etc.) come from async callbacks and re-rebuilding is simpler and
+// faster than threading partial-update logic through five status branches.
+// Everything below uses textContent / createElement — the model output is
+// never trusted as HTML.
+
+function _cmdkAskNewTurn(q){
+  const turn = {
+    id: ++_cmdkAskTurnIdSeq,
+    q: String(q || ''),
+    status: 'streaming', // streaming | answer | ops | empty | error | need-model
+    text: '',
+    stream: '',
+    ops: null,
+    rejected: null,
+    destructiveLevel: 'none',
+    readRounds: 0,
+    // need-model carries structured info instead of HTML so the bubble can
+    // build the action button safely.
+    needModel: null,
+  };
+  _cmdkAskTurns.push(turn);
+  return turn;
+}
+function _cmdkAskCurrent(){
+  return _cmdkAskTurns.length ? _cmdkAskTurns[_cmdkAskTurns.length-1] : null;
+}
+function _cmdkAskUpdate(turn, patch){
+  if(!turn) return;
+  Object.assign(turn, patch);
+  _renderAskConversation();
+}
+
+// Serialise a finished turn into "assistant content" for prompt context.
+// Skipped turns (streaming, error, need-model) return null so the LLM never
+// sees half-formed state.
+function _cmdkAskSerialiseAssistant(turn){
+  if(!turn) return null;
+  if(turn.status === 'applied') return String(turn.applySummary || turn.text || '[applied]').slice(0, 600);
+  if(turn.status === 'answer') return String(turn.text || '').slice(0, 600);
+  if(turn.status === 'ops'){
+    if(turn.applySummary) return String(turn.applySummary).slice(0, 600);
+    const n = Array.isArray(turn.ops) ? turn.ops.length : 0;
+    return n > 0 ? '[' + n + ' change' + (n!==1?'s':'') + ' proposed]' : '[no changes]';
+  }
+  if(turn.status === 'empty') return '[no answer]';
+  return null;
+}
+
+function _cmdkFindAskTurn(turnId){
+  const id = Number(turnId);
+  if(!Number.isFinite(id)) return null;
+  return _cmdkAskTurns.find(t => t.id === id) || null;
+}
+
+function _cmdkBuildApplySummary(result, ops){
+  const n = result && result.applied != null ? result.applied : 0;
+  const labels = (result && result.labels && result.labels.length)
+    ? result.labels
+    : (typeof summarizeOpsLabels === 'function' ? summarizeOpsLabels(ops, 5) : []);
+  let text = 'Applied ' + n + ' change' + (n !== 1 ? 's' : '');
+  if(labels.length) text += ': ' + labels.join('; ');
+  if(result && result.failures && result.failures.length){
+    text += ' (' + result.failures.length + ' failed)';
+  }
+  return text;
+}
+
+async function _cmdkConfirmDestructiveApply(ops, destructiveLevel){
+  if(typeof askDestructiveConfirmNeeded !== 'function' || !askDestructiveConfirmNeeded(ops, destructiveLevel)) return true;
+  const hasDelete = ops.some(o => o && o.name === 'DELETE_TASK');
+  const msg = hasDelete
+    ? 'This batch includes permanent deletes. Apply anyway?'
+    : 'This batch includes bulk list moves or other destructive changes. Apply anyway?';
+  _applyAppConfirmChrome({ destructive: true, okLabel: 'Apply' });
+  if(typeof showAppConfirm !== 'function') return false;
+  const ok = await showAppConfirm(msg);
+  _resetAppConfirmChrome();
+  return !!ok;
+}
+
+async function _cmdkApplyTurnOps(turn){
+  if(!turn || !Array.isArray(turn.ops) || !turn.ops.length) return null;
+  if(typeof applyOpsBatch !== 'function') return null;
+  const confirmed = await _cmdkConfirmDestructiveApply(turn.ops, turn.destructiveLevel || 'none');
+  if(!confirmed) return { cancelled: true };
+  const selOps = typeof _allSelectedOpsFromList === 'function'
+    ? _allSelectedOpsFromList(turn.ops)
+    : turn.ops.slice();
+  return applyOpsBatch(selOps, { source: 'ask', destructiveLevel: turn.destructiveLevel || 'none' }, {
+    confirmedDestructive: true,
+    clearPending: false,
+    showToast: true,
+  });
+}
+
+async function cmdkAskApplyTurn(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(!turn || turn.status !== 'ops' || !turn.ops || !turn.ops.length) return;
+  const result = await _cmdkApplyTurnOps(turn);
+  if(!result || result.cancelled){
+    _cmdkAskUpdate(turn, { text: (turn.text || 'Proposed.') + ' Apply cancelled.' });
+    return;
+  }
+  const applySummary = _cmdkBuildApplySummary(result, turn.ops);
+  _cmdkAskUpdate(turn, {
+    status: 'applied',
+    text: applySummary,
+    applySummary,
+    appliedCount: result.applied,
+  });
+}
+
+async function cmdkAskReviewTurn(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(!turn || !turn.ops || !turn.ops.length) return;
+  if(typeof acceptProposedOps === 'function'){
+    await acceptProposedOps(turn.ops, { source: 'ask', destructiveLevel: turn.destructiveLevel || 'none' });
+  }
+  if(typeof showTab === 'function') showTab('tools');
+  _cmdkAskUpdate(turn, { text: (turn.text || 'Proposed.') + ' Opened Tools — review before applying.' });
+}
+
+function cmdkAskRejectTurn(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(!turn) return;
+  if(typeof intelRejectPending === 'function') intelRejectPending();
+  _cmdkAskUpdate(turn, { status: 'empty', text: 'Changes dismissed.', ops: null });
+}
+
+function cmdkAskStarterSubmit(text){
+  const inp = gid('cmdkInput');
+  if(!inp) return;
+  inp.value = String(text || '');
+  if(cmdkMode !== 'ask') cmdkSetAskMode(true);
+  cmdkAskSubmit();
+}
+
+// Build the prior-turn context (capped) to ship into askRun.
+function _cmdkAskPriorTurnsFor(currentTurn){
+  const out = [];
+  for(const t of _cmdkAskTurns){
+    if(t === currentTurn) break;
+    if(t.status === 'streaming') break;
+    const a = _cmdkAskSerialiseAssistant(t);
+    if(!a) continue;
+    out.push({ user: String(t.q || ''), assistant: a });
+  }
+  if(out.length > _CMDK_ASK_CONTEXT_TURNS) return out.slice(-_CMDK_ASK_CONTEXT_TURNS);
+  return out;
+}
+
+// Compute the "need-model" structured payload once so render code stays dumb.
+function _cmdkAskNeedModelInfo(){
+  const cfg = typeof getGenCfg === 'function' ? getGenCfg() : null;
+  const cached = !!(cfg && typeof isGenDownloaded === 'function' && isGenDownloaded(cfg.modelId));
+  const loading = typeof isGenLoading === 'function' && isGenLoading();
+  let sizeMb = 230;
+  try{
+    if(cfg && typeof getGenPresets === 'function'){
+      const presets = getGenPresets() || [];
+      const p = presets.find(x => x && x.id === cfg.modelId);
+      if(p && typeof p.sizeMb === 'number') sizeMb = p.sizeMb;
+    }
+  }catch(_){}
+  return { cached, loading, sizeMb };
+}
+
+function _renderAskConversation(){
+  const reply = gid('cmdkAskReply');
+  if(!reply) return;
+  reply.replaceChildren();
+  if(!_cmdkAskTurns.length){
+    const h = document.createElement('div');
+    h.className = 'cmdk-ask-hint';
+    h.textContent = _cmdkAskApplyMode === 'auto'
+      ? 'Auto-apply mode — safe changes apply immediately; destructive batches confirm once. Undo always available.'
+      : 'Review mode — proposed edits appear below with Apply / Review buttons.';
+    reply.appendChild(h);
+    return;
+  }
+  // Conversation toolbar: "New chat" lets the user wipe context without
+  // closing the palette so a fresh question doesn't get coloured by the
+  // previous topic in the LLM prompt.
+  const bar = document.createElement('div');
+  bar.className = 'cmdk-ask-bar';
+  const newBtn = document.createElement('button');
+  newBtn.type = 'button';
+  newBtn.className = 'cmdk-ask-bar-btn';
+  newBtn.textContent = '+ New chat';
+  newBtn.title = 'Clear this conversation';
+  newBtn.onclick = () => {
+    _cmdkAbortAsk();
+    _cmdkAskTurns = [];
+    _renderAskConversation();
+    const inp = gid('cmdkInput');
+    if(inp){ inp.value = ''; try{ inp.focus(); }catch(_){} }
+  };
+  bar.appendChild(newBtn);
+  const count = document.createElement('span');
+  count.className = 'cmdk-ask-bar-count';
+  count.textContent = _cmdkAskTurns.length + ' turn' + (_cmdkAskTurns.length!==1?'s':'');
+  bar.appendChild(count);
+  reply.appendChild(bar);
+
+  for(const t of _cmdkAskTurns){
+    // User bubble
+    const qWrap = document.createElement('div');
+    qWrap.className = 'cmdk-ask-turn cmdk-ask-turn--q';
+    const qBubble = document.createElement('div');
+    qBubble.className = 'cmdk-ask-bubble cmdk-ask-bubble--q';
+    qBubble.textContent = t.q;
+    qWrap.appendChild(qBubble);
+    reply.appendChild(qWrap);
+
+    // Assistant bubble
+    const aWrap = document.createElement('div');
+    aWrap.className = 'cmdk-ask-turn cmdk-ask-turn--a';
+    const aBubble = document.createElement('div');
+    aBubble.className = 'cmdk-ask-bubble cmdk-ask-bubble--a';
+
+    if(t.status === 'streaming'){
+      const row = document.createElement('div');
+      row.className = 'cmdk-ask-row';
+      const sp = document.createElement('span');
+      sp.className = 'cmdk-ask-spinner';
+      sp.setAttribute('aria-hidden', 'true');
+      const lbl = document.createElement('span');
+      lbl.className = 'cmdk-ask-label';
+      lbl.textContent = t.text || 'Thinking on-device…';
+      const stop = document.createElement('button');
+      stop.type = 'button';
+      stop.className = 'cmdk-ask-stop';
+      stop.textContent = 'Stop';
+      stop.dataset.action = 'cmdkAskStop';
+      row.appendChild(sp); row.appendChild(lbl); row.appendChild(stop);
+      aBubble.appendChild(row);
+      if(t.stream){
+        const det = document.createElement('details');
+        det.className = 'cmdk-ask-details';
+        const sum = document.createElement('summary');
+        sum.textContent = 'Show raw output';
+        det.appendChild(sum);
+        const pre = document.createElement('pre');
+        pre.className = 'cmdk-ask-stream';
+        pre.textContent = t.stream;
+        det.appendChild(pre);
+        aBubble.appendChild(det);
+      }
+    } else if(t.status === 'answer'){
+      const body = document.createElement('div');
+      body.className = 'cmdk-ask-answer-body';
+      body.textContent = String(t.text || '').trim();
+      aBubble.appendChild(body);
+      const foot = document.createElement('div');
+      foot.className = 'cmdk-ask-answer-foot';
+      foot.textContent = 'Answered on-device. No changes were applied.';
+      aBubble.appendChild(foot);
+    } else if(t.status === 'ops'){
+      const dn = document.createElement('div');
+      dn.className = 'cmdk-ask-done';
+      dn.textContent = t.text || 'Proposed.';
+      aBubble.appendChild(dn);
+      _cmdkAppendRejectedDetails(aBubble, t);
+      if(t.ops && t.ops.length){
+        const actions = document.createElement('div');
+        actions.className = 'cmdk-ask-actions';
+        const applyBtn = document.createElement('button');
+        applyBtn.type = 'button';
+        applyBtn.className = 'btn-primary btn-sm';
+        applyBtn.textContent = 'Apply all';
+        applyBtn.dataset.action = 'cmdkAskApplyTurn';
+        applyBtn.dataset.arg = String(t.id);
+        actions.appendChild(applyBtn);
+        const reviewBtn = document.createElement('button');
+        reviewBtn.type = 'button';
+        reviewBtn.className = 'btn-ghost btn-sm';
+        reviewBtn.textContent = 'Review in Tools';
+        reviewBtn.dataset.action = 'cmdkAskReviewTurn';
+        reviewBtn.dataset.arg = String(t.id);
+        actions.appendChild(reviewBtn);
+        const rejectBtn = document.createElement('button');
+        rejectBtn.type = 'button';
+        rejectBtn.className = 'btn-ghost btn-sm';
+        rejectBtn.textContent = 'Dismiss';
+        rejectBtn.dataset.action = 'cmdkAskRejectTurn';
+        rejectBtn.dataset.arg = String(t.id);
+        actions.appendChild(rejectBtn);
+        aBubble.appendChild(actions);
+      }
+    } else if(t.status === 'applied'){
+      const dn = document.createElement('div');
+      dn.className = 'cmdk-ask-done cmdk-ask-done--applied';
+      dn.textContent = t.text || t.applySummary || 'Applied.';
+      aBubble.appendChild(dn);
+      _cmdkAppendRejectedDetails(aBubble, t);
+      const foot = document.createElement('div');
+      foot.className = 'cmdk-ask-answer-foot';
+      foot.textContent = 'Changes applied on-device. Undo from the toast or Tools tab.';
+      aBubble.appendChild(foot);
+    } else if(t.status === 'empty'){
+      const em = document.createElement('div');
+      em.className = 'cmdk-ask-empty';
+      em.textContent = t.text || 'No changes proposed.';
+      aBubble.appendChild(em);
+    } else if(t.status === 'error'){
+      const ed = document.createElement('div');
+      ed.className = 'cmdk-ask-error';
+      ed.textContent = t.text || 'Error';
+      aBubble.appendChild(ed);
+    } else if(t.status === 'need-model'){
+      const info = t.needModel || _cmdkAskNeedModelInfo();
+      const ed = document.createElement('div');
+      ed.className = 'cmdk-ask-error';
+      if(info.loading){
+        ed.textContent = 'Local AI is still loading — give it a moment and try again.';
+      } else {
+        const lead = document.createElement('span');
+        lead.textContent = info.cached
+          ? 'Local AI is ready but not loaded into memory yet. '
+          : 'This app runs the chat model fully on-device. Nothing leaves your browser. First time needs a one-off ~' + info.sizeMb + ' MB download. ';
+        ed.appendChild(lead);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn-ghost btn-sm cmdk-ask-enable';
+        btn.dataset.action = 'genDownloadClick';
+        btn.textContent = info.cached ? 'Load now' : 'Download local AI (~' + info.sizeMb + ' MB)';
+        ed.appendChild(btn);
+      }
+      aBubble.appendChild(ed);
+    }
+    aWrap.appendChild(aBubble);
+    reply.appendChild(aWrap);
+  }
+  // Auto-scroll the conversation so the newest turn is visible without the
+  // user having to scroll. requestAnimationFrame so layout is settled before
+  // we measure scrollHeight.
+  requestAnimationFrame(() => { try{ reply.scrollTop = reply.scrollHeight; }catch(_){} });
+  const starters = gid('cmdkAskStarters');
+  if(starters) starters.hidden = _cmdkAskTurns.length > 0;
+}
+
+function _cmdkAppendRejectedDetails(parent, turn){
+  if(!turn || !turn.rejected || !turn.rejected.length) return;
+  const det = document.createElement('details');
+  det.className = 'cmdk-ask-rejected';
+  const sum = document.createElement('summary');
+  sum.textContent = turn.rejected.length + ' rejected — show reasons';
+  det.appendChild(sum);
+  const list = document.createElement('ul');
+  list.className = 'cmdk-ask-rejected-list';
+  turn.rejected.slice(0, 25).forEach(r => {
+    const li = document.createElement('li');
+    const op = (r && r.op) || (r && r.name) || 'op';
+    const why = (r && (r.reason || r.error || r.message)) || 'invalid';
+    li.textContent = String(op) + ' — ' + String(why);
+    list.appendChild(li);
+  });
+  if(turn.rejected.length > 25){
+    const more = document.createElement('li');
+    more.className = 'cmdk-ask-rejected-more';
+    more.textContent = '+ ' + (turn.rejected.length - 25) + ' more';
+    list.appendChild(more);
+  }
+  det.appendChild(list);
+  parent.appendChild(det);
+}
+
+function _renderCmdkAskStarters(){
+  const host = gid('cmdkAskStarters');
+  if(!host) return;
+  host.replaceChildren();
+  if(cmdkMode !== 'ask' || _cmdkAskTurns.length > 0){ host.hidden = true; return; }
+  host.hidden = false;
+  _CMDK_ASK_STARTERS.forEach(text => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cmdk-ask-starter-chip';
+    btn.textContent = text;
+    btn.dataset.action = 'cmdkAskStarterSubmit';
+    btn.dataset.arg = text;
+    host.appendChild(btn);
+  });
+}
+
+// Back-compat shims: a few older call sites and tests reference these names.
+// They now route through the turn-based renderer instead of clobbering the
+// whole reply DOM. Safe to remove once we're confident nothing external uses
+// them — kept here for the next release cycle.
+function _renderAskAnswer(text){
+  const t = _cmdkAskCurrent();
+  if(t) _cmdkAskUpdate(t, { status: 'answer', text: String(text || '') });
+}
+function _renderAskRejected(rejected){
+  const t = _cmdkAskCurrent();
+  if(t) _cmdkAskUpdate(t, { rejected });
+}
+function _renderAskStatus(state,msg){
+  // Map the legacy state vocabulary onto the active turn (or — for need-model
+  // pre-submit cases — push a synthetic turn that hosts the CTA).
+  const cur = _cmdkAskCurrent();
+  if(state === 'streaming'){
+    if(cur) _cmdkAskUpdate(cur, { status: 'streaming', text: msg || 'Thinking on-device…' });
+    return;
+  }
+  if(state === 'error'){
+    if(cur) _cmdkAskUpdate(cur, { status: 'error', text: msg || 'Error' });
+    return;
+  }
+  if(state === 'empty'){
+    if(cur) _cmdkAskUpdate(cur, { status: 'empty', text: msg || 'No changes proposed.' });
+    return;
+  }
+  if(state === 'done'){
+    if(cur) _cmdkAskUpdate(cur, { status: 'ops', text: msg || 'Proposed.' });
+    return;
+  }
+  if(state === 'need-model'){
+    // Surface the download/load CTA as a turn so the user sees it inline in
+    // the conversation (instead of a global banner that hides their query).
+    // If there's no current turn yet (caller hit need-model before pushing
+    // a question), push a synthetic one with the question they tried to ask.
+    const info = _cmdkAskNeedModelInfo();
+    let target = cur;
+    if(!target){
+      const inp = gid('cmdkInput');
+      const q = inp && inp.value ? inp.value.trim() : '(load required)';
+      target = _cmdkAskNewTurn(q);
+    }
+    _cmdkAskUpdate(target, { status: 'need-model', needModel: info });
+  }
+}
+function _updateAskLabel(totalChars){
+  const lbl=gid('cmdkAskLabel');if(!lbl)return;
+  // Try to extract "count so far" by scanning for completed op entries
+  // without doing a full parse — just count top-level `{"name"` occurrences.
+  const stream=gid('cmdkAskStream');
+  const txt=stream?stream.textContent:'';
+  const matches=txt.match(/\{\s*"name"/g);
+  const n=matches?matches.length:0;
+  if(n>0)lbl.textContent=`Planning ${n} change${n!==1?'s':''}…`;
+  else lbl.textContent='Thinking on-device…';
+}
+async function cmdkAskSubmit(){
+  if(_cmdkAskBusy)return;
+  const input=gid('cmdkInput');if(!input)return;
+  const q=input.value.trim();
+  if(!q)return;
+  if(typeof askRun!=='function'){
+    const t = _cmdkAskNewTurn(q);
+    _cmdkAskUpdate(t, { status: 'error', text: 'Ask pipeline unavailable' });
+    input.value=''; return;
+  }
+  if(typeof isGenReady!=='function'||!isGenReady()){
+    const t = _cmdkAskNewTurn(q);
+    _cmdkAskUpdate(t, { status: 'need-model', needModel: _cmdkAskNeedModelInfo() });
+    input.value=''; return;
+  }
+  // Push the new turn FIRST so the user's question appears in the chat
+  // immediately. Then clear the input so they can type the follow-up while
+  // the assistant is still streaming the previous answer.
+  const turn = _cmdkAskNewTurn(q);
+  _renderAskConversation();
+  input.value='';
+  _cmdkAskHistoryIdx=-1;
+  // Snapshot prior turns before the streaming turn moves to a non-final
+  // status — the LLM prompt should see only the *prior* finished context.
+  const priorTurns = _cmdkAskPriorTurnsFor(turn);
+  _cmdkAskBusy=true;
+  _cmdkAskCtl=new AbortController();
+  try{
+    const res=await askRun(q,{
+      signal:_cmdkAskCtl.signal,
+      priorTurns,
+      onReadRound:()=>{
+        _cmdkAskUpdate(turn, { text: 'Running read-only tools on-device…' });
+      },
+      onToken:(t)=>{
+        turn.stream += t;
+        // Update inline label with op-count progress so the user sees the
+        // model is making progress, not just spinning.
+        const matches = turn.stream.match(/\{\s*"name"/g);
+        const n = matches ? matches.length : 0;
+        const lbl = n > 0
+          ? 'Planning ' + n + ' change' + (n!==1?'s':'') + '…'
+          : (turn.text && turn.text !== 'Thinking on-device…' ? turn.text : 'Thinking on-device…');
+        _cmdkAskUpdate(turn, { text: lbl });
+      },
+    });
+    _cmdkLastReply=res;
+    if(!res.ok){
+      const reason=res.reason||'Unknown error';
+      if(reason==='ABORTED'){
+        _cmdkAskUpdate(turn, { status: 'error', text: 'Stopped.' });
+      } else if(reason==='TIMEOUT'){
+        _cmdkAskUpdate(turn, { status: 'error', text: 'Timed out — try a shorter request or a smaller model.' });
+      } else if(reason==='GEN_NOT_READY'){
+        _cmdkAskUpdate(turn, { status: 'need-model', needModel: _cmdkAskNeedModelInfo() });
+      } else if(typeof reason === 'string' && reason.startsWith('PARSE_FAILED')){
+        _cmdkAskUpdate(turn, { status: 'error', text: 'Couldn’t parse a valid plan. Try rephrasing.' });
+      } else {
+        _cmdkAskUpdate(turn, { status: 'error', text: reason });
+      }
+      return;
+    }
+    if(!res.ops.length){
+      if(res.chatAnswer){
+        _cmdkAskUpdate(turn, { status: 'answer', text: res.chatAnswer });
+        return;
+      }
+      _cmdkAskUpdate(turn, { status: 'empty', text: 'No changes to apply, and no answer came back. Try rephrasing — e.g. "what is overdue?" or "make task 3 urgent".' });
+      return;
+    }
+    const n=res.ops.length;
+    const extra=res.rejected&&res.rejected.length?` (${res.rejected.length} rejected)`:'';
+    const rrd=res.readRounds>0?` ${res.readRounds} read step${res.readRounds!==1?'s':''} ·`:'';
+    turn.ops = res.ops;
+    turn.rejected = res.rejected || null;
+    turn.destructiveLevel = res.destructiveLevel || 'none';
+    turn.readRounds = res.readRounds || 0;
+
+    if(_cmdkAskApplyMode === 'auto'){
+      const applyResult = await _cmdkApplyTurnOps(turn);
+      if(applyResult && applyResult.cancelled){
+        _cmdkAskUpdate(turn, {
+          status: 'ops',
+          text: `Proposed ${n} change${n!==1?'s':''}${extra}.${rrd} Apply cancelled — use the buttons below.`,
+          ops: res.ops,
+          rejected: res.rejected || null,
+          destructiveLevel: res.destructiveLevel,
+          readRounds: res.readRounds || 0,
+        });
+        return;
+      }
+      if(applyResult && applyResult.applied > 0){
+        const applySummary = _cmdkBuildApplySummary(applyResult, res.ops);
+        _cmdkAskUpdate(turn, {
+          status: 'applied',
+          text: applySummary,
+          applySummary,
+          appliedCount: applyResult.applied,
+          ops: res.ops,
+          rejected: res.rejected || null,
+          destructiveLevel: res.destructiveLevel,
+          readRounds: res.readRounds || 0,
+        });
+        return;
+      }
+      _cmdkAskUpdate(turn, {
+        status: 'ops',
+        text: `Proposed ${n} change${n!==1?'s':''}${extra} but none could be applied.`,
+        ops: res.ops,
+        rejected: res.rejected || null,
+        destructiveLevel: res.destructiveLevel,
+        readRounds: res.readRounds || 0,
+      });
+      return;
+    }
+
+    _cmdkAskUpdate(turn, {
+      status: 'ops',
+      text: `Proposed ${n} change${n!==1?'s':''}${extra}.${rrd} Apply below or open Tools to review.`,
+      ops: res.ops,
+      rejected: res.rejected || null,
+      destructiveLevel: res.destructiveLevel,
+      readRounds: res.readRounds || 0,
+    });
+  }catch(e){
+    _cmdkAskUpdate(turn, { status: 'error', text: (e&&e.message)||'Error' });
+  }finally{
+    _cmdkAskBusy=false;
+    _cmdkAskCtl=null;
+    // Re-focus the input so a follow-up question is one keystroke away.
+    const inp = gid('cmdkInput');
+    if(inp){ try{ inp.focus(); }catch(_){} }
+  }
+}
+function cmdkAskStop(){
+  if(_cmdkAskCtl){try{_cmdkAskCtl.abort()}catch(_){}}
+  if(typeof genAbort==='function')genAbort();
+}
+
+/** Open the palette pre-switched to Ask mode (used by the promo chip). */
+function openAskMode(){
+  openCmdK({ask:true});
+}
+
+/** Show the task-input promo chip only when the LLM is ready AND the user
+ * hasn't dismissed/hidden it. Default is hidden — Ask is also reachable via
+ * the Cmd/Ctrl+K palette so promoting it inline is opt-in noise reduction. */
+function syncAskPromoChip(){
+  const chip=gid('askPromoChip');
+  if(!chip)return;
+  const ready=typeof isGenReady==='function'&&isGenReady();
+  const allowed=!(typeof cfg==='object'&&cfg&&cfg.askPromoHidden);
+  chip.hidden = !((ready&&allowed));
+}
+/** User-toggle to surface the inline Ask promo. Persists to cfg. */
+function showAskPromo(){
+  if(typeof cfg==='object'&&cfg){cfg.askPromoHidden=false;saveState('user');}
+  syncAskPromoChip();
+}
+function hideAskPromo(){
+  if(typeof cfg==='object'&&cfg){cfg.askPromoHidden=true;saveState('user');}
+  syncAskPromoChip();
+}
+window.showAskPromo=showAskPromo;
+window.hideAskPromo=hideAskPromo;
 function renderCmdK(){
   const rawInput=gid('cmdkInput');
-  const rawVal=rawInput?rawInput.value:'';
+  let rawVal=rawInput?rawInput.value:'';
+  // Prefix "? " toggles Ask mode and strips the prefix from the query.
+  if(cmdkMode!=='ask'&&(rawVal.startsWith('?')||rawVal.startsWith('？'))){
+    const rest=rawVal.replace(/^[?？]\s*/,'');
+    if(rawInput)rawInput.value=rest;
+    rawVal=rest;
+    // If there's an Ask turn running from a previous invocation, kill it
+    // cleanly before flipping modes so the new Ask state isn't racing the
+    // old one.
+    if(_cmdkAskBusy||_cmdkAskCtl)_cmdkAbortAsk();
+    cmdkSetAskMode(true);
+    return;
+  }
+  if(cmdkMode==='ask'){
+    const results=gid('cmdkResults');
+    if(results)results.hidden = true;
+    _cmdkFootAskText();
+    return;
+  }
   const q=rawVal.toLowerCase().trim();
   const results=gid('cmdkResults');
   const ic=(n)=>(typeof window.icon==='function'?window.icon(n):'');
+  const askAction={type:'action',label:'Ask the AI (natural language)',icon:ic('spark'),kbd:'?',run:()=>{openCmdK({ask:true})}};
   const navActions=[
     {type:'action',label:'Go to Tasks',icon:ic('list'),kbd:'1',run:()=>showTab('tasks')},
     {type:'action',label:'Go to Timer',icon:ic('timer'),kbd:'2',run:()=>showTab('focus')},
@@ -381,15 +1143,19 @@ function renderCmdK(){
     {type:'action',label:'Habits view (recurring tasks)',icon:ic('refresh'),run:()=>{showTab('tasks');setSmartView('habits')}},
     {type:'action',label:'Impact view (Pareto 80/20)',icon:ic('zap'),run:()=>{showTab('tasks');setSmartView('impact')}},
     {type:'action',label:'Sort by Impact (Pareto)',icon:ic('zap'),run:()=>{showTab('tasks');const s=gid('taskSortSel');if(s){s.value='impact';if(typeof updateTaskFilters==='function')updateTaskFilters()}}},
+    {type:'action',label:'Archive view',icon:ic('archive'),run:()=>{showTab('tasks');setSmartView('archived')}},
     {type:'action',label:'List view',icon:ic('list'),run:()=>{showTab('tasks');setTaskView('list')}},
     {type:'action',label:'Board view',icon:ic('grid'),run:()=>{showTab('tasks');setTaskView('board')}},
     {type:'action',label:'Calendar view',icon:ic('calendar'),run:()=>{showTab('tasks');setTaskView('calendar')}},
     {type:'action',label:'Toggle theme',icon:ic('moon'),run:()=>toggleTheme()},
     {type:'action',label:'Focus-on-list mode (hide other lists)',icon:ic('folder'),run:()=>toggleFocusListMode()},
     {type:'action',label:(isBulkMode()?'Exit bulk-edit mode':'Bulk-edit mode (multi-select)'),icon:ic('check'),run:()=>toggleBulkMode()},
-    {type:'action',label:((typeof isReorderMode==='function'&&isReorderMode())?'Exit reorder mode':'Reorder mode (move & indent tasks)'),icon:ic('list'),run:()=>{showTab('tasks');if(typeof toggleReorderMode==='function')toggleReorderMode()}},
     {type:'action',label:'Save current view…',icon:ic('star'),run:()=>savePerspectivePrompt()},
-    {type:'action',label:'Suggest due date for open task',icon:ic('calendar'),run:()=>suggestDueDateForTask()},
+    {type:'action',label:'Daily brief (top tasks today)',icon:ic('sparkles'),run:()=>showDailyBriefCard()},
+    {type:'action',label:'Weekly review (last 7 days)',icon:ic('clipboard'),run:()=>showWeeklyReviewCard()},
+    {type:'action',label:'AI: Rephrase open task title',icon:ic('wand'),run:()=>rephraseActiveTaskTitle()},
+    {type:'action',label:'AI: Suggest tags for open task',icon:ic('spark'),run:()=>suggestTagsForTask()},
+    {type:'action',label:'AI: Suggest due date for open task',icon:ic('calendar'),run:()=>suggestDueDateForTask()},
     {type:'action',label:'Snooze open task — 1 day',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,1); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
     {type:'action',label:'Snooze open task — 3 days',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,3); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
     {type:'action',label:'Snooze open task — 1 week',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,7); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
@@ -406,6 +1172,11 @@ function renderCmdK(){
     {type:'action',label:'Toggle semantic search',icon:ic('search'),run:()=>{showTab('tasks');if(typeof isIntelReady !== 'function' || !isIntelReady()){if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('error', 'Load model first — open Tools');showTab('tools');return}const cb=gid('taskSearchSemantic');if(cb){cb.checked=!cb.checked;if(typeof toggleTaskSearchSemantic==='function')toggleTaskSearchSemantic()}}},
   ];
   const items=[];
+  const askMatches=!q||askAction.label.toLowerCase().includes(q);
+  if(askMatches){
+    items.push({section:'Ask'});
+    items.push(askAction);
+  }
   // Append saved perspectives dynamically
   if(typeof cfg === 'object' && cfg && Array.isArray(cfg.perspectives)){
     cfg.perspectives.forEach(p => {
@@ -444,6 +1215,7 @@ function renderCmdK(){
         if(w==='today')    return t.dueDate === today;
         if(w==='done')     return t.status === 'done';
         if(w==='open')     return t.status !== 'done';
+        if(w==='archived') return !!t.archived;
         if(w==='starred')  return !!t.starred;
         if(w==='recurring' || w==='habit') return !!t.recur;
         return false;
@@ -470,10 +1242,10 @@ function renderCmdK(){
     items.push({section:'Tasks'});
     activeMatches.forEach(t=>items.push({type:'task',label:t.name,icon:t.status==='done'?'✓':'○',desc:(t.dueDate?fmtDue(t.dueDate):'')||getTaskPath(t.id).slice(0,-1).join(' › '),run:()=>{showTab('tasks');openTaskDetail(t.id)}}));
   }
-  const doneMatches = tasks.filter(t => t.status === 'done' && matchTask(t)).slice(0, 6);
+  const doneMatches = tasks.filter(t => (t.archived || t.status === 'done') && matchTask(t)).slice(0, 6);
   if(shouldShowTasks && doneMatches.length){
-    items.push({section:'Completed'});
-    doneMatches.forEach(t=>items.push({type:'task',label:t.name,icon:'✓',desc:'done',run:()=>{
+    items.push({section:'Completed & archived'});
+    doneMatches.forEach(t=>items.push({type:'task',label:t.name,icon:t.archived?'🗂':'✓',desc:t.archived?'archived':'done',run:()=>{
       // Switching to the matching smart view so the user can see the task in
       // context instead of just opening it in isolation. rAF instead of an
       // arbitrary 60ms timer so slow phones don't race the modal open
@@ -481,7 +1253,9 @@ function renderCmdK(){
       // cross-tab sync between click and open doesn't open a stale row.
       const taskId = t.id;
       showTab('tasks');
-      if(typeof setSmartView==='function') setSmartView('completed');
+      const wasArchived = !!t.archived;
+      if(wasArchived){ if(typeof setSmartView==='function') setSmartView('archived'); }
+      else { if(typeof setSmartView==='function') setSmartView('completed'); }
       requestAnimationFrame(() => {
         const fresh = (typeof findTask === 'function') ? findTask(taskId) : null;
         if(!fresh) return;
@@ -511,7 +1285,7 @@ function renderCmdK(){
       ['theme dark light',                  'Theme (dark / light)',          'set-general'],
       ['sound chime audio',                 'Sound & chimes',                'set-general'],
       ['notification permission',           'Notifications',                 'set-general'],
-      ['ai embedding model download',       'AI / on-device model',          'set-integrations'],
+      ['ai model llm embedding download',   'AI / on-device model',          'set-integrations'],
       ['sync peer p2p webrtc',              'Sync (peer-to-peer)',           'set-integrations'],
       ['export import backup csv json ical','Data export / import',          'set-about'],
       ['encrypt password',                  'Encrypted backup',              'set-about'],
@@ -556,6 +1330,34 @@ function cmdkRun(idx){
 }
 function cmdkKeydown(e){
   if(e.key==='Escape'){closeCmdK();return}
+  if(cmdkMode==='ask'){
+    if(e.key==='Enter'){e.preventDefault();cmdkAskSubmit();return}
+    if(e.key==='ArrowUp'){
+      if(typeof getAskHistory!=='function')return;
+      const hist=getAskHistory();
+      if(!hist.length)return;
+      e.preventDefault();
+      _cmdkAskHistoryIdx=Math.min(_cmdkAskHistoryIdx+1,hist.length-1);
+      const item=hist[_cmdkAskHistoryIdx];
+      if(item){const inp=gid('cmdkInput');if(inp){inp.value=item.text}}
+      return;
+    }
+    if(e.key==='ArrowDown'){
+      if(_cmdkAskHistoryIdx<=0){_cmdkAskHistoryIdx=-1;const inp=gid('cmdkInput');if(inp)inp.value='';e.preventDefault();return}
+      const hist=typeof getAskHistory==='function'?getAskHistory():[];
+      _cmdkAskHistoryIdx=Math.max(_cmdkAskHistoryIdx-1,0);
+      const item=hist[_cmdkAskHistoryIdx];
+      if(item){const inp=gid('cmdkInput');if(inp)inp.value=item.text}
+      e.preventDefault();
+      return;
+    }
+    // Backspace on empty exits Ask mode
+    if(e.key==='Backspace'){
+      const inp=gid('cmdkInput');
+      if(inp&&inp.value===''){e.preventDefault();cmdkSetAskMode(false);return}
+    }
+    return;
+  }
   if(e.key==='ArrowDown'){e.preventDefault();cmdkActiveIdx=Math.min(cmdkActiveIdx+1,cmdkFilteredItems.length-1);renderCmdK()}
   else if(e.key==='ArrowUp'){e.preventDefault();cmdkActiveIdx=Math.max(cmdkActiveIdx-1,0);renderCmdK()}
   else if(e.key==='Enter'){e.preventDefault();cmdkRun(cmdkActiveIdx)}
@@ -647,6 +1449,8 @@ document.addEventListener('keydown',(e)=>{
   // be in a field AND the user to be in the app's primary surface.
   if(isMeta && tag === 'input') return;
   e.preventDefault();
+  // Same path as the FAB: on mobile the add cluster lives in the bottom sheet.
+  if(typeof quickAddFabClick === 'function'){ quickAddFabClick(); return; }
   if(typeof showTab === 'function') showTab('tasks');
   const inp = document.getElementById('taskInput');
   if(inp){
@@ -783,6 +1587,7 @@ function showQuickAddSyntaxHint(){
   pop.setAttribute('aria-label', 'Quick-add syntax cheatsheet');
   const items = [
     ['tomorrow / today / next mon', 'Set due date'],
+    ['at 3pm / 14:30 / noon', 'Set reminder time'],
     ['fri / sat / sun (next occurrence)', 'Day-of-week shortcuts'],
     ['in 3 days', 'Relative date'],
     ['@urgent / @high / @normal / @low', 'Priority'],
@@ -808,7 +1613,7 @@ function showQuickAddSyntaxHint(){
   pop.appendChild(tbl);
   const ex2 = document.createElement('div');
   ex2.className = 'task-syntax-popover-example';
-  ex2.innerHTML = 'Example: <code>Buy milk tomorrow @urgent #shopping</code>';
+  ex2.innerHTML = 'Example: <code>Call dentist tomorrow at 2pm @urgent</code>';
   pop.appendChild(ex2);
   document.body.appendChild(pop);
   // Anchor positioning — beneath the input, right-aligned to its trailing edge
@@ -1206,7 +2011,7 @@ function renderTaskItem(t,depth){
     ?'<button class="task-chevron'+(t.collapsed?' collapsed':'')+'" data-action="toggleCollapse" data-arg="'+t.id+'" title="'+(t.collapsed?'Expand':'Collapse')+'" aria-label="'+(t.collapsed?'Expand subtasks':'Collapse subtasks')+'" aria-expanded="'+(t.collapsed?'false':'true')+'">▸</button>'
     :'<span class="task-chevron-spacer"></span>';
   const habitHint=t.recur?' title="Log habit completion (stays open, next due scheduled)" aria-label="Log habit completion"':' title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'"';
-  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
+  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" data-stop-prop="1"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
 
   let signalChips='';
   if(t.dueDate&&!isDone){
@@ -1540,6 +2345,16 @@ function _commitChipChange(t){
   if(typeof renderTaskList === 'function') renderTaskList();
   if(typeof showSaveIndicator === 'function') showSaveIndicator();
 }
+// Keep modal snapshot aligned with immediate link/group mutations (relatedTo,
+// blockedBy, parentId) so closeTaskDetail's revert pass can't undo them.
+function _syncTaskModalSnapshot(taskId, fields){
+  if(!_taskModalSnapshot || editingTaskId !== taskId || !fields || typeof fields !== 'object') return;
+  Object.keys(fields).forEach(f => {
+    const v = fields[f];
+    _taskModalSnapshot[f] = (v && typeof v === 'object') ? JSON.parse(JSON.stringify(v)) : v;
+  });
+}
+window._syncTaskModalSnapshot = _syncTaskModalSnapshot;
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail
@@ -1748,6 +2563,15 @@ function openTaskDetail(id){
   renderMdHabitLog(t);
   renderMdSessions(t);
   if(typeof renderMdAttachments === 'function') renderMdAttachments(id);
+  const bdWrap = gid('mdBreakdownWrap');
+  if(bdWrap){
+    const llmOn = typeof isGenReady === 'function' && isGenReady();
+    bdWrap.hidden = !(llmOn);
+    const bdAcc = gid('mdBreakdownAccordion');
+    if(bdAcc) bdAcc.classList.remove('open');
+    const bdBody = gid('mdBreakdownBody');
+    if(bdBody){ bdBody.textContent = ''; delete bdBody.dataset.loaded; }
+  }
   // 'sheet' variant: body scroll lock + bottom-sheet swipe.
   // onRequestClose routes ESC through closeTaskDetail so the
   // "discard unsaved text edits?" confirmation runs before tear-down.
@@ -1869,7 +2693,10 @@ async function refreshMdSimilarTasks(id){
     body.textContent='';
     sim.forEach(({ t: ot, sim: s }) => {
       const btn=document.createElement('button');btn.type='button';btn.className='similar-task-row';
-      btn.onclick=function(){closeTaskDetail();openTaskDetail(parseInt(ot.id,10)||0)};
+      btn.onclick=async function(){
+        await closeTaskDetail({ skipRevert: true });
+        openTaskDetail(parseInt(ot.id,10)||0);
+      };
       const nm=document.createElement('span');nm.className='st-name';nm.textContent=ot.name.slice(0,48);btn.appendChild(nm);
       const sc=document.createElement('span');sc.className='st-sim';sc.textContent=s.toFixed(2);btn.appendChild(sc);
       body.appendChild(btn);
@@ -1934,9 +2761,9 @@ async function clusterSimilarTasks(){
   const anchorPrevEntry = prevParents.find(p => p.id === id);
   const anchorPrevParent = anchorPrevEntry ? anchorPrevEntry.parentId : null;
   group.forEach(t => { t.parentId = parent.id; });
-  // The detail modal reverts the anchor to its open-time snapshot on close;
-  // sync the new parent into the snapshot so closing doesn't pop it back out.
-  if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = parent.id;
+  // The detail modal reverts to the open-time snapshot on close — sync parentId
+  // for the anchor so grouping survives Cancel / navigation.
+  _syncTaskModalSnapshot(id, { parentId: parent.id });
 
   if(typeof saveState === 'function') saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();
@@ -1946,7 +2773,7 @@ async function clusterSimilarTasks(){
     const pid = parent.id;
     showActionToast('Grouped ' + group.length + ' tasks under "' + name + '"', 'Undo', () => {
       prevParents.forEach(p => { const t = findTask(p.id); if(t) t.parentId = p.parentId; });
-      if(_taskModalSnapshot && editingTaskId === id) _taskModalSnapshot.parentId = anchorPrevParent == null ? null : anchorPrevParent;
+      _syncTaskModalSnapshot(id, { parentId: anchorPrevParent == null ? null : anchorPrevParent });
       if(typeof _taskIndexRemove === 'function') _taskIndexRemove(pid);
       tasks = tasks.filter(t => t.id !== pid);
       if(typeof saveState === 'function') saveState('user');
@@ -2008,6 +2835,8 @@ function _taskModalHasUnsavedTextEdits(){
   return false;
 }
 async function closeTaskDetail(opts){
+  if(typeof closeAttachLightbox === 'function') closeAttachLightbox();
+  _abortMdVoiceRecording();
   const skipRevert=opts&&opts.skipRevert;
   // Confirm before discarding text/number edits the user typed but didn't
   // save. Chip edits aren't gated by this — they were already committed.
@@ -2297,6 +3126,7 @@ function openRecurDropdown(){
     options: options,
     selected: t.recur || 'none',
     onSelect: function(key){
+      const hadRecur = !!t.recur;
       t.recur=key==='none'?null:key;
       const row = rows.find(function(r){ return r[0] === key; });
       if(label) label.textContent = row ? row[1] : 'No repeat';
@@ -2305,7 +3135,12 @@ function openRecurDropdown(){
       // so it actually shows up in Today / Habits views immediately.
       // Mirrors the same behaviour the old chip-click handler had.
       if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
+      if(t.recur && typeof _pinTaskVisibleBriefly === 'function') _pinTaskVisibleBriefly(t.id, 8000);
       if(typeof _commitChipChange === 'function') _commitChipChange(t);
+      if(t.recur && !hadRecur && typeof showActionToast === 'function'){
+        const rowLbl = row ? row[1] : String(t.recur);
+        showActionToast('Repeats ' + rowLbl + ' — also in Habits view', null, null, 4500);
+      }
     },
   });
 }
@@ -2338,6 +3173,10 @@ function openListDropdown(){
       sel.value = value;
       const opt = options.find(function(o){ return String(o.value) === String(value); });
       if(label) label.textContent = opt ? opt.label : 'List';
+      if(editingTaskId != null && typeof _commitChipChange === 'function'){
+        const t = findTask(editingTaskId);
+        if(t){ t.listId = parseInt(value, 10) || t.listId; _commitChipChange(t); }
+      }
     },
   });
 }
@@ -2387,6 +3226,11 @@ function saveTaskDetail(){
   // Without this, reminders silently never fire and the feature feels broken.
   if((_dueChanged || _remindChanged) && typeof _maybeNudgeNotifPerm === 'function') _maybeNudgeNotifPerm();
   t.listId=parseInt(gid('mdList').value)||t.listId;
+  const _recurEl = gid('mdRecur');
+  if(_recurEl){
+    const rk = _recurEl.value;
+    t.recur = (rk === 'none' || !rk) ? null : rk;
+  }
   if(t.status==='done'&&!t.completedAt)t.completedAt=stampCompletion();
   if(t.status!=='done')t.completedAt=null;
   // C-2: record diffs into task.activity[] (cap at 50 entries)
@@ -2477,9 +3321,31 @@ window._updateActiveTaskTickSchedule=_updateActiveTaskTickSchedule;
 
 // ========== APP DIALOGS (replace native confirm/prompt) ==========
 let _appConfirmResolve=null;
+const _appConfirmOkDefaultLabel = 'OK';
+function _resetAppConfirmChrome(){
+  const ok = gid('appConfirmOk');
+  if(!ok) return;
+  ok.classList.remove('mfoot-del');
+  ok.classList.add('mfoot-save');
+  ok.textContent = _appConfirmOkDefaultLabel;
+}
+function _applyAppConfirmChrome(opts){
+  opts = opts || {};
+  const ok = gid('appConfirmOk');
+  if(!ok) return;
+  if(opts.destructive){
+    ok.classList.remove('mfoot-save');
+    ok.classList.add('mfoot-del');
+  } else {
+    ok.classList.remove('mfoot-del');
+    ok.classList.add('mfoot-save');
+  }
+  if(opts.okLabel) ok.textContent = opts.okLabel;
+}
 function closeAppConfirm(ok){
   const fn=_appConfirmResolve;
   _appConfirmResolve=null;
+  _resetAppConfirmChrome();
   Modal.close('appConfirmModal');
   if(fn) fn(!!ok);
 }
@@ -2487,6 +3353,7 @@ function showAppConfirm(message){
   return new Promise(resolve=>{
     const ov=gid('appConfirmModal'), m=gid('appConfirmMessage');
     if(!ov||!m){ resolve(confirm(message)); return; }
+    _resetAppConfirmChrome();
     m.textContent=message;
     _appConfirmResolve=resolve;
     // Modal.open captures prev-focus via openFocusTrap and restores on close.
@@ -2543,6 +3410,7 @@ function showImportConfirm(summary){
     w.className = 'import-delta-warn';
     w.textContent = '⚠ This replaces all current tasks, lists, and settings. Cannot be undone.';
     m.appendChild(w);
+    _applyAppConfirmChrome({ destructive: true, okLabel: 'Restore' });
     _appConfirmResolve = resolve;
     Modal.open('appConfirmModal', { variant:'dialog', focus:'#appConfirmOk', skipInitialFocus:true, onRequestClose:()=>closeAppConfirm(false) });
   });
@@ -2685,15 +3553,121 @@ window.showPomodoroSummary=function(){
 
 // ========== TASK ATTACHMENTS (modal) ==========
 let _mdAttachUrls = [];
+let _mdAttachLightboxUrl = null;
+let _mdVoiceSession = null;
+
+function _pickMdAudioMime(){
+  if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (typeof navigator.platform === 'string' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const candidates = isApple
+    ? ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  for(let i = 0; i < candidates.length; i++){
+    if(MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+  }
+  return '';
+}
+
+function _voiceToast(msg){
+  if(typeof showExportToast === 'function') showExportToast(msg);
+}
+
+function _needsWholeBlobRecording(){
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (typeof navigator.platform === 'string' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isApple || (typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches);
+}
+
+function _abortMdVoiceRecording(){
+  const s = _mdVoiceSession;
+  if(!s) return;
+  _mdVoiceSession = null;
+  try{
+    if(s.recorder && s.recorder.state !== 'inactive') s.recorder.stop();
+  }catch(_){}
+  if(s.stream) s.stream.getTracks().forEach(t => { try{ t.stop(); }catch(_){} });
+  if(s.saveOnStop) s.saveOnStop = false;
+}
 
 function _revokeMdAttachUrls(){
-  _mdAttachUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(_){} });
-  _mdAttachUrls = [];
+  _mdAttachUrls.forEach(u=>{
+    if(u === _mdAttachLightboxUrl) return;
+    try{ URL.revokeObjectURL(u); }catch(_){}
+  });
+  _mdAttachUrls = _mdAttachUrls.filter(u => u === _mdAttachLightboxUrl);
 }
+
+function closeAttachLightbox(){
+  const overlay = gid('attachLightbox');
+  if(overlay) overlay.classList.remove('open');
+  if(_mdAttachLightboxUrl){
+    try{ URL.revokeObjectURL(_mdAttachLightboxUrl); }catch(_){}
+    const i = _mdAttachUrls.indexOf(_mdAttachLightboxUrl);
+    if(i >= 0) _mdAttachUrls.splice(i, 1);
+    _mdAttachLightboxUrl = null;
+  }
+  const body = overlay && overlay.querySelector('.attach-lightbox-body');
+  if(body) body.replaceChildren();
+}
+
+function openAttachLightboxBlob(blob){
+  if(!blob || !(blob instanceof Blob)) return;
+  let overlay = gid('attachLightbox');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'attachLightbox';
+    overlay.className = 'attach-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Attachment preview');
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'attach-lightbox-close';
+    closeBtn.setAttribute('aria-label', 'Close preview');
+    closeBtn.textContent = '×';
+    closeBtn.onclick = closeAttachLightbox;
+    const body = document.createElement('div');
+    body.className = 'attach-lightbox-body';
+    overlay.append(closeBtn, body);
+    overlay.addEventListener('click', e => { if(e.target === overlay) closeAttachLightbox(); });
+    document.body.appendChild(overlay);
+  }
+  closeAttachLightbox();
+  const url = URL.createObjectURL(blob);
+  _mdAttachLightboxUrl = url;
+  const body = overlay.querySelector('.attach-lightbox-body');
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = 'Full-size attachment';
+  body.appendChild(img);
+  overlay.classList.add('open');
+}
+window.closeAttachLightbox = closeAttachLightbox;
+
+/** Keep modal discard from reverting attachment ids while blobs stay in IDB. */
+function _commitAttachmentChange(taskId){
+  if(!_taskModalSnapshot || editingTaskId !== taskId) return;
+  const t = typeof findTask === 'function' ? findTask(taskId) : null;
+  if(!t) return;
+  _taskModalSnapshot.attachments = Array.isArray(t.attachments) ? t.attachments.slice() : [];
+}
+window._commitAttachmentChange = _commitAttachmentChange;
+
+document.addEventListener('keydown', e => {
+  if(e.key !== 'Escape') return;
+  const lb = gid('attachLightbox');
+  if(lb && lb.classList.contains('open')){
+    e.preventDefault();
+    e.stopPropagation();
+    closeAttachLightbox();
+  }
+}, true);
 
 async function renderMdAttachments(taskId){
   const host = gid('mdAttachments');
   if(!host) return;
+  if(_mdVoiceSession && _mdVoiceSession.taskId !== taskId) _abortMdVoiceRecording();
   _revokeMdAttachUrls();
   host.replaceChildren();
   if(typeof listTaskAttachments !== 'function') return;
@@ -2713,13 +3687,13 @@ async function renderMdAttachments(taskId){
     photoIn.value = '';
     if(f && typeof addImageAttachment === 'function'){
       await addImageAttachment(taskId, f);
+      _commitAttachmentChange(taskId);
       renderMdAttachments(taskId);
     }
   };
   photoLbl.appendChild(photoIn);
   tools.appendChild(photoLbl);
 
-  let rec = null;
   let recBtn = null;
   if(typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
     recBtn = document.createElement('button');
@@ -2727,34 +3701,84 @@ async function renderMdAttachments(taskId){
     recBtn.className = 'btn-ghost btn-sm';
     recBtn.textContent = 'Record voice';
     recBtn.onclick = async () => {
-      if(rec){
-        rec.stop();
+      if(_mdVoiceSession && _mdVoiceSession.taskId === taskId && _mdVoiceSession.recorder.state !== 'inactive'){
+        _mdVoiceSession.saveOnStop = true;
+        try{
+          if(_mdVoiceSession.recorder.state === 'recording') _mdVoiceSession.recorder.requestData();
+        }catch(_){}
+        try{ _mdVoiceSession.recorder.stop(); }catch(_){
+          _abortMdVoiceRecording();
+          _voiceToast('Could not stop recording — try again');
+        }
+        return;
+      }
+      if(_mdVoiceSession) _abortMdVoiceRecording();
+      if(!window.isSecureContext){
+        _voiceToast('Microphone needs a secure connection (HTTPS or localhost)');
         return;
       }
       try{
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const chunks = [];
-        rec = new MediaRecorder(stream);
-        rec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
-        rec.onstop = async () => {
-          stream.getTracks().forEach(t => t.stop());
-          rec = null;
+        const mime = _pickMdAudioMime();
+        const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+        const blobType = mime || recorder.mimeType || 'audio/webm';
+        const session = { taskId, recorder, stream, recBtn, saveOnStop: false, chunks: [], blobType };
+        recorder.ondataavailable = e => { if(e.data && e.data.size) session.chunks.push(e.data); };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach(t => { try{ t.stop(); }catch(_){} });
+          _mdVoiceSession = null;
           recBtn.textContent = 'Record voice';
           recBtn.classList.remove('on');
-          const blob = new Blob(chunks, { type: 'audio/webm' });
+          if(!session.saveOnStop) return;
+          session.saveOnStop = false;
+          // iOS/Safari often delivers the blob only after stop — give dataavailable a tick.
+          await new Promise(r => setTimeout(r, 120));
+          const chunks = session.chunks;
+          if(!chunks.length){
+            _voiceToast('No audio captured — hold Stop a moment longer, then try again');
+            return;
+          }
+          const blob = new Blob(chunks, { type: blobType });
+          if(blob.size < 1){
+            _voiceToast('Recording too short');
+            return;
+          }
           if(typeof addAudioAttachment === 'function'){
-            await addAudioAttachment(taskId, blob, 'audio/webm');
+            await addAudioAttachment(taskId, blob, blobType);
+            _commitAttachmentChange(taskId);
+            _voiceToast('Voice note saved');
             renderMdAttachments(taskId);
           }
         };
-        rec.start();
+        recorder.onerror = () => {
+          _voiceToast('Recording failed');
+          _abortMdVoiceRecording();
+          recBtn.textContent = 'Record voice';
+          recBtn.classList.remove('on');
+        };
+        _mdVoiceSession = session;
+        if(_needsWholeBlobRecording()) recorder.start();
+        else recorder.start(250);
         recBtn.textContent = 'Stop';
         recBtn.classList.add('on');
       }catch(e){
-        if(typeof toast === 'function') toast('Microphone access denied');
+        const denied = e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError');
+        _voiceToast(denied
+          ? 'Microphone permission denied — allow mic access in browser settings'
+          : 'Microphone unavailable');
       }
     };
+    if(_mdVoiceSession && _mdVoiceSession.taskId === taskId){
+      _mdVoiceSession.recBtn = recBtn;
+      recBtn.textContent = 'Stop';
+      recBtn.classList.add('on');
+    }
     tools.appendChild(recBtn);
+  } else {
+    const noRec = document.createElement('p');
+    noRec.className = 'intel-muted md-attach-voice-hint';
+    noRec.textContent = 'Voice recording needs a browser with microphone support (Chrome, Edge, Firefox).';
+    tools.appendChild(noRec);
   }
   host.appendChild(tools);
 
@@ -2767,7 +3791,26 @@ async function renderMdAttachments(taskId){
       const full = await _attachGet(row.id);
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
-        if(url){ _mdAttachUrls.push(url); const img = document.createElement('img'); img.src = url; img.alt = 'Attachment'; card.appendChild(img); }
+        if(url){
+          _mdAttachUrls.push(url);
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = 'Attachment';
+          img.className = 'md-attach-thumb';
+          img.title = 'View full size';
+          img.tabIndex = 0;
+          img.setAttribute('role', 'button');
+          img.setAttribute('aria-label', 'View full-size photo');
+          const openFull = e => {
+            e.stopPropagation();
+            openAttachLightboxBlob(full.blob);
+          };
+          img.addEventListener('click', openFull);
+          img.addEventListener('keydown', e => {
+            if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openFull(e); }
+          });
+          card.appendChild(img);
+        }
       }
     } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
@@ -2789,6 +3832,7 @@ async function renderMdAttachments(taskId){
     del.setAttribute('aria-label', 'Remove attachment');
     del.onclick = async () => {
       if(typeof removeAttachment === 'function') await removeAttachment(taskId, row.id);
+      _commitAttachmentChange(taskId);
       renderMdAttachments(taskId);
     };
     card.appendChild(del);
@@ -2809,6 +3853,17 @@ window.renderMdAttachments = renderMdAttachments;
 window.toggleSimilarAccordion = function(){
   const acc = gid('mdSimilarAccordion');
   if(acc) acc.classList.toggle('open');
+};
+
+window.toggleBreakdownAccordion = function(){
+  const acc = gid('mdBreakdownAccordion');
+  if(!acc) return;
+  const opening = !acc.classList.contains('open');
+  acc.classList.toggle('open');
+  const body = gid('mdBreakdownBody');
+  if(opening && body && !body.dataset.loaded){
+    if(typeof runMdBreakdown === 'function') runMdBreakdown();
+  }
 };
 
 function updateMiniTimer(){
@@ -2847,12 +3902,19 @@ function miniTimerToggle(){
 // surface for users who don't have a keyboard handy.
 // Relocate the add-task cluster into the bottom sheet (mobile) and focus it.
 function openQuickAddSheet(){
+  // Sheet markup lives outside tab panels; still ensure Tasks is active so the
+  // new task appears in the list the user is looking at.
+  if(typeof showTab==='function') showTab('tasks');
   const host=document.getElementById('quickAddHost');
   const slot=document.getElementById('quickAddSheetSlot');
   if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
   openSheet('quickAddSheet');
   const inp=document.getElementById('taskInput');
-  if(inp) requestAnimationFrame(()=>{ try{ inp.focus(); inp.select&&inp.select(); }catch(_){} });
+  if(inp) requestAnimationFrame(()=>{
+    try{ inp.focus(); inp.select&&inp.select(); }catch(_){}
+    if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+    if(typeof showVoiceButtonIfSupported === 'function') showVoiceButtonIfSupported();
+  });
 }
 // Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
 // found it (the anchor is CSS-hidden on mobile, visible on desktop).
@@ -3477,13 +4539,29 @@ function showVoiceButtonIfSupported(){
   if(!btn) return;
   btn.hidden = !(_voiceSupport());
 }
+function _voiceErrorMessage(e){
+  const code = e && e.error;
+  if(code === 'not-allowed') return 'Microphone permission denied — allow mic access in browser settings';
+  if(code === 'service-not-allowed') return 'Speech recognition is not available here (try HTTPS or a supported browser)';
+  if(code === 'no-speech') return 'No speech detected — try again';
+  if(code === 'network') return 'Speech recognition needs a network connection on this device';
+  if(code === 'aborted') return '';
+  return code ? ('Voice input failed (' + code + ')') : 'Voice input failed';
+}
 function toggleVoiceInput(){
   if(_voiceActive){ stopVoiceInput(); return; }
   startVoiceInput();
 }
 function startVoiceInput(){
   const Ctor = _voiceSupport();
-  if(!Ctor) return;
+  if(!Ctor){
+    _voiceToast('Speech recognition is not supported in this browser');
+    return;
+  }
+  if(!window.isSecureContext){
+    _voiceToast('Voice input needs a secure connection (HTTPS or localhost)');
+    return;
+  }
   if(_voiceRec){ try{ _voiceRec.abort(); }catch(_){} }
   const rec = new Ctor();
   rec.continuous = false;
@@ -3504,9 +4582,12 @@ function startVoiceInput(){
     if(inp){
       inp.value = (baseValue ? (baseValue + ' ') : '') + txt.trim();
       if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+      if(typeof scheduleLiveParsePreview === 'function') scheduleLiveParsePreview();
     }
   };
   rec.onerror = function(e){
+    const msg = _voiceErrorMessage(e);
+    if(msg) _voiceToast(msg);
     console.warn('[voice] recognition error', e && e.error);
     stopVoiceInput();
   };
@@ -3516,7 +4597,13 @@ function startVoiceInput(){
     if(btn) btn.classList.remove('on');
   };
   _voiceRec = rec;
-  try{ rec.start(); }catch(e){ console.warn('[voice] start failed', e); }
+  try{
+    rec.start();
+  }catch(e){
+    console.warn('[voice] start failed', e);
+    _voiceToast('Could not start voice input — tap the mic again');
+    stopVoiceInput();
+  }
 }
 function stopVoiceInput(){
   if(_voiceRec){ try{ _voiceRec.stop(); }catch(_){} }
@@ -3965,7 +5052,11 @@ function renderRelatedTasks(taskId){
     chip.type = 'button';
     chip.className = 'related-chip';
     chip.textContent = '#' + rid + ' ' + (other.name || '').slice(0, 40);
-    chip.onclick = function(){ closeTaskDetail(); openTaskDetail(rid); };
+    chip.onclick = async function(){
+      _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
+      await closeTaskDetail({ skipRevert: true });
+      openTaskDetail(rid);
+    };
     const x = document.createElement('span');
     x.className = 'related-x';
     x.textContent = '×';
@@ -3973,6 +5064,7 @@ function renderRelatedTasks(taskId){
     x.onclick = function(ev){
       ev.stopPropagation();
       t.relatedTo.splice(idx, 1);
+      _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
       renderRelatedTasks(taskId);
       if(typeof saveState==='function') saveState('user');
     };
@@ -3992,6 +5084,7 @@ function renderRelatedTasks(taskId){
     if(!findTask(n)){ alert('No task with id #' + n); return; }
     if(!Array.isArray(t.relatedTo)) t.relatedTo = [];
     if(!t.relatedTo.includes(n)) t.relatedTo.push(n);
+    _syncTaskModalSnapshot(taskId, { relatedTo: t.relatedTo.slice() });
     renderRelatedTasks(taskId);
     if(typeof saveState==='function') saveState('user');
   };

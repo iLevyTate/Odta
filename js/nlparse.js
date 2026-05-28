@@ -32,20 +32,45 @@ function _localDateTime(d){
     + 'T' + _pad2(d.getHours()) + ':' + _pad2(d.getMinutes());
 }
 
+function _localDateTimeFromParts(dayIso, hour, minute){
+  if(!dayIso) return null;
+  return dayIso + 'T' + _pad2(hour) + ':' + _pad2(minute);
+}
+
+function _chronoHasTime(r0){
+  if(!r0 || !r0.start) return false;
+  if(r0.start.isCertain('hour') || r0.start.isCertain('minute')) return true;
+  const t = String(r0.text || '').toLowerCase();
+  return /\b(noon|midday|midnight)\b/.test(t)
+    || /\b(at\s+)?\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b/.test(t)
+    || /\b([01]?\d|2[0-3]):[0-5]\d\b/.test(t);
+}
+
+function _chronoHasDate(r0){
+  if(!r0 || !r0.start) return false;
+  return r0.start.isCertain('day') || r0.start.isCertain('month') || r0.start.isCertain('year');
+}
+
 function _applyChronoResult(base, r0){
   if(!r0 || !r0.start) return;
   const start = r0.start.date();
   if(!start) return;
-  const iso = _isoDate(start);
-  if(iso && !base.props.dueDate) base.props.dueDate = iso;
-  const hasTime = r0.start.isCertain && (
-    r0.start.isCertain('hour') || r0.start.isCertain('minute')
-  );
+  const chronoIso = _isoDate(start);
+  const hasTime = _chronoHasTime(r0);
+  const hasDate = _chronoHasDate(r0);
+
   if(hasTime){
-    const dt = _localDateTime(start);
+    const dayIso = (base.props.dueDate && !hasDate) ? base.props.dueDate : (chronoIso || base.props.dueDate);
+    const dt = _localDateTimeFromParts(dayIso, start.getHours(), start.getMinutes());
     if(dt) base.props.remindAt = dt;
-    if(iso) base.props.dueDate = iso;
+    if(dayIso){
+      if(!base.props.dueDate) base.props.dueDate = dayIso;
+      else if(hasDate && chronoIso) base.props.dueDate = chronoIso;
+    }
+  } else if(chronoIso && !base.props.dueDate){
+    base.props.dueDate = chronoIso;
   }
+
   if(r0.text != null && typeof r0.index === 'number' && base.name){
     const before = base.name.slice(0, r0.index).trim();
     const after = base.name.slice(r0.index + r0.text.length).trim();
@@ -111,7 +136,20 @@ function scheduleLiveParsePreview(){
         if(typeof prettyDate === 'function'){ try{ label = prettyDate(props.dueDate); }catch(_){} }
         chips.push(_qpc('due', label, 'Due'));
       }
-      if(props.remindAt) chips.push(_qpc('due', '⏰ remind', 'Reminder time'));
+      if(props.remindAt){
+        let tLabel = props.remindAt;
+        if(typeof formatRemindAtLabel === 'function') tLabel = formatRemindAtLabel(props.remindAt);
+        chips.push(_qpc('due', '\u23f0 ' + tLabel, 'Reminder time'));
+      }
+    }
+    if(typeof checkTaskSpelling === 'function'){
+      const spell = checkTaskSpelling(raw);
+      const mk = typeof _qpcSpellChip === 'function' ? _qpcSpellChip : null;
+      if(mk){
+        spell.forEach(issue => {
+          if(issue.suggestions && issue.suggestions[0]) chips.push(mk(issue.word, issue.suggestions[0]));
+        });
+      }
     }
     if(!chips.length){
       if(typeof clearLiveParsePreview === 'function') clearLiveParsePreview();
