@@ -34,6 +34,24 @@ test('scheduleQtAudio caps interval-chime look-ahead', () => {
   assert.match(body, /if\(d>=horizon\)break/, 'interval scheduling must break at horizon');
 });
 
+test('addQuickPreset prunes via _pruneFinishedQuickTimers at cap', () => {
+  // Regression: addQuickPreset called the undefined `pruneFinishedQuickTimers`
+  // (missing leading underscore), so clicking a preset button while at QT_MAX
+  // threw a ReferenceError instead of pruning or refusing gracefully.
+  const fnIdx = timerSrc.indexOf('function addQuickPreset');
+  assert.ok(fnIdx > 0, 'addQuickPreset not found');
+  const body = timerSrc.slice(fnIdx, fnIdx + 1000);
+  assert.match(body, /QT_MAX/, 'addQuickPreset must consult QT_MAX');
+  assert.match(body, /_pruneFinishedQuickTimers/, 'addQuickPreset must prune finished before refusing');
+});
+
+test('no call to the undefined pruneFinishedQuickTimers helper remains', () => {
+  // Only the underscore-prefixed _pruneFinishedQuickTimers is defined; any bare
+  // pruneFinishedQuickTimers( call is a ReferenceError waiting to happen.
+  const bareCalls = timerSrc.match(/(^|[^_\w])pruneFinishedQuickTimers\s*\(/g) || [];
+  assert.equal(bareCalls.length, 0, 'found a call to the undefined pruneFinishedQuickTimers: ' + JSON.stringify(bareCalls));
+});
+
 test('_pruneFinishedQuickTimers cancels audio for pruned timers', () => {
   const idx = timerSrc.indexOf('function _pruneFinishedQuickTimers');
   assert.ok(idx > 0, '_pruneFinishedQuickTimers not found');

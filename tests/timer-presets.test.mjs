@@ -85,3 +85,23 @@ test('getPL: human-readable phase labels', () => {
   // Same fall-through as getPS: unknowns get the "long" label
   assert.equal(getPL('mystery'), 'Long Break');
 });
+
+test('pauseTimer clears the pomodoro tick interval (no leak while paused)', () => {
+  // Regression: pauseTimer only set running=false; the 250ms setInterval kept
+  // firing for the whole pause (battery drain + background-throttle weirdness).
+  const s = src.indexOf('function pauseTimer');
+  const e = src.indexOf('\nfunction resumeTimer', s);
+  assert.ok(s >= 0 && e > s, 'slice pauseTimer');
+  const body = src.slice(s, e);
+  assert.match(body, /clearInterval\(tickId\)/, 'pauseTimer must clearInterval(tickId)');
+});
+
+test('stopwatch pause branch clears swTickId (no leak while paused)', () => {
+  // Regression: the swToggle pause branch left swTickId running indefinitely.
+  const s = src.indexOf('function swToggle');
+  const e = src.indexOf('\nfunction swTick', s);
+  assert.ok(s >= 0 && e > s, 'slice swToggle');
+  const body = src.slice(s, e);
+  const pauseBranch = body.slice(0, body.indexOf('}else{'));
+  assert.match(pauseBranch, /clearInterval\(swTickId\)/, 'swToggle pause branch must clearInterval(swTickId)');
+});

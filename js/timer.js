@@ -144,7 +144,7 @@ function _syncRingState(){
 
 // ========== TIMER ==========
 function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function pauseTimer(){running=false;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function tick(){
   if(!running)return;
@@ -303,6 +303,7 @@ window.resetPhase=resetPhase;
 function swToggle(){
   if(swRunning){
     swRunning=false;swPausedEl+=Date.now()-swStartTime;
+    clearInterval(swTickId);swTickId=null;
     gid('swStartBtn').textContent='Resume';gid('swStartBtn').className='btn btn-primary';
     cancelSwIntervalChimes(swScheduledIntervalNodes);
     maybeStopKeepalive();
@@ -392,7 +393,7 @@ function addQuickPreset(mins,secs,label){
   // Mirror addQuickTimer's cap behavior — preset clicks shouldn't be a
   // back-door past QT_MAX (#18 in UX audit).
   if(quickTimers.length >= QT_MAX){
-    const pruned = pruneFinishedQuickTimers();
+    const pruned = _pruneFinishedQuickTimers();
     if(quickTimers.length >= QT_MAX){
       if(typeof showExportToast === 'function'){
         showExportToast('Quick-timer cap reached (' + QT_MAX + '). Remove or finish one before adding another.');
