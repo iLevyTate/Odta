@@ -647,6 +647,8 @@ document.addEventListener('keydown',(e)=>{
   // be in a field AND the user to be in the app's primary surface.
   if(isMeta && tag === 'input') return;
   e.preventDefault();
+  // Same path as the FAB: on mobile the add cluster lives in the bottom sheet.
+  if(typeof quickAddFabClick === 'function'){ quickAddFabClick(); return; }
   if(typeof showTab === 'function') showTab('tasks');
   const inp = document.getElementById('taskInput');
   if(inp){
@@ -3017,7 +3019,10 @@ function openQuickAddSheet(){
   if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
   openSheet('quickAddSheet');
   const inp=document.getElementById('taskInput');
-  if(inp) requestAnimationFrame(()=>{ try{ inp.focus(); inp.select&&inp.select(); }catch(_){} });
+  if(inp) requestAnimationFrame(()=>{
+    try{ inp.focus(); inp.select&&inp.select(); }catch(_){}
+    if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+  });
 }
 // Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
 // found it (the anchor is CSS-hidden on mobile, visible on desktop).

@@ -3108,7 +3108,15 @@
   .smart-add-hint{font-size:9px}
   .sa-chips{gap:4px;overflow-x:auto;flex-wrap:wrap;scrollbar-width:none;max-height:80px;overflow-y:auto}
   .sa-chips::-webkit-scrollbar{display:none}
-  .sa-chip{font-size:11px;padding:4px 10px;flex-shrink:0}
+  .sa-chip{font-size:11px;padding:4px 10px;flex-shrink:0;min-height:36px}
+
+  /* Sparkles / mic / ? beside task input — WCAG touch targets; don't clip */
+  .task-input-wrap{overflow:visible}
+  .task-enhance-btn,.task-syntax-hint-btn{
+    min-width:44px;min-height:44px;padding:8px;
+    display:inline-flex;align-items:center;justify-content:center;
+    touch-action:manipulation;
+  }
 
 }
 
