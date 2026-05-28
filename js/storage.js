@@ -296,9 +296,21 @@ function _loadDelMap(obj){
 // Save — captures task mutations with per-task lastModified stamp for sync
 let _prevTaskSnapshot = null; // used to detect which tasks changed since last save
 
+// Deep-clone a task for the change-detection baseline. A shallow {...t} shares
+// nested arrays/objects (checklist, completions, sessions, sessionEntries,
+// tags, ...) with the live task, so an in-place mutation (e.g. a checklist
+// toggle or completions.push) updates BOTH the live task and its own baseline.
+// The diff below then sees no change and never bumps lastModified — silently
+// losing the edit under last-write-wins sync. JSON round-trip matches the
+// comparator's own JSON.stringify semantics exactly.
+function _snapshotTask(t){
+  try{ return JSON.parse(JSON.stringify(t)); }
+  catch(_){ return { ...t }; }
+}
+
 function resetTaskSnapshotBaseline(){
   _prevTaskSnapshot = {};
-  tasks.forEach(t => { _prevTaskSnapshot[t.id] = {...t}; });
+  tasks.forEach(t => { _prevTaskSnapshot[t.id] = _snapshotTask(t); });
 }
 
 /** Persist after P2P merge — no lastModified bump, no sync broadcast, merge epoch/nonce. */
@@ -358,7 +370,7 @@ function saveState(reason){
   }
   // Rebuild snapshot for next diff
   _prevTaskSnapshot = {};
-  tasks.forEach(t => { _prevTaskSnapshot[t.id] = {...t}; });
+  tasks.forEach(t => { _prevTaskSnapshot[t.id] = _snapshotTask(t); });
 
   let taskSnap = tasks.map(t=>({...t}));
   if(activeTaskId && taskStartedAt){
@@ -681,7 +693,7 @@ function _applyState(s){
       // last-write-wins across devices) and (b) re-embed every task for
       // semantic search on every page refresh.
       _prevTaskSnapshot = {};
-      tasks.forEach(t => { _prevTaskSnapshot[t.id] = {...t}; });
+      tasks.forEach(t => { _prevTaskSnapshot[t.id] = _snapshotTask(t); });
       if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
       if(typeof repairOrphanedTaskParents === 'function') repairOrphanedTaskParents();
       if(typeof reseedChecklistAndNoteIdCtrs === 'function') reseedChecklistAndNoteIdCtrs();
@@ -876,9 +888,25 @@ function _mergeRemoteStateLww(raw){
   try{
     const r = migrateState(JSON.parse(JSON.stringify(raw)));
     if(!_validateState(r)) return false;
+
+    // Merge deletion tombstones FIRST so the entity merges below can honour
+    // them. Without this, a task/list/goal deleted in another tab resurrects
+    // here whenever this tab has unsaved edits — and can then propagate the
+    // zombie back out. Mirrors the P2P path in sync.js _mergeState.
+    const mergedTaskDels = _mergeDelPair(typeof syncTaskDels === 'object' && syncTaskDels ? syncTaskDels : {}, r.syncTaskDels);
+    const mergedListDels = _mergeDelPair(typeof syncListDels === 'object' && syncListDels ? syncListDels : {}, r.syncListDels);
+    const mergedGoalDels = _mergeDelPair(typeof syncGoalDels === 'object' && syncGoalDels ? syncGoalDels : {}, r.syncGoalDels);
+
     const taskMap = new Map(tasks.map(t => [t.id, t]));
+    // Drop local tasks a newer tombstone deletes.
+    for(const [id, t] of [...taskMap.entries()]){
+      const d = mergedTaskDels[id];
+      if(d != null && d > _taskLwwMs(t)) taskMap.delete(id);
+    }
     for(const rt of (r.tasks || [])){
       if(!rt) continue;
+      const d = mergedTaskDels[rt.id];
+      if(d != null && d > _taskLwwMs(rt)) continue; // incoming task is tombstoned
       const lt = taskMap.get(rt.id);
       if(!lt) taskMap.set(rt.id, rt);
       else if(_taskLwwMs(rt) > _taskLwwMs(lt)) taskMap.set(rt.id, rt);
@@ -887,8 +915,14 @@ function _mergeRemoteStateLww(raw){
     taskIdCtr = Math.max(taskIdCtr, _int(r.taskIdCtr, 0));
 
     const listMap = new Map(lists.map(l => [l.id, l]));
+    for(const [id, l] of [...listMap.entries()]){
+      const d = mergedListDels[id];
+      if(d != null && d > (l.lastModified || 0)) listMap.delete(id);
+    }
     for(const rl of (r.lists || [])){
       if(!rl || rl.id == null) continue;
+      const d = mergedListDels[rl.id];
+      if(d != null && d > (rl.lastModified || 0)) continue;
       const ex = listMap.get(rl.id);
       if(!ex) listMap.set(rl.id, rl);
       else if((rl.lastModified || 0) > (ex.lastModified || 0)) listMap.set(rl.id, rl);
@@ -897,8 +931,14 @@ function _mergeRemoteStateLww(raw){
     listIdCtr = Math.max(listIdCtr, _int(r.listIdCtr, 0));
 
     const goalMap = new Map(goals.map(g => [g.id, g]));
+    for(const [id, g] of [...goalMap.entries()]){
+      const d = mergedGoalDels[id];
+      if(d != null && d > (g.lastModified || 0)) goalMap.delete(id);
+    }
     for(const rg of (r.goals || [])){
       if(!rg || rg.id == null) continue;
+      const d = mergedGoalDels[rg.id];
+      if(d != null && d > (rg.lastModified || 0)) continue;
       const ex = goalMap.get(rg.id);
       if(!ex) goalMap.set(rg.id, rg);
       else if((rg.lastModified || 0) > (ex.lastModified || 0)) goalMap.set(rg.id, rg);
@@ -910,9 +950,9 @@ function _mergeRemoteStateLww(raw){
     sessionHistory = _mergeSessionHistTail(sessionHistory, r.sessionHistory, 400);
     intervals = _mergeIntervalsById(intervals, r.intervals);
 
-    syncTaskDels = _mergeDelPair(typeof syncTaskDels === 'object' && syncTaskDels ? syncTaskDels : {}, r.syncTaskDels);
-    syncListDels = _mergeDelPair(typeof syncListDels === 'object' && syncListDels ? syncListDels : {}, r.syncListDels);
-    syncGoalDels = _mergeDelPair(typeof syncGoalDels === 'object' && syncGoalDels ? syncGoalDels : {}, r.syncGoalDels);
+    syncTaskDels = mergedTaskDels;
+    syncListDels = mergedListDels;
+    syncGoalDels = mergedGoalDels;
 
     // LWW for stat counters and the cycle counter: take incoming only when remote
     // stateEpoch is newer. Math.max here would inflate counters and (worse) break
