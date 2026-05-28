@@ -211,8 +211,9 @@ function showActionToast(label, actionLabel, actionFn, ms){
   // Mirror the action's undo into the global undo ring so Cmd+Z keeps
   // working after the toast fades. Only when actionLabel reads as "Undo"
   // (a "Dismiss" or "Confirm" toast isn't an undoable action).
+  let _undoHandle = null;
   if(actionLabel && typeof actionFn === 'function' && /^\s*undo\b/i.test(String(actionLabel)) && typeof pushUndo === 'function'){
-    try{ pushUndo(label, actionFn); }catch(_){}
+    try{ _undoHandle = pushUndo(label, actionFn); }catch(_){}
   }
   let host = document.getElementById('actionToast');
   if(!host){
@@ -242,9 +243,18 @@ function showActionToast(label, actionLabel, actionFn, ms){
     btn.type = 'button';
     btn.className = 'action-toast-btn';
     btn.textContent = actionLabel;
+    let _undone = false;
     btn.onclick = () => {
+      // Guard against a double-fire (rapid click, or click + Cmd+Z) running the
+      // undo twice and duplicating state.
+      if(_undone) return;
+      _undone = true;
       try { actionFn(); } catch(_) {}
+      // Consume the ring-buffer mirror so a follow-up Cmd+Z can't replay the
+      // same undo after the toast is gone.
+      if(typeof removeUndoEntry === 'function'){ try{ removeUndoEntry(_undoHandle); }catch(_){} }
       host.classList.remove('show');
+      clearTimeout(host._tm);
       clearInterval(host._prog);
     };
     hdr.appendChild(btn);

@@ -1444,16 +1444,27 @@ function _pruneUndoRing(){
   while(_undoRing.length > _UNDO_RING_MAX) _undoRing.shift();
 }
 function pushUndo(label, undoFn){
-  if(typeof undoFn !== 'function') return;
-  _undoRing.push({ ts: Date.now(), label: String(label || 'Last action'), fn: undoFn });
+  if(typeof undoFn !== 'function') return null;
+  const entry = { ts: Date.now(), label: String(label || 'Last action'), fn: undoFn };
+  _undoRing.push(entry);
   _pruneUndoRing();
+  return entry;
 }
 function popUndo(){
   _pruneUndoRing();
   return _undoRing.pop() || null;
 }
+// Remove a specific ring entry once its action-toast Undo button has already
+// run it. Without this, the entry lingers and a follow-up Cmd+Z replays the
+// same undo — re-inserting deleted tasks and duplicating state.
+function removeUndoEntry(entry){
+  if(!entry) return;
+  const i = _undoRing.indexOf(entry);
+  if(i >= 0) _undoRing.splice(i, 1);
+}
 window.pushUndo = pushUndo;
 window.popUndo = popUndo;
+window.removeUndoEntry = removeUndoEntry;
 
 // Keyboard shortcut: Ctrl+Z / Cmd+Z — undo the last action. Falls back to the
 // extended ring buffer when there's no live action-toast to click.
