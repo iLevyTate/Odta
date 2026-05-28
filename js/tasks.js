@@ -161,6 +161,7 @@ function addHabitFromTemplate(name, recur){
   );
   tasks.push(t);
   if(typeof _taskIndexRegister === 'function') _taskIndexRegister(t);
+  if(typeof _pinTaskVisibleBriefly === 'function') _pinTaskVisibleBriefly(t.id, 8000);
   if(typeof saveState === 'function') saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();
   if(typeof openTaskDetail === 'function') openTaskDetail(t.id);
@@ -344,6 +345,7 @@ async function addTask(){
   // Hint to renderTaskItem: animate this card on the upcoming render and
   // scroll it into view. The flag self-clears in the renderer.
   window._lastAddedTaskId=_newT.id;
+  if(_newT.recur) _pinTaskVisibleBriefly(_newT.id, 8000);
   renderTaskList();
   // a11y: announce the add to screen readers via the polite live region.
   if(typeof announceTaskAdd==='function') announceTaskAdd(_newT.name);
@@ -1117,7 +1119,7 @@ function _subtaskAllowedUnderShownParent(t){
   // follow in the 'all' view (matchesFilters at line ~2646).
   if(t.status === 'done' && smartView !== 'completed'){
     const sd = gid('showCompletedAll');
-    if(!sd || !sd.checked) return false;
+    if((!sd || !sd.checked) && !_pinVisibleTaskIds.has(t.id)) return false;
   }
   return true;
 }
@@ -1777,6 +1779,7 @@ function completeHabitCycle(t){
   t.completedAt=null;
   t.dueDate=advanceRecurringDate(t.dueDate||todayISO(),t.recur);
   t._habitCycledInSession = true;
+  _pinTaskVisibleBriefly(t.id, 5000);
   if(Array.isArray(t.checklist)){
     for(const c of t.checklist){
       if(c){ c.done=false; c.doneAt=null; }
@@ -1920,18 +1923,24 @@ function toggleTaskDoneQuick(id, ev){
   // owns the active timer stops the timer, and undo needs to restore both
   // the task fields AND the timer link (#6 in UX audit).
   const _wasActiveTimerTask = (activeTaskId === id);
+  const _wasDone = t.status === 'done';
   let cascade = [];
-  if(t.status==='done'){t.status='open';t.completedAt=null}
+  let _toastAction = 'reopen';
+  if(_wasDone){t.status='open';t.completedAt=null}
   else{
     if(t.recur){
       completeHabitCycle(t);
+      _toastAction = 'habit';
       if(activeTaskId===id){/* keep timer running on same task */ }
     }else{
       t.status='done';t.completedAt=stampCompletion();
+      _toastAction = 'done';
       if(activeTaskId===id){toggleTask(id)}
       // Cascade down to subtasks and bubble up if siblings are all done.
       cascade = cascade.concat(_cascadeOnDone(id), _maybeAutoCompleteParent(id));
     }
+    _pinTaskVisibleBriefly(id, 4000);
+    cascade.forEach(c => _pinTaskVisibleBriefly(c.id, 4000));
     haptic(15);
     // Dopamine: animate the row + a little sparkle
     setTimeout(()=>{
@@ -1965,7 +1974,16 @@ function toggleTaskDoneQuick(id, ev){
       else if(names.length > 2) cascadeNote = ' (+ "' + names[0] + '", "' + names[1] + '" and ' + (names.length - 2) + ' more)';
       else cascadeNote = ' (+' + cascade.length + ' linked)';
     }
-    showActionToast((t.status==='done'?'Task done':'Task reopened') + cascadeNote, 'Undo', ()=>{
+    let toastMsg;
+    if(_toastAction === 'habit'){
+      const dueLbl = t.dueDate ? (typeof fmtDue === 'function' ? fmtDue(t.dueDate) : t.dueDate) : 'soon';
+      toastMsg = 'Habit logged — next due ' + dueLbl;
+    } else if(_toastAction === 'done'){
+      toastMsg = 'Task done';
+    } else {
+      toastMsg = 'Task reopened';
+    }
+    showActionToast(toastMsg + cascadeNote, 'Undo', ()=>{
       const u=findTask(id);
       if(u){Object.assign(u,backup);}
       _restoreCascade(cascade);
@@ -2750,7 +2768,7 @@ function matchesFilters(t){
   }
   if(smartView==='all'){
     const sd=gid('showCompletedAll');
-    if((!sd||!sd.checked)&&t.status==='done')return false;
+    if((!sd||!sd.checked)&&t.status==='done'&&!_pinVisibleTaskIds.has(t.id))return false;
   }
   // Search — semantic (cosine) or substring
   if(taskFilters.search){
@@ -2870,9 +2888,35 @@ function matchesFilters(t){
   if(!habitVisibilityOk(t))return false;
   return true;
 }
+// Briefly keep tasks visible after complete / set-repeat actions that would
+// otherwise filter them out — without this, the row vanishes instantly and
+// reads as "deleted" rather than "done" or "now recurring".
+const _pinVisibleTaskIds = new Set();
+const _pinVisibleTimers = new Map();
+function _pinTaskIdKey(id){
+  if(id == null) return null;
+  if(typeof id === 'string' && /^-?\d+$/.test(id)) return parseInt(id, 10);
+  return id;
+}
+function _pinTaskVisibleBriefly(id, ms){
+  const key = _pinTaskIdKey(id);
+  if(key == null) return;
+  _pinVisibleTaskIds.add(key);
+  const prev = _pinVisibleTimers.get(key);
+  if(prev) clearTimeout(prev);
+  _pinVisibleTimers.set(key, setTimeout(() => {
+    _pinVisibleTaskIds.delete(key);
+    _pinVisibleTimers.delete(key);
+    window._preserveTaskScroll = true;
+    if(typeof renderTaskList === 'function') renderTaskList();
+  }, ms || 4000));
+}
+window._pinTaskVisibleBriefly = _pinTaskVisibleBriefly;
+
 /** Recurring tasks optional hide from main smart views (not Overdue / Done / Archive / Week …). */
 function habitVisibilityOk(t){
   if(smartView==='habits') return true;
+  if(_pinVisibleTaskIds.has(t.id)) return true;
   if(typeof cfg!=='object'||!cfg||cfg.hideHabitsInMainViews===false) return true;
   const mainHide=['all','today','week','unscheduled','starred','impact','inbox','waiting','stuck'];
   if(mainHide.includes(smartView)&&t.recur) return false;

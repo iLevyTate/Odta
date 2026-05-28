@@ -1206,7 +1206,7 @@ function renderTaskItem(t,depth){
     ?'<button class="task-chevron'+(t.collapsed?' collapsed':'')+'" data-action="toggleCollapse" data-arg="'+t.id+'" title="'+(t.collapsed?'Expand':'Collapse')+'" aria-label="'+(t.collapsed?'Expand subtasks':'Collapse subtasks')+'" aria-expanded="'+(t.collapsed?'false':'true')+'">▸</button>'
     :'<span class="task-chevron-spacer"></span>';
   const habitHint=t.recur?' title="Log habit completion (stays open, next due scheduled)" aria-label="Log habit completion"':' title="'+(isDone?'Mark not done':'Mark done')+'" aria-label="'+(isDone?'Mark task as not done':'Mark task done')+'"';
-  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
+  const checkbox='<button class="task-checkbox'+(isDone?' checked':'')+(t.recur?' task-checkbox--habit':'')+'" data-action="toggleTaskDoneQuick" data-arg="'+t.id+'" data-stop-prop="1"'+habitHint+' aria-pressed="'+(isDone?'true':'false')+'">'+(isDone?'✓':'')+'</button>';
 
   let signalChips='';
   if(t.dueDate&&!isDone){
@@ -2299,6 +2299,7 @@ function openRecurDropdown(){
     options: options,
     selected: t.recur || 'none',
     onSelect: function(key){
+      const hadRecur = !!t.recur;
       t.recur=key==='none'?null:key;
       const row = rows.find(function(r){ return r[0] === key; });
       if(label) label.textContent = row ? row[1] : 'No repeat';
@@ -2307,7 +2308,12 @@ function openRecurDropdown(){
       // so it actually shows up in Today / Habits views immediately.
       // Mirrors the same behaviour the old chip-click handler had.
       if(t.recur && !t.dueDate && typeof todayISO === 'function') t.dueDate = todayISO();
+      if(t.recur && typeof _pinTaskVisibleBriefly === 'function') _pinTaskVisibleBriefly(t.id, 8000);
       if(typeof _commitChipChange === 'function') _commitChipChange(t);
+      if(t.recur && !hadRecur && typeof showActionToast === 'function'){
+        const rowLbl = row ? row[1] : String(t.recur);
+        showActionToast('Repeats ' + rowLbl + ' — also in Habits view', null, null, 4500);
+      }
     },
   });
 }
@@ -2340,6 +2346,10 @@ function openListDropdown(){
       sel.value = value;
       const opt = options.find(function(o){ return String(o.value) === String(value); });
       if(label) label.textContent = opt ? opt.label : 'List';
+      if(editingTaskId != null && typeof _commitChipChange === 'function'){
+        const t = findTask(editingTaskId);
+        if(t){ t.listId = parseInt(value, 10) || t.listId; _commitChipChange(t); }
+      }
     },
   });
 }
@@ -2389,6 +2399,11 @@ function saveTaskDetail(){
   // Without this, reminders silently never fire and the feature feels broken.
   if((_dueChanged || _remindChanged) && typeof _maybeNudgeNotifPerm === 'function') _maybeNudgeNotifPerm();
   t.listId=parseInt(gid('mdList').value)||t.listId;
+  const _recurEl = gid('mdRecur');
+  if(_recurEl){
+    const rk = _recurEl.value;
+    t.recur = (rk === 'none' || !rk) ? null : rk;
+  }
   if(t.status==='done'&&!t.completedAt)t.completedAt=stampCompletion();
   if(t.status!=='done')t.completedAt=null;
   // C-2: record diffs into task.activity[] (cap at 50 entries)
