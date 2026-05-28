@@ -13,10 +13,9 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = readFileSync(join(root, 'js', 'calfeeds.js'), 'utf8');
 
-function extractFn(){
-  const i = src.indexOf('function _calFetchUrlOk(');
-  assert.ok(i >= 0, '_calFetchUrlOk must exist');
-  // Walk braces from the first `{` after the signature.
+function sliceFn(name){
+  const i = src.indexOf('function ' + name + '(');
+  assert.ok(i >= 0, name + ' must exist');
   const sigEnd = src.indexOf('{', i);
   let depth = 0;
   let j = sigEnd;
@@ -24,9 +23,15 @@ function extractFn(){
     if(src[j] === '{') depth++;
     else if(src[j] === '}'){ depth--; if(depth === 0){ j++; break; } }
   }
-  const body = src.slice(i, j);
+  return src.slice(i, j);
+}
+
+function extractFn(){
+  // _calFetchUrlOk depends on the two loose-IPv4 helpers, so include them.
+  const helpers = sliceFn('_calParseIpv4Loose') + '\n' + sliceFn('_calIpv4IsPrivate') + '\n';
+  const body = sliceFn('_calFetchUrlOk');
   // Stub for the production env that the helper reads.
-  return new Function('window', 'location', 'return (' + body.replace('function _calFetchUrlOk(', 'function _calFetchUrlOk(') + ')');
+  return new Function('window', 'location', helpers + 'return (' + body + ')');
 }
 
 const fakeWin = { location: { href: 'https://example.com/' } };
@@ -50,6 +55,17 @@ const BLOCKED = [
   'https://[fe80::1]/x',
   'https://[fc00::1]/x',
   'https://[fd00::1]/x',
+  // Numeric / hex / octal / short IPv4 obfuscations of 127.0.0.1:
+  'http://2130706433/x',          // decimal
+  'http://0x7f000001/x',          // hex
+  'http://017700000001/x',        // octal
+  'http://127.1/x',               // short form
+  'http://0x7f.0.0.1/x',          // mixed hex octet
+  'http://3232235521/x',          // decimal 192.168.0.1
+  // DNS-rebind helpers that map names to loopback/private without an IP label:
+  'https://app.localtest.me/x',
+  'https://foo.lvh.me/x',
+  'https://service.nip.io/x',
 ];
 
 const ALLOWED = [

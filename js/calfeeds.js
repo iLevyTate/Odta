@@ -314,6 +314,49 @@ function expandEventToDateRange(event, windowDays = 180){
 const CAL_FETCH_MAX_BYTES = 2_000_000;
 const CAL_FETCH_TIMEOUT_MS = 25000;
 
+// Parse the "loose" IPv4 forms that inet_aton / browsers accept but a naive
+// string check misses: a single decimal (2130706433), hex (0x7f000001), octal
+// (017700000001), or dotted with fewer than four octal/hex/decimal parts
+// (127.1). Returns the 32-bit address, or null when `host` is not such a form.
+function _calParseIpv4Loose(host){
+  if(typeof host !== 'string' || !/^[0-9a-fx.]+$/i.test(host)) return null;
+  const parts = host.split('.');
+  if(parts.length === 0 || parts.length > 4) return null;
+  const nums = [];
+  for(const p of parts){
+    if(p === '') return null;
+    let n;
+    if(/^0x[0-9a-f]+$/i.test(p)) n = parseInt(p, 16);
+    else if(/^0[0-7]+$/.test(p)) n = parseInt(p, 8);
+    else if(/^[0-9]+$/.test(p)) n = parseInt(p, 10);
+    else return null;
+    if(!Number.isFinite(n) || n < 0) return null;
+    nums.push(n);
+  }
+  // inet_aton semantics: the final part fills the remaining low-order bytes.
+  let ip;
+  switch(nums.length){
+    case 1: ip = nums[0]; break;
+    case 2: if(nums[0] > 0xff || nums[1] > 0xffffff) return null; ip = (nums[0] * 0x1000000) + nums[1]; break;
+    case 3: if(nums[0] > 0xff || nums[1] > 0xff || nums[2] > 0xffff) return null; ip = (nums[0] * 0x1000000) + (nums[1] * 0x10000) + nums[2]; break;
+    default: if(nums.some(x => x > 0xff)) return null; ip = (nums[0] * 0x1000000) + (nums[1] * 0x10000) + (nums[2] * 0x100) + nums[3];
+  }
+  if(ip < 0 || ip > 0xffffffff) return null;
+  return ip >>> 0;
+}
+
+// True for loopback / private / link-local / unspecified IPv4 (matches the
+// literal-string ranges blocked below, but applied to a parsed address so the
+// numeric/hex/octal/short obfuscations are caught too).
+function _calIpv4IsPrivate(ip){
+  const a = (ip >>> 24) & 0xff, b = (ip >>> 16) & 0xff;
+  if(a === 127 || a === 10 || a === 0) return true;            // loopback, 10/8, 0/8
+  if(a === 192 && b === 168) return true;                      // 192.168/16
+  if(a === 169 && b === 254) return true;                      // link-local + cloud metadata
+  if(a === 172 && b >= 16 && b <= 31) return true;             // 172.16/12
+  return false;
+}
+
 function _calFetchUrlOk(urlStr){
   let u;
   try{ u = new URL(urlStr, window.location.href); }
@@ -328,6 +371,14 @@ function _calFetchUrlOk(urlStr){
   // Strip IPv6 brackets if present
   if(h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
   if(h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return false;
+  // Numeric/hex/octal/short IPv4 obfuscations (e.g. http://2130706433/,
+  // http://0x7f000001/, http://127.1/) — parse to a real address and block if
+  // it lands in a private range. Without this the string checks below miss them.
+  const _ip = _calParseIpv4Loose(h);
+  if(_ip != null && _calIpv4IsPrivate(_ip)) return false;
+  // Well-known DNS-rebind helpers that resolve arbitrary names to loopback /
+  // private addresses without exposing an IP literal in the hostname.
+  if(/(^|\.)(nip\.io|xip\.io|sslip\.io|localtest\.me|lvh\.me|vcap\.me|localho\.st)$/i.test(h)) return false;
   if(h.startsWith('127.') ||
      h.startsWith('10.') ||
      h.startsWith('192.168.') ||
