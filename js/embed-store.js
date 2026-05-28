@@ -257,7 +257,14 @@ const embedStore = {
     try{
       await embedStore.clearAllEmbeddings();
     }catch(e){
-      console.warn('[embedStore] clearAllEmbeddings', e);
+      // If the purge fails the store still holds vectors from the previous
+      // model/dim. Advancing the runtime meta now would skip migration on the
+      // next boot AND leave ensure() serving incompatible vectors (its textHash
+      // check never re-embeds unchanged text). Bail WITHOUT advancing meta so
+      // the migration is retried next load instead of silently corrupting
+      // search/classification with mismatched-dimension vectors.
+      console.warn('[embedStore] clearAllEmbeddings failed — deferring migration', e);
+      return { didPurge: false };
     }
     try{ await embedStore.deleteMeta(META_SCHWARTZ_KEY); }catch(e){}
     try{ await embedStore.deleteMeta(META_CAT_CENTROIDS_KEY); }catch(e){}
