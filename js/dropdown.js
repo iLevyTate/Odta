@@ -71,7 +71,14 @@
       function renderItems(filter){
         list.replaceChildren();
         const norm = (filter || '').toLowerCase().trim();
-        options.forEach(function(o, i){
+        // highlightIdx is an index into the VISIBLE (filtered) DOM items, not
+        // the source options array — _applyHighlight/moveHighlight/Enter all
+        // operate on the rendered subset. Recompute it from scratch on every
+        // render so a filter change can never leave it pointing at the wrong
+        // (or a now-hidden) row.
+        highlightIdx = -1;
+        let domIdx = 0;
+        options.forEach(function(o){
           if(norm && String(o.label || '').toLowerCase().indexOf(norm) !== 0) return;
           const item = document.createElement('button');
           item.type = 'button';
@@ -91,10 +98,11 @@
           if(String(o.value) === String(opts.selected)){
             item.classList.add('is-selected');
             item.setAttribute('aria-selected', 'true');
-            if(highlightIdx < 0) highlightIdx = i;
+            if(highlightIdx < 0) highlightIdx = domIdx;
           }
           item.addEventListener('click', function(){ select(o.value); });
           list.appendChild(item);
+          domIdx++;
         });
         _applyHighlight();
       }
@@ -128,7 +136,13 @@
       function moveHighlight(delta){
         const items = list.querySelectorAll('.dropdown-item');
         if(!items.length) return;
-        highlightIdx = (highlightIdx + delta + items.length) % items.length;
+        if(highlightIdx < 0){
+          // Nothing highlighted yet (e.g. just filtered): ArrowDown -> first,
+          // ArrowUp -> last.
+          highlightIdx = delta > 0 ? 0 : items.length - 1;
+        } else {
+          highlightIdx = (highlightIdx + delta + items.length) % items.length;
+        }
         _applyHighlight();
       }
 
