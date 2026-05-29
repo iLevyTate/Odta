@@ -21,6 +21,32 @@ let _embedAllCache = null;
 /** Serialize IndexedDB puts per taskId so concurrent put()s cannot leave the cache on a stale write. */
 const _embedPutByTask = new Map();
 
+// ── Cross-tab cache coherence ───────────────────────────────────────────────
+// Embeddings live in IndexedDB (shared across tabs) but _embedAllCache is a
+// per-tab in-memory mirror. IndexedDB writes don't emit `storage` events, so
+// when another tab re-embeds / purges / clears, this tab's mirror silently goes
+// stale (its similarity search keeps using old vectors). We broadcast a
+// coalesced localStorage "ping"; other tabs drop their mirror and lazily rebuild
+// from IDB on the next all(). The `storage` event fires only in OTHER tabs, so a
+// writer never invalidates the mirror it just updated incrementally.
+const EMBED_CACHE_PING_KEY = (_EC.STORAGE_KEYS && _EC.STORAGE_KEYS.EMBED_CACHE_PING) || 'stupind_embed_cache_ping';
+let _embedPingTimer = null;
+function _pingEmbedCacheChange(){
+  if(typeof localStorage === 'undefined') return;
+  // Coalesce bursts (a bulk re-index fires hundreds of puts) into one ping per
+  // window so other tabs don't thrash their cache on every single write.
+  if(_embedPingTimer) return;
+  _embedPingTimer = setTimeout(() => {
+    _embedPingTimer = null;
+    try{ localStorage.setItem(EMBED_CACHE_PING_KEY, Date.now() + ':' + Math.random().toString(36).slice(2)); }catch(_){}
+  }, 400);
+}
+if(typeof window !== 'undefined' && typeof window.addEventListener === 'function'){
+  window.addEventListener('storage', e => {
+    if(e && e.key === EMBED_CACHE_PING_KEY) _embedAllCache = null;
+  });
+}
+
 function _openDb(){
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(INTEL_DB, INTEL_DB_VER);
@@ -76,6 +102,7 @@ const embedStore = {
     if(_embedAllCache){
       _embedAllCache.set(taskId, { textHash, vec: new Float32Array(f32) });
     }
+    _pingEmbedCacheChange();
   },
 
   async get(taskId){
@@ -158,6 +185,7 @@ const embedStore = {
     if(_embedAllCache){
       taskIds.forEach(id => _embedAllCache.delete(id));
     }
+    _pingEmbedCacheChange();
   },
 
   async cleanOrphans(){
@@ -238,6 +266,7 @@ const embedStore = {
     });
     db.close();
     _embedAllCache = null;
+    _pingEmbedCacheChange();
   },
 
   /**
