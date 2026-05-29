@@ -3614,6 +3614,10 @@ window.showPomodoroSummary=function(){
 let _mdAttachUrls = [];
 let _mdAttachLightboxUrl = null;
 let _mdVoiceSession = null;
+// Monotonic token so a slower, superseded renderMdAttachments() run (it awaits
+// IndexedDB reads between creating object URLs) can't keep appending nodes or
+// object URLs after a newer render has already revoked them and rebuilt the DOM.
+let _mdAttachRenderSeq = 0;
 
 function _pickMdAudioMime(){
   if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
@@ -3726,11 +3730,15 @@ document.addEventListener('keydown', e => {
 async function renderMdAttachments(taskId){
   const host = gid('mdAttachments');
   if(!host) return;
+  const mySeq = ++_mdAttachRenderSeq;
   if(_mdVoiceSession && _mdVoiceSession.taskId !== taskId) _abortMdVoiceRecording();
   _revokeMdAttachUrls();
   host.replaceChildren();
   if(typeof listTaskAttachments !== 'function') return;
   const rows = await listTaskAttachments(taskId);
+  // A newer render started while we awaited — stop before touching the DOM it
+  // now owns (and before minting object URLs it would have to revoke).
+  if(mySeq !== _mdAttachRenderSeq) return;
   const tools = document.createElement('div');
   tools.className = 'md-attach-tools';
   const photoLbl = document.createElement('label');
@@ -3848,6 +3856,7 @@ async function renderMdAttachments(taskId){
     card.className = 'md-attach-card md-attach-'+row.kind;
     if(row.kind === 'image' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
+      if(mySeq !== _mdAttachRenderSeq) return; // superseded mid-read
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
         if(url){
@@ -3873,6 +3882,7 @@ async function renderMdAttachments(taskId){
       }
     } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
+      if(mySeq !== _mdAttachRenderSeq) return; // superseded mid-read
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
         if(url){
@@ -3903,6 +3913,9 @@ async function renderMdAttachments(taskId){
     hint.textContent = 'Photos and voice notes stay on this device (not synced).';
     grid.appendChild(hint);
   }
+  // Final supersession check: a newer render may have started (and cleared the
+  // host) during the loop's last await — don't append our now-stale grid on top.
+  if(mySeq !== _mdAttachRenderSeq) return;
   host.appendChild(grid);
 }
 window.renderMdAttachments = renderMdAttachments;
