@@ -551,7 +551,10 @@ test('runReadOp GET_CALENDAR_EVENTS requests enough lookahead for distant toDate
   const far = new Date();
   far.setUTCDate(far.getUTCDate() + 60);
   const toISO = far.getUTCFullYear() + '-' + String(far.getUTCMonth() + 1).padStart(2, '0') + '-' + String(far.getUTCDate()).padStart(2, '0');
-  const tFar = new Date(toISO + 'T12:00:00Z').getTime();
+  // Anchor _startMs in local time to match _calEventStartMs (js/calfeeds.js),
+  // which getUpcomingEvents uses in production. A UTC anchor here would drift
+  // past the local end-of-day toDate boundary in far-east zones (e.g. UTC+14).
+  const tFar = new Date(toISO + 'T11:00:00').getTime();
   const ctx2 = {
     window: win,
     console,
