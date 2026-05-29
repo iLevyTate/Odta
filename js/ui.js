@@ -1936,6 +1936,9 @@ function renderTaskItem(t,depth){
   // reorder; .drop-above/.drop-below visual hints are no longer used because
   // Sortable provides its own ghost/placeholder.
   d.onclick=function(e){
+    // A committed swipe (complete/move) emits a synthetic click on release —
+    // swallow it once so the row tap doesn't also open the detail modal.
+    if(_swipeActionFired){_swipeActionFired=false;return;}
     if(e.target.closest('button')||e.target.closest('.task-chevron')||e.target.closest('.drag-handle')||e.target.closest('[data-action]'))return;
     // In reorder mode the row's tap target is repurposed for the arrange
     // controls — don't open the detail modal out from under them.
@@ -1983,12 +1986,13 @@ function renderTaskItem(t,depth){
   if(typeof isBulkMode === 'function' && isBulkMode() && typeof _bulkSelectedIds !== 'undefined' && _bulkSelectedIds.has(t.id)){
     d.classList.add('task-bulk-selected');
   }
-  // Swipe-right-to-move + swipe-left-to-delete + long-press-to-bulk-select for
-  // touch. Long-press is
-  // the standard mobile gesture for "select multiple" (Files, Mail, Photos);
-  // hooking it here makes bulk mode discoverable without a desktop palette.
+  // Swipe-right-to-move + swipe-left-to-complete + long-press-to-bulk-select for
+  // touch. Swipe-left toggles done (completes an open task, reopens a done one) —
+  // it is NOT destructive; delete lives on the row menu and the detail editor.
+  // Long-press is the standard mobile gesture for "select multiple" (Files, Mail,
+  // Photos); hooking it here makes bulk mode discoverable without a desktop palette.
   let touchStartX=0,touchStartY=0,touchCurrentX=0,swiping=false;
-  let _longPressId=null,_longPressFired=false;
+  let _longPressId=null,_longPressFired=false,_swipeActionFired=false;
   d.addEventListener('touchstart',function(e){
     // Don't track a swipe (or long-press) when the touch begins on the drag
     // grip — that gesture belongs to Sortable's reorder, and double-handling
@@ -2033,7 +2037,7 @@ function renderTaskItem(t,depth){
       if(e.cancelable)e.preventDefault();
       d.style.transform='translateX('+dx+'px)';
       d.style.transition='none';
-      d.style.background=dx>0?'linear-gradient(90deg,var(--accent-bg),var(--bg-1) 80%)':'linear-gradient(90deg,var(--bg-1) 20%,var(--danger-bg))';
+      d.style.background=dx>0?'linear-gradient(90deg,var(--accent-bg),var(--bg-1) 80%)':'linear-gradient(90deg,var(--bg-1) 20%,var(--success-bg))';
     }
   },{passive:false});
   d.addEventListener('touchend',function(e){
@@ -2048,8 +2052,11 @@ function renderTaskItem(t,depth){
     }
     if(swiping&&Math.abs(dx)>80){
       haptic(20);
+      // Mark this gesture as having committed an action so the synthetic click
+      // the browser fires after touchend doesn't also open the detail modal.
+      _swipeActionFired=true;
       if(dx>0){showTaskListPickerSheet(t.id)}
-      else{removeTask(t.id,null)}
+      else{toggleTaskDoneQuick(t.id,null)}
     }
     touchStartX=0;touchCurrentX=0;swiping=false;
   },{passive:false});
