@@ -17,10 +17,10 @@ const GEN_HIST_KEY = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_HISTORY) || 'stup
 // If one namespace is unreachable, the other usually works — so we surface
 // both as presets and auto-retry the sibling on load failure.
 const GEN_MODEL_PRESETS = [
-  { id:'HuggingFaceTB/SmolLM2-360M-Instruct',        dtype:'q4', sizeMb:230, label:'SmolLM2 360M (balanced)',       note:'Recommended for most devices' },
+  { id:'onnx-community/Qwen2.5-0.5B-Instruct',       dtype:'q4', sizeMb:320, label:'Qwen2.5 0.5B (recommended)',    note:'Native tool-calling — most reliable for Ask; WebGPU preferred' },
+  { id:'HuggingFaceTB/SmolLM2-360M-Instruct',        dtype:'q4', sizeMb:230, label:'SmolLM2 360M (smaller)',        note:'Lighter download for low-RAM devices' },
   { id:'HuggingFaceTB/SmolLM2-135M-Instruct',        dtype:'q4', sizeMb:100, label:'SmolLM2 135M (tiny)',           note:'Lowest RAM — older phones' },
-  { id:'onnx-community/Qwen2.5-0.5B-Instruct',       dtype:'q4', sizeMb:320, label:'Qwen2.5 0.5B (bigger)',         note:'Desktop / WebGPU preferred' },
-  { id:'onnx-community/Qwen2.5-1.5B-Instruct',     dtype:'q4', sizeMb:600, label:'Qwen2.5 1.5B (native tools)',  note:'Cognitask uses tokenizer tools + <tool_call> XML; WebGPU recommended' },
+  { id:'onnx-community/Qwen2.5-1.5B-Instruct',     dtype:'q4', sizeMb:600, label:'Qwen2.5 1.5B (most capable)',   note:'Larger download; WebGPU recommended' },
   { id:'onnx-community/SmolLM2-360M-Instruct',       dtype:'q4', sizeMb:230, label:'SmolLM2 360M (onnx-community)', note:'Use if HuggingFaceTB mirror fails' },
   { id:'onnx-community/SmolLM2-135M-Instruct-ONNX',  dtype:'q4', sizeMb:100, label:'SmolLM2 135M (onnx-community)', note:'Use if HuggingFaceTB mirror fails' },
 ];
@@ -31,9 +31,12 @@ const GEN_MODEL_ALT_SLUGS = {
   'HuggingFaceTB/SmolLM2-135M-Instruct': 'onnx-community/SmolLM2-135M-Instruct-ONNX',
 };
 
-// Any pre-v27 config that points at the stale Xenova/* slugs gets reset to
-// the current default preset. Keeps existing users from hitting a 401.
-const GEN_CFG_VERSION = 2;
+// Bumped when the default model changes so existing installs roll forward to
+// the current recommended preset (v2: off the stale Xenova/* slugs; v3: onto
+// Qwen2.5-0.5B, which uses native tool-calling and is far more reliable for
+// Ask than the old SmolLM2-360M default). A bump forces a one-time
+// re-download of the new default's weights.
+const GEN_CFG_VERSION = 3;
 
 let _genPipe = null;
 let _genReady = false;

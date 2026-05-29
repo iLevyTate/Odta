@@ -28,12 +28,12 @@ function loadGen(storage = {}, navOverride = null) {
   return { win, storage };
 }
 
-test('gen cfg: fresh user gets HuggingFaceTB default with cfgVersion stamped', () => {
+test('gen cfg: fresh user gets the Qwen2.5-0.5B default with cfgVersion stamped', () => {
   const { win, storage } = loadGen();
   const cfg = win.getGenCfg();
   assert.equal(cfg.enabled, false);
-  assert.match(cfg.modelId, /^HuggingFaceTB\/SmolLM2-/);
-  assert.equal(cfg.cfgVersion, 2);
+  assert.equal(cfg.modelId, 'onnx-community/Qwen2.5-0.5B-Instruct');
+  assert.equal(cfg.cfgVersion, 3);
 });
 
 test('gen cfg: stale Xenova id is migrated to current default', () => {
@@ -47,16 +47,18 @@ test('gen cfg: stale Xenova id is migrated to current default', () => {
     }),
   });
   const cfg = win.getGenCfg();
-  assert.match(cfg.modelId, /^HuggingFaceTB\//);
+  assert.equal(cfg.modelId, 'onnx-community/Qwen2.5-0.5B-Instruct');
   assert.equal(cfg.downloaded, false, 'migration must force a re-download check');
-  assert.equal(cfg.cfgVersion, 2);
+  assert.equal(cfg.cfgVersion, 3);
 });
 
-test('gen cfg: valid modern id passes through untouched', () => {
+test('gen cfg: a prior-default SmolLM2-360M install rolls forward to the new default', () => {
+  // v2 installs that selected the old SmolLM2-360M default migrate onto the
+  // v3 Qwen default; downloaded resets so the new weights get fetched.
   const { win } = loadGen({
     stupind_gen_cfg: JSON.stringify({
       enabled: true,
-      modelId: 'onnx-community/Qwen2.5-0.5B-Instruct',
+      modelId: 'HuggingFaceTB/SmolLM2-360M-Instruct',
       dtype: 'q4',
       downloaded: true,
       cfgVersion: 2,
@@ -64,6 +66,22 @@ test('gen cfg: valid modern id passes through untouched', () => {
   });
   const cfg = win.getGenCfg();
   assert.equal(cfg.modelId, 'onnx-community/Qwen2.5-0.5B-Instruct');
+  assert.equal(cfg.downloaded, false);
+  assert.equal(cfg.cfgVersion, 3);
+});
+
+test('gen cfg: valid modern id at the current version passes through untouched', () => {
+  const { win } = loadGen({
+    stupind_gen_cfg: JSON.stringify({
+      enabled: true,
+      modelId: 'HuggingFaceTB/SmolLM2-360M-Instruct',
+      dtype: 'q4',
+      downloaded: true,
+      cfgVersion: 3,
+    }),
+  });
+  const cfg = win.getGenCfg();
+  assert.equal(cfg.modelId, 'HuggingFaceTB/SmolLM2-360M-Instruct');
   assert.equal(cfg.downloaded, true);
 });
 
