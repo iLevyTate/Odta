@@ -237,6 +237,18 @@ function migrateState(s){
     }
   });
 
+  // Steps must be declared in ascending order: the `step` helper refuses to run
+  // a target when `reached < target - 1`, so an out-of-order step(8) before
+  // step(7) made a v6 state skip step 8 entirely on the upgrade load (it only
+  // self-healed on the *next* reload). Keep 7 before 8.
+  step(7, () => {
+    // The "archive" feature was removed in favour of direct delete + undo.
+    // Archived tasks were the old recycle bin, so drop them permanently on
+    // upgrade. Archiving always cascaded to descendants, so every member of an
+    // archived subtree carries archived:true — filtering the flat list is safe.
+    if(Array.isArray(s.tasks)) s.tasks = s.tasks.filter(t => !(t && t.archived === true));
+  });
+
   step(8, () => {
     if(Array.isArray(s.tasks)){
       s.tasks = s.tasks.map(t => {
@@ -248,14 +260,6 @@ function migrateState(s){
       if(!s.cfg.calMode) s.cfg.calMode = 'month';
       if(!s.cfg.timerDock || typeof s.cfg.timerDock !== 'object') s.cfg.timerDock = {};
     }
-  });
-
-  step(7, () => {
-    // The "archive" feature was removed in favour of direct delete + undo.
-    // Archived tasks were the old recycle bin, so drop them permanently on
-    // upgrade. Archiving always cascaded to descendants, so every member of an
-    // archived subtree carries archived:true — filtering the flat list is safe.
-    if(Array.isArray(s.tasks)) s.tasks = s.tasks.filter(t => !(t && t.archived === true));
   });
 
   // ── Field-level repair pass — runs on EVERY load regardless of version ──────
@@ -1064,7 +1068,11 @@ function loadState(){
         console.warn('[storage]', msg);
         return;
       }
-      const s = JSON.parse(raw);
+      // Normally the IDB value is the same serialized string we write. But the
+      // JSON.stringify-failure path stores the raw object via structured clone
+      // (more forgiving than JSON for circular refs / exotic values), so a
+      // blind JSON.parse here would throw on exactly the recovery it exists for.
+      const s = (typeof raw === 'string') ? JSON.parse(raw) : raw;
       if(_applyState(s)){
         renderAll(); renderLog(); renderGoalList();
         renderIntList(); renderQuickTimers();
