@@ -207,6 +207,22 @@ function hasClassificationCategory(cat){
   return (cfg.categories || []).some(c => c.id === cat);
 }
 
+/**
+ * Stricter than hasClassificationCategory: a category the user has explicitly
+ * hidden is still a *valid* category (existing manual assignments stay intact),
+ * but auto-classification must NOT assign it — the user removed it from their
+ * working set on purpose. Use this at every automatic category-assignment site;
+ * keep hasClassificationCategory for validating values the user may already hold.
+ */
+function isAssignableCategory(cat){
+  if(!hasClassificationCategory(cat)) return false;
+  if(typeof cfg !== 'undefined' && cfg && Array.isArray(cfg.categories)){
+    const row = cfg.categories.find(c => c.id === cat);
+    if(row && row.hidden) return false;
+  }
+  return true;
+}
+
 function getCategoryDef(id){
   if(!id) return null;
   if(typeof cfg !== 'undefined' && cfg) ensureClassificationConfig(cfg);
@@ -739,7 +755,9 @@ function invalidateCategoryCentroids(){
 
 function _sanitizeMergedCategory(merged){
   if(!merged || !merged.category) return;
-  if(merged.category === 'general' || typeof hasClassificationCategory !== 'function' || !hasClassificationCategory(merged.category)){
+  // merged is the classifier's OUTPUT, so gate on isAssignableCategory: never
+  // auto-assign 'general' or a hidden category.
+  if(merged.category === 'general' || typeof isAssignableCategory !== 'function' || !isAssignableCategory(merged.category)){
     delete merged.category;
   }
 }
@@ -847,7 +865,7 @@ function predictMetadataFromVec(queryVec, opts){
     if(catFromCentroid){
       merged.category = catFromCentroid;
     } else {
-      const cat = pickDiscrete('category', KNN_CAT_MIN_CONF, KNN_CAT_MIN_MARGIN, v => v !== 'general' && hasClassificationCategory(v));
+      const cat = pickDiscrete('category', KNN_CAT_MIN_CONF, KNN_CAT_MIN_MARGIN, v => v !== 'general' && isAssignableCategory(v));
       if(cat) merged.category = cat;
     }
   }
@@ -1370,7 +1388,7 @@ async function proposeHarmonizeUpdates(opts){
       }
     }
 
-    if(meta.category && hasClassificationCategory(meta.category) && meta.category !== (t.category || null)){
+    if(meta.category && isAssignableCategory(meta.category) && meta.category !== (t.category || null)){
       args.category = meta.category;
       changes++;
     }
@@ -1445,7 +1463,7 @@ async function proposeReclassifyUncategorized(){
       categoryCentroidVecs: centroids || undefined,
     });
     if(meta._confidence) delete meta._confidence;
-    if(meta.category && hasClassificationCategory(meta.category) && meta.category !== 'general'){
+    if(meta.category && isAssignableCategory(meta.category) && meta.category !== 'general'){
       ops.push({ name: 'UPDATE_TASK', args: { id: t.id, category: meta.category } });
     }
   }
@@ -1495,6 +1513,7 @@ window.getCategoryDef = getCategoryDef;
 window.getCategoryChipLabel = getCategoryChipLabel;
 window.getActiveCategories = getActiveCategories;
 window.hasClassificationCategory = hasClassificationCategory;
+window.isAssignableCategory = isAssignableCategory;
 window.renderClassificationSettings = renderClassificationSettings;
 window.refreshClassificationUi = refreshClassificationUi;
 window.classificationMove = classificationMove;

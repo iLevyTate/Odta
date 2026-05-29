@@ -30,6 +30,18 @@ function _saveCalFeeds(){
   try { localStorage.setItem(CALFEEDS_KEY, JSON.stringify(_calFeeds)); } catch(e) {}
 }
 
+// Cross-tab freshness: another tab can add / remove / re-sync a feed and rewrite
+// CALFEEDS_KEY. This tab's in-memory cache is only populated once, so without
+// invalidation it would serve stale feeds (and overwrite the other tab's work on
+// the next save). The `storage` event fires only in OTHER tabs, so dropping the
+// cache here is safe — the next _loadCalFeeds() re-reads the authoritative value.
+// (All mutations persist via _saveCalFeeds, so there is no unsaved in-memory state.)
+if(typeof window !== 'undefined' && typeof window.addEventListener === 'function'){
+  window.addEventListener('storage', e => {
+    if(e && e.key === CALFEEDS_KEY) _calFeeds = null;
+  });
+}
+
 // ── Parser: minimal but correct iCalendar subset ───────────────────────────
 // Handles VEVENT entries with DTSTART, DTEND, SUMMARY, DESCRIPTION, LOCATION,
 // UID, RRULE. Properly unfolds long lines (RFC 5545: lines continue on the
@@ -74,8 +86,21 @@ function parseICS(text){
         if(p.startsWith('VALUE=')) valueType = p.slice(6);
       }
     }
-    if(keyPart === 'EXDATE' && current.EXDATE) current.EXDATE = String(current.EXDATE) + ',' + value;
-    else current[keyPart] = value;
+    if(keyPart === 'EXDATE'){
+      // Keep each EXDATE value WITH its own TZID/VALUE params. A timed or UTC
+      // EXDATE must be resolved to the same local date as the occurrence it
+      // cancels; dropping the zone (the old behaviour) made the literal date
+      // digits mismatch the local occurrence date and the exclusion silently
+      // missed. The concatenated string is retained only as a legacy fallback.
+      current._exdateSpecs = current._exdateSpecs || [];
+      for(const part of String(value).split(',')){
+        const v = part.trim();
+        if(v) current._exdateSpecs.push({ v, tzid, valueType });
+      }
+      current.EXDATE = current.EXDATE ? String(current.EXDATE) + ',' + value : value;
+    } else {
+      current[keyPart] = value;
+    }
     if(keyPart === 'DTSTART' || keyPart === 'DTEND'){
       current[keyPart + '_TZID'] = tzid;
       current[keyPart + '_VALUE'] = valueType;
@@ -92,7 +117,11 @@ function normaliseEvent(ev){
   const start = parseICSDate(ev.DTSTART, ev.DTSTART_VALUE === 'DATE', ev.DTSTART_TZID);
   if(!start) return null;
   const end = ev.DTEND ? parseICSDate(ev.DTEND, ev.DTEND_VALUE === 'DATE', ev.DTEND_TZID) : null;
-  const exdateSet = ev.EXDATE ? parseExdateList(ev.EXDATE) : new Set();
+  // Prefer zone-aware specs (resolve each EXDATE to a LOCAL date so it matches
+  // the occurrence dates); fall back to the literal-date parser for safety.
+  const exdateSet = Array.isArray(ev._exdateSpecs) && ev._exdateSpecs.length
+    ? _exdateSetFromSpecs(ev._exdateSpecs)
+    : (ev.EXDATE ? parseExdateList(ev.EXDATE) : new Set());
   return {
     uid:         (ev.UID || '').slice(0, 200),
     title:       unescapeICS(ev.SUMMARY || '(no title)'),
@@ -135,11 +164,18 @@ function parseICSDate(raw, isDateOnly, tzid){
     return toLocalIsoTime(d);
   }
   if(tzid){
-    // Approximate: find the UTC offset for this TZID at this date, then construct UTC Date
-    // This works for IANA zone names (America/New_York, Europe/London, etc.)
+    // Works for IANA zone names (America/New_York, Europe/London, etc.)
     try {
-      const offsetMin = getTzOffsetMinutes(tzid, +Y, +M, +D, +hh, +mm);
-      const d = new Date(Date.UTC(+Y, +M-1, +D, +hh, +mm) - offsetMin * 60000);
+      const wallUTC = Date.UTC(+Y, +M-1, +D, +hh, +mm);
+      // Pass 1: the offset assuming the wall time is UTC.
+      const off1 = getTzOffsetMinutes(tzid, +Y, +M, +D, +hh, +mm);
+      // Pass 2: re-evaluate the offset at the CANDIDATE instant. Near a DST
+      // transition the offset at the wall-as-UTC guess differs from the offset
+      // at the real instant by an hour, which shifts the result to the wrong
+      // side of the boundary. Correcting once converges everywhere except the
+      // (nonexistent) spring-forward gap.
+      const off2 = _tzOffsetAtInstantMin(tzid, wallUTC - off1 * 60000);
+      const d = new Date(wallUTC - off2 * 60000);
       return toLocalIsoTime(d);
     } catch(e) {
       // TZID unrecognised — record once per (feed, tzid) so the renderer can
@@ -190,6 +226,22 @@ function getTzOffsetMinutes(tzid, Y, M, D, hh, mm){
   return (targetUTC - asUTC.getTime()) / 60000;
 }
 
+// Minutes east of UTC that `tzid` is offset at a specific ABSOLUTE instant
+// (unlike getTzOffsetMinutes, which takes a wall-clock time treated as UTC).
+// Used for the second pass of the DST-aware conversion in parseICSDate.
+function _tzOffsetAtInstantMin(tzid, instantMs){
+  const dt = new Date(instantMs);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid, year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false,
+  });
+  const parts = {};
+  fmt.formatToParts(dt).forEach(p => { parts[p.type] = p.value; });
+  const h = +parts.hour === 24 ? 0 : +parts.hour;
+  const asIfUTC = Date.UTC(+parts.year, +parts.month-1, +parts.day, h, +parts.minute, +parts.second || 0);
+  return Math.round((asIfUTC - instantMs) / 60000);
+}
+
 // Unescape iCal text (RFC 5545 section 3.3.11)
 // IMPORTANT: order matters — \\ must be processed first, otherwise "\\n"
 // (literal backslash followed by n) would be misread as newline.
@@ -202,6 +254,21 @@ function parseExdateList(raw){
     if(!p) continue;
     const d = p.replace(/[^\d]/g, '');
     if(d.length >= 8) out.add(d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8));
+  }
+  return out;
+}
+
+/** Resolve EXDATE specs (each carrying its own TZID/VALUE) to a Set of LOCAL
+ *  YYYY-MM-DD dates, using the same conversion as occurrence dates so timezone'd
+ *  exclusions line up with the instances they cancel. */
+function _exdateSetFromSpecs(specs){
+  const out = new Set();
+  for(const s of specs){
+    if(!s || !s.v) continue;
+    const digits = String(s.v).replace(/[^\dTZ]/g, '');
+    const isDateOnly = s.valueType === 'DATE' || digits.length === 8;
+    const parsed = parseICSDate(s.v, isDateOnly, s.tzid);
+    if(parsed && parsed.iso) out.add(parsed.iso);
   }
   return out;
 }
@@ -263,6 +330,28 @@ function expandEventToDateRange(event, windowDays = 180){
   let iterations = 0;
   const maxIter = 2000;
 
+  // Each emitted occurrence is a CONCRETE instance: it must carry its own
+  // start/end dates and must NOT keep the rrule (otherwise _alldayRangeCovers
+  // bails and a recurring multi-day all-day event only shows on its start day,
+  // and timed occurrences inherit the first instance's stale end date). Shift
+  // endDateISO by the original start→end span so every occurrence spans the same
+  // number of days.
+  let _spanDays = 0;
+  if(event.endDateISO){
+    const s0 = new Date(event.dateISO + 'T00:00:00').getTime();
+    const e0 = new Date(event.endDateISO + 'T00:00:00').getTime();
+    if(Number.isFinite(s0) && Number.isFinite(e0) && e0 > s0) _spanDays = Math.round((e0 - s0) / 86400000);
+  }
+  const _occ = iso => {
+    const o = { ...event, dateISO: iso, rrule: null };
+    if(event.endDateISO){
+      const d = new Date(iso + 'T00:00:00');
+      d.setDate(d.getDate() + _spanDays);
+      o.endDateISO = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    }
+    return o;
+  };
+
   while(iterations < maxIter && current <= future){
     // For WEEKLY with BYDAY: expand each week cycle to all specified weekdays
     if(freq === 'WEEKLY' && byDays && byDays.length){
@@ -279,7 +368,7 @@ function expandEventToDateRange(event, windowDays = 180){
                     String(occ.getDate()).padStart(2,'0');
         if(until && iso > until.iso) continue;
         if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) continue;
-        results.push({ ...event, dateISO: iso });
+        results.push(_occ(iso));
         if(countActive && results.length >= count) break;
       }
       if(countActive && results.length >= count) break;
@@ -292,7 +381,7 @@ function expandEventToDateRange(event, windowDays = 180){
                     String(current.getDate()).padStart(2,'0');
         if(until && iso > until.iso) break;
         if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) { /* skip */ }
-        else { results.push({ ...event, dateISO: iso }); }
+        else { results.push(_occ(iso)); }
         if(countActive && results.length >= count) break;
       }
       if(freq === 'DAILY')        current.setDate(current.getDate() + interval);
@@ -314,6 +403,49 @@ function expandEventToDateRange(event, windowDays = 180){
 const CAL_FETCH_MAX_BYTES = 2_000_000;
 const CAL_FETCH_TIMEOUT_MS = 25000;
 
+// Parse the "loose" IPv4 forms that inet_aton / browsers accept but a naive
+// string check misses: a single decimal (2130706433), hex (0x7f000001), octal
+// (017700000001), or dotted with fewer than four octal/hex/decimal parts
+// (127.1). Returns the 32-bit address, or null when `host` is not such a form.
+function _calParseIpv4Loose(host){
+  if(typeof host !== 'string' || !/^[0-9a-fx.]+$/i.test(host)) return null;
+  const parts = host.split('.');
+  if(parts.length === 0 || parts.length > 4) return null;
+  const nums = [];
+  for(const p of parts){
+    if(p === '') return null;
+    let n;
+    if(/^0x[0-9a-f]+$/i.test(p)) n = parseInt(p, 16);
+    else if(/^0[0-7]+$/.test(p)) n = parseInt(p, 8);
+    else if(/^[0-9]+$/.test(p)) n = parseInt(p, 10);
+    else return null;
+    if(!Number.isFinite(n) || n < 0) return null;
+    nums.push(n);
+  }
+  // inet_aton semantics: the final part fills the remaining low-order bytes.
+  let ip;
+  switch(nums.length){
+    case 1: ip = nums[0]; break;
+    case 2: if(nums[0] > 0xff || nums[1] > 0xffffff) return null; ip = (nums[0] * 0x1000000) + nums[1]; break;
+    case 3: if(nums[0] > 0xff || nums[1] > 0xff || nums[2] > 0xffff) return null; ip = (nums[0] * 0x1000000) + (nums[1] * 0x10000) + nums[2]; break;
+    default: if(nums.some(x => x > 0xff)) return null; ip = (nums[0] * 0x1000000) + (nums[1] * 0x10000) + (nums[2] * 0x100) + nums[3];
+  }
+  if(ip < 0 || ip > 0xffffffff) return null;
+  return ip >>> 0;
+}
+
+// True for loopback / private / link-local / unspecified IPv4 (matches the
+// literal-string ranges blocked below, but applied to a parsed address so the
+// numeric/hex/octal/short obfuscations are caught too).
+function _calIpv4IsPrivate(ip){
+  const a = (ip >>> 24) & 0xff, b = (ip >>> 16) & 0xff;
+  if(a === 127 || a === 10 || a === 0) return true;            // loopback, 10/8, 0/8
+  if(a === 192 && b === 168) return true;                      // 192.168/16
+  if(a === 169 && b === 254) return true;                      // link-local + cloud metadata
+  if(a === 172 && b >= 16 && b <= 31) return true;             // 172.16/12
+  return false;
+}
+
 function _calFetchUrlOk(urlStr){
   let u;
   try{ u = new URL(urlStr, window.location.href); }
@@ -328,6 +460,14 @@ function _calFetchUrlOk(urlStr){
   // Strip IPv6 brackets if present
   if(h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
   if(h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return false;
+  // Numeric/hex/octal/short IPv4 obfuscations (e.g. http://2130706433/,
+  // http://0x7f000001/, http://127.1/) — parse to a real address and block if
+  // it lands in a private range. Without this the string checks below miss them.
+  const _ip = _calParseIpv4Loose(h);
+  if(_ip != null && _calIpv4IsPrivate(_ip)) return false;
+  // Well-known DNS-rebind helpers that resolve arbitrary names to loopback /
+  // private addresses without exposing an IP literal in the hostname.
+  if(/(^|\.)(nip\.io|xip\.io|sslip\.io|localtest\.me|lvh\.me|vcap\.me|localho\.st)$/i.test(h)) return false;
   if(h.startsWith('127.') ||
      h.startsWith('10.') ||
      h.startsWith('192.168.') ||
@@ -655,17 +795,29 @@ function getWhatNextCalConflictHint(opts){
  * @param {string} eventUid
  * @returns {number|undefined} new task id
  */
-function createTaskFromCalEventCore(feedId, eventUid){
+function createTaskFromCalEventCore(feedId, eventUid, eventDate){
   _loadCalFeeds();
   const feed = _calFeeds.feeds.find(f => f.id === feedId);
   if(!feed) return;
-  const ev = (feed.events || []).find(e => (e.uid || '') === (eventUid || ''));
+  const events = feed.events || [];
+  const wantDate = eventDate ? String(eventDate) : null;
+  // A recurring event expands into many rows sharing ONE uid, so a uid-only
+  // match always returned the FIRST (often long-past) occurrence and the task
+  // got the wrong due date. Prefer an exact uid+date match for the clicked
+  // occurrence; fall back to uid-only for non-recurring events or callers that
+  // don't pass a date.
+  const ev = (wantDate && events.find(e => (e.uid || '') === (eventUid || '') && (e.dateISO || '') === wantDate))
+    || events.find(e => (e.uid || '') === (eventUid || ''));
   if(!ev) return;
   if(typeof taskIdCtr === 'undefined' || !Array.isArray(tasks) || typeof defaultTaskProps !== 'function') return;
-  const fid = String(feedId), uid = String(eventUid || '');
+  const fid = String(feedId), uid = String(eventUid || ''), occDate = String(ev.dateISO || '');
   for(const x of tasks){
     const ex = x && x._ext;
-    if(ex && String(ex.calFeedId) === fid && String(ex.calEventUid) === uid) return x.id;
+    // Dedup per OCCURRENCE so each instance of a recurring event can become its
+    // own task. A legacy task without calEventDate matches any date (preserves
+    // the old single-task-per-event dedup rather than spawning a duplicate).
+    if(ex && String(ex.calFeedId) === fid && String(ex.calEventUid) === uid
+        && (ex.calEventDate == null || String(ex.calEventDate) === occDate)) return x.id;
   }
   const descParts = [];
   if(ev.description) descParts.push(String(ev.description));
@@ -687,7 +839,7 @@ function createTaskFromCalEventCore(feedId, eventUid){
   if(Array.isArray(t.tags) && feed.label){
     t.tags[1] = String(feed.label).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'feed';
   }
-  t._ext = Object.assign({}, t._ext || {}, { calFeedId: fid, calEventUid: uid });
+  t._ext = Object.assign({}, t._ext || {}, { calFeedId: fid, calEventUid: uid, calEventDate: occDate });
   tasks.push(t);
   if(typeof _taskIndexRegister === 'function') _taskIndexRegister(t);
   return t.id;
@@ -698,8 +850,8 @@ function createTaskFromCalEventCore(feedId, eventUid){
  * @param {string} feedId
  * @param {string} eventUid
  */
-function createTaskFromCalEvent(feedId, eventUid){
-  const id = createTaskFromCalEventCore(feedId, eventUid);
+function createTaskFromCalEvent(feedId, eventUid, eventDate){
+  const id = createTaskFromCalEventCore(feedId, eventUid, eventDate);
   if(id == null) return;
   if(typeof saveState === 'function') saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();

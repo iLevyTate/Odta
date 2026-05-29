@@ -218,7 +218,7 @@ function _renderCalDayAgendaHtml(isoDate, byDate, dayOnly){
   feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
     const uid = String(ev.uid || '');
     const mk = uid && typeof createTaskFromCalEvent === 'function'
-      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid, String(ev.dateISO || '')])}'>+Task</button>`
       : '';
     rows += '<div class="cal-agenda-row cal-agenda-feed">'
       + '<span class="cal-agenda-dot" data-feed-color="'+escAttr(sanitizeListColor(ev.feedColor))+'"></span>'
@@ -282,7 +282,7 @@ function renderCalTasks(arr, isoDate){
     html += showEvs.map(ev => {
       const uid = String(ev.uid || '');
       const mk = uid && typeof createTaskFromCalEvent === 'function'
-        ? `<button type="button" class="cal-ev-mk-task" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+        ? `<button type="button" class="cal-ev-mk-task" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid, String(ev.dateISO || '')])}'>+Task</button>`
         : '';
       return `<div class="cal-task cal-feed-event" data-feed-color="${escAttr(sanitizeListColor(ev.feedColor))}" title="${esc(ev.feedLabel)}: ${esc(ev.title)}${ev.time?' at '+esc(String(ev.time)):''}${ev.location?' — '+esc(ev.location):''}">`
         + mk
@@ -1444,16 +1444,27 @@ function _pruneUndoRing(){
   while(_undoRing.length > _UNDO_RING_MAX) _undoRing.shift();
 }
 function pushUndo(label, undoFn){
-  if(typeof undoFn !== 'function') return;
-  _undoRing.push({ ts: Date.now(), label: String(label || 'Last action'), fn: undoFn });
+  if(typeof undoFn !== 'function') return null;
+  const entry = { ts: Date.now(), label: String(label || 'Last action'), fn: undoFn };
+  _undoRing.push(entry);
   _pruneUndoRing();
+  return entry;
 }
 function popUndo(){
   _pruneUndoRing();
   return _undoRing.pop() || null;
 }
+// Remove a specific ring entry once its action-toast Undo button has already
+// run it. Without this, the entry lingers and a follow-up Cmd+Z replays the
+// same undo — re-inserting deleted tasks and duplicating state.
+function removeUndoEntry(entry){
+  if(!entry) return;
+  const i = _undoRing.indexOf(entry);
+  if(i >= 0) _undoRing.splice(i, 1);
+}
 window.pushUndo = pushUndo;
 window.popUndo = popUndo;
+window.removeUndoEntry = removeUndoEntry;
 
 // Keyboard shortcut: Ctrl+Z / Cmd+Z — undo the last action. Falls back to the
 // extended ring buffer when there's no live action-toast to click.
@@ -3603,6 +3614,10 @@ window.showPomodoroSummary=function(){
 let _mdAttachUrls = [];
 let _mdAttachLightboxUrl = null;
 let _mdVoiceSession = null;
+// Monotonic token so a slower, superseded renderMdAttachments() run (it awaits
+// IndexedDB reads between creating object URLs) can't keep appending nodes or
+// object URLs after a newer render has already revoked them and rebuilt the DOM.
+let _mdAttachRenderSeq = 0;
 
 function _pickMdAudioMime(){
   if(typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
@@ -3715,11 +3730,15 @@ document.addEventListener('keydown', e => {
 async function renderMdAttachments(taskId){
   const host = gid('mdAttachments');
   if(!host) return;
+  const mySeq = ++_mdAttachRenderSeq;
   if(_mdVoiceSession && _mdVoiceSession.taskId !== taskId) _abortMdVoiceRecording();
   _revokeMdAttachUrls();
   host.replaceChildren();
   if(typeof listTaskAttachments !== 'function') return;
   const rows = await listTaskAttachments(taskId);
+  // A newer render started while we awaited — stop before touching the DOM it
+  // now owns (and before minting object URLs it would have to revoke).
+  if(mySeq !== _mdAttachRenderSeq) return;
   const tools = document.createElement('div');
   tools.className = 'md-attach-tools';
   const photoLbl = document.createElement('label');
@@ -3837,6 +3856,7 @@ async function renderMdAttachments(taskId){
     card.className = 'md-attach-card md-attach-'+row.kind;
     if(row.kind === 'image' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
+      if(mySeq !== _mdAttachRenderSeq) return; // superseded mid-read
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
         if(url){
@@ -3862,6 +3882,7 @@ async function renderMdAttachments(taskId){
       }
     } else if(row.kind === 'audio' && typeof _attachGet === 'function'){
       const full = await _attachGet(row.id);
+      if(mySeq !== _mdAttachRenderSeq) return; // superseded mid-read
       if(full && full.blob){
         const url = attachmentObjectUrl(full);
         if(url){
@@ -3892,6 +3913,9 @@ async function renderMdAttachments(taskId){
     hint.textContent = 'Photos and voice notes stay on this device (not synced).';
     grid.appendChild(hint);
   }
+  // Final supersession check: a newer render may have started (and cleared the
+  // host) during the loop's last await — don't append our now-stale grid on top.
+  if(mySeq !== _mdAttachRenderSeq) return;
   host.appendChild(grid);
 }
 window.renderMdAttachments = renderMdAttachments;

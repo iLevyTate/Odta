@@ -11,8 +11,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function loadCreateTaskFromCalEventCore() {
   const src = readFileSync(join(root, 'js', 'calfeeds.js'), 'utf8');
-  const start = src.indexOf('function createTaskFromCalEventCore(feedId, eventUid){');
-  const end = src.indexOf('function createTaskFromCalEvent(feedId, eventUid){', start);
+  const start = src.indexOf('function createTaskFromCalEventCore(feedId, eventUid, eventDate){');
+  const end = src.indexOf('function createTaskFromCalEvent(feedId, eventUid, eventDate){', start);
   assert.ok(start >= 0 && end > start, 'slice createTaskFromCalEventCore');
   const fnBody = src.slice(start, end).replace(/\s*$/, '');
   const factory = new Function(

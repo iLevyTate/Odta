@@ -298,7 +298,7 @@ async function predictClassifyCategory(taskId){
     });
     const nextCat = meta && meta.category;
     const beforeCat = t.category || null;
-    if(!nextCat || nextCat === 'general' || (typeof hasClassificationCategory === 'function' && !hasClassificationCategory(nextCat))){
+    if(!nextCat || nextCat === 'general' || (typeof isAssignableCategory === 'function' && !isAssignableCategory(nextCat))){
       return { skip: true, beforeCat };
     }
     if(nextCat === beforeCat) return { skip: true, beforeCat };
@@ -325,7 +325,7 @@ async function executeClassifyTaskOp(op){
   if(pc){
     if(pc.skip) return { type: 'noop' };
     if(pc.nextCat){
-      if(typeof hasClassificationCategory === 'function' && !hasClassificationCategory(pc.nextCat)) return { type: 'noop' };
+      if(typeof isAssignableCategory === 'function' && !isAssignableCategory(pc.nextCat)) return { type: 'noop' };
       if(pc.nextCat === (t.category || null)) return { type: 'noop' };
       const beforeCat = t.category;
       t.category = pc.nextCat;
@@ -352,7 +352,7 @@ async function executeClassifyTaskOp(op){
       k: 5,
     });
     const nextCat = meta && meta.category;
-    if(!nextCat || nextCat === 'general' || (typeof hasClassificationCategory === 'function' && !hasClassificationCategory(nextCat))){
+    if(!nextCat || nextCat === 'general' || (typeof isAssignableCategory === 'function' && !isAssignableCategory(nextCat))){
       return { type: 'noop' };
     }
     if(nextCat === (t.category || null)) return { type: 'noop' };
@@ -587,7 +587,7 @@ function executeIntelOp(op){
     case 'CREATE_FROM_EVENT':{
       if(a.eventUid == null || a.feedId == null) return null;
       if(typeof createTaskFromCalEventCore !== 'function') return null;
-      const idNew = createTaskFromCalEventCore(a.feedId, a.eventUid);
+      const idNew = createTaskFromCalEventCore(a.feedId, a.eventUid, a.eventDate);
       if(!idNew) return null;
       return { type: 'created', id: idNew };
     }
@@ -2314,7 +2314,7 @@ async function _buildSmartAddSuggestions(raw){
     const EFF = ['xs','s','m','l','xl'];
     const EN = ['high','low'];
     if(sugg.priority && PR.includes(sugg.priority) && sugg.priority !== 'none') cleaned.priority = sugg.priority;
-    if(sugg.category && typeof hasClassificationCategory === 'function' && hasClassificationCategory(sugg.category)) cleaned.category = sugg.category;
+    if(sugg.category && typeof isAssignableCategory === 'function' && isAssignableCategory(sugg.category)) cleaned.category = sugg.category;
     if(sugg.effort && EFF.includes(sugg.effort)) cleaned.effort = sugg.effort;
     if(sugg.energyLevel && EN.includes(sugg.energyLevel)) cleaned.energyLevel = sugg.energyLevel;
     if(Array.isArray(sugg.tags)) cleaned.tags = sugg.tags.filter(t => typeof t === 'string' && t.length && t.length < 25).slice(0, 5);

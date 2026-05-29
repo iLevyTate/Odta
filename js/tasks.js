@@ -203,6 +203,27 @@ window.invalidateDupMap = function(){ window._dupSimMap = null; };
 // Parse natural language tokens from input: @priority, #tag, !star, ~recur, today/tomorrow/mon-sun
 function _qaPad2(n){ return String(n).padStart(2,'0'); }
 
+/**
+ * Relative-date math anchored to the user's local "today" (an ISO yyyy-mm-dd
+ * string from todayISO()), computed in UTC to stay free of timezone/DST drift.
+ * Using `new Date()` here would resolve "tomorrow" against the machine's UTC
+ * instant rather than the user's local calendar day — wrong near midnight.
+ */
+function _qaShiftISO(dayIso, days){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayIso || '');
+  if(!m) return dayIso;
+  const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.getUTCFullYear()+'-'+_qaPad2(d.getUTCMonth()+1)+'-'+_qaPad2(d.getUTCDate());
+}
+
+/** Day-of-week (0=Sun..6=Sat) for an ISO yyyy-mm-dd string, in UTC. */
+function _qaDayOfWeek(dayIso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayIso || '');
+  if(!m) return new Date().getDay();
+  return new Date(Date.UTC(+m[1], +m[2]-1, +m[3])).getUTCDay();
+}
+
 function _qaLocalDateTime(dayIso, hour, minute){
   if(!dayIso) return null;
   return dayIso + 'T' + _qaPad2(hour) + ':' + _qaPad2(minute);
@@ -324,19 +345,16 @@ function parseQuickAdd(raw){
   const lower=' '+text.toLowerCase()+' ';
   if(/\btoday\b(?!['’])/i.test(lower)){props.dueDate=todayISOs;text=text.replace(/\btoday\b(?!['’])/i,'')}
   else if(/\btomorrow\b(?!['’])|\btmrw\b(?!['’])/i.test(lower)){
-    const d=new Date();d.setDate(d.getDate()+1);
-    props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    props.dueDate=_qaShiftISO(todayISOs,1);
     text=text.replace(/\btomorrow\b(?!['’])|\btmrw\b(?!['’])/i,'');
   }else if(/\bnext week\b/i.test(lower)){
-    const d=new Date();d.setDate(d.getDate()+7);
-    props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    props.dueDate=_qaShiftISO(todayISOs,7);
     text=text.replace(/\bnext week\b/i,'');
   }else if(/\bin\s+(\d+)\s+days?\b/i.test(lower)){
     const m=lower.match(/\bin\s+(\d+)\s+days?\b/i);
     if(m){
       const n=parseInt(m[1],10)||0;
-      const d=new Date();d.setDate(d.getDate()+n);
-      props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      props.dueDate=_qaShiftISO(todayISOs,n);
       text=text.replace(/\bin\s+\d+\s+days?\b/i,'');
     }
   }else if(/\beod\b/i.test(lower)){
@@ -346,10 +364,9 @@ function parseQuickAdd(raw){
     const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
     if(dayMatch){
       const target=days[dayMatch[1].toLowerCase().slice(0,3)];
-      const d=new Date();const today=d.getDay();
+      const today=_qaDayOfWeek(todayISOs);
       let diff=(target-today+7)%7;if(diff===0)diff=7;
-      d.setDate(d.getDate()+diff);
-      props.dueDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      props.dueDate=_qaShiftISO(todayISOs,diff);
       text=text.replace(dayMatch[0],'');
     }
   }
