@@ -399,7 +399,10 @@ function _mergeState(remote, opts){
     if (remote.totalFocusSec != null) totalFocusSec = Math.max(totalFocusSec, Math.max(0, parseInt(remote.totalFocusSec, 10) || 0));
     if (remote.intIdCtr != null) intIdCtr = Math.max(intIdCtr, Math.max(0, parseInt(remote.intIdCtr, 10) || 0));
     if (remote.logIdCtr != null) logIdCtr = Math.max(logIdCtr, Math.max(0, parseInt(remote.logIdCtr, 10) || 0));
-    if (remote.pomosInCycle != null) pomosInCycle = Math.max(pomosInCycle, Math.max(0, parseInt(remote.pomosInCycle, 10) || 0));
+    // NOTE: pomosInCycle is a cadence POSITION (0..cfg.cycle), not a cumulative
+    // counter. Math.max-ing it on a same-ms tie can push it past cfg.cycle and
+    // wedge the long-break cadence (it never resets), so keep the local value
+    // on an exact collision — matching storage.js _mergeRemoteStateLww.
   }
 
   if(typeof persistAfterSyncMerge === 'function') persistAfterSyncMerge(re, rn);

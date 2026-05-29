@@ -78,7 +78,7 @@ function makeMergeRun() {
       _mergeState(remote, opts || {});
       return {
         tasks, lists, goals, taskIdCtr, listIdCtr, goalIdCtr, syncTaskDels, syncListDels, syncGoalDels, stateEpoch, stateNonce,
-        timeLog, cfg, theme, totalPomos, totalFocusSec, saveReason: _saveReason,
+        timeLog, cfg, theme, totalPomos, totalFocusSec, pomosInCycle, saveReason: _saveReason,
       };
     };
   `)();
@@ -134,6 +134,31 @@ test('merge: list LWW and delete via syncListDels', () => {
     { lists: [], syncListDels: { 1: 200 }, listIdCtr: 1 },
   );
   assert.equal(o2.lists.length, 0);
+});
+
+test('merge: same-ms tie unions cumulative counters but keeps local pomosInCycle', () => {
+  const run = makeMergeRun();
+  // Exact epoch+nonce collision → the tie branch. Cumulative totals union via
+  // Math.max, but pomosInCycle is a cadence POSITION and must NOT be inflated
+  // (Math.max-ing it could push it past cfg.cycle and wedge the long break).
+  const o = run(
+    { stateEpoch: 1000, stateNonce: 5, totalPomos: 2, totalFocusSec: 60, pomosInCycle: 1 },
+    { stateEpoch: 1000, stateNonce: 5, totalPomos: 5, totalFocusSec: 120, pomosInCycle: 3 },
+  );
+  assert.equal(o.totalPomos, 5, 'cumulative pomos still union to the max');
+  assert.equal(o.totalFocusSec, 120, 'cumulative focus still unions to the max');
+  assert.equal(o.pomosInCycle, 1, 'cadence position keeps the local value, not Math.max');
+});
+
+test('merge: newer remote epoch still overwrites pomosInCycle', () => {
+  const run = makeMergeRun();
+  // When remote genuinely wins (higher epoch), taking its cadence position is
+  // correct — only the same-ms tie keeps local.
+  const o = run(
+    { stateEpoch: 1000, stateNonce: 1, pomosInCycle: 1 },
+    { stateEpoch: 2000, stateNonce: 1, pomosInCycle: 3 },
+  );
+  assert.equal(o.pomosInCycle, 3, 'a newer epoch overwrites the cadence position');
 });
 
 test('merge: stateEpoch remote newer applies timeLog and cfg', () => {
