@@ -30,6 +30,18 @@ function _saveCalFeeds(){
   try { localStorage.setItem(CALFEEDS_KEY, JSON.stringify(_calFeeds)); } catch(e) {}
 }
 
+// Cross-tab freshness: another tab can add / remove / re-sync a feed and rewrite
+// CALFEEDS_KEY. This tab's in-memory cache is only populated once, so without
+// invalidation it would serve stale feeds (and overwrite the other tab's work on
+// the next save). The `storage` event fires only in OTHER tabs, so dropping the
+// cache here is safe — the next _loadCalFeeds() re-reads the authoritative value.
+// (All mutations persist via _saveCalFeeds, so there is no unsaved in-memory state.)
+if(typeof window !== 'undefined' && typeof window.addEventListener === 'function'){
+  window.addEventListener('storage', e => {
+    if(e && e.key === CALFEEDS_KEY) _calFeeds = null;
+  });
+}
+
 // ── Parser: minimal but correct iCalendar subset ───────────────────────────
 // Handles VEVENT entries with DTSTART, DTEND, SUMMARY, DESCRIPTION, LOCATION,
 // UID, RRULE. Properly unfolds long lines (RFC 5545: lines continue on the
