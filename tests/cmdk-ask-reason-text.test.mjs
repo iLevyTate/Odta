@@ -25,8 +25,8 @@ test('_cmdkAskReasonText: known reasons map to friendly copy', () => {
   const f = loadReasonText();
   assert.equal(f('ABORTED'), 'Stopped.');
   assert.match(f('TIMEOUT'), /Timed out/);
-  assert.match(f('PARSE_FAILED'), /parse a valid plan/);
-  assert.match(f('PARSE_FAILED:no_ops'), /parse a valid plan/);
+  assert.match(f('PARSE_FAILED'), /couldn’t turn that into an answer/i);
+  assert.match(f('PARSE_FAILED:no_ops'), /couldn’t turn that into an answer/i);
 });
 
 test('_cmdkAskReasonText: internal codes never leak verbatim', () => {

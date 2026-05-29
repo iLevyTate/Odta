@@ -958,7 +958,7 @@ function _cmdkAskReasonText(reason){
   const r = typeof reason === 'string' ? reason : '';
   if(r === 'ABORTED') return 'Stopped.';
   if(r === 'TIMEOUT') return 'Timed out — try a shorter request or a smaller model.';
-  if(r.startsWith('PARSE_FAILED')) return 'Couldn’t parse a valid plan. Try rephrasing.';
+  if(r.startsWith('PARSE_FAILED')) return 'I couldn’t turn that into an answer. Try asking “what’s next?”, “what’s overdue?”, or naming a task — e.g. “make the electric bill urgent”.';
   if(r === 'SCHEMA_UNAVAILABLE' || r === 'ASK_HELPERS_MISSING') return 'Ask is still warming up — give it a moment and try again.';
   return 'Something went wrong handling that request. Try rephrasing.';
 }

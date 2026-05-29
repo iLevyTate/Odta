@@ -483,6 +483,75 @@ async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
   }
 }
 
+// Deterministic, non-LLM answer for common question-shaped queries. The
+// on-device model (especially the default SmolLM2-360M) frequently fails to
+// produce a usable answer for terse questions like "what's next"; rather than
+// dead-end on "Couldn't parse a valid plan", we compute a grounded answer
+// straight from the user's task data so these queries always get a real reply.
+// Best-effort: returns '' when there's no global `tasks` table to read, so
+// callers cleanly fall through to their prior behaviour. Reuses rankWhatNext()
+// (js/intel-features.js) when present, with a self-contained priority/due
+// fallback so it still works in the test sandbox where that global is absent.
+function _askDeterministicAnswer(q){
+  if(typeof tasks === 'undefined' || !Array.isArray(tasks)) return '';
+  const today = _askToday();
+  const active = tasks.filter(t => t && !t.archived && t.status !== 'done');
+  const s = String(q || '').toLowerCase();
+
+  const dueLabel = (t) => {
+    if(!t.dueDate) return '';
+    if(typeof describeDue === 'function'){
+      const d = describeDue(t.dueDate);
+      return (d && d.label) ? ' (' + String(d.label).toLowerCase() + ')' : '';
+    }
+    if(t.dueDate < today) return ' (overdue)';
+    if(t.dueDate === today) return ' (today)';
+    return ' (due ' + t.dueDate + ')';
+  };
+  const nameOf = (t) => _askStripCtrl(t.name || '(untitled)').slice(0, 80);
+  const bullets = (arr) => arr.map(t => '• ' + nameOf(t) + dueLabel(t)).join('\n');
+
+  // Ranked "what to do next" — reuse the app's scorer when available, else a
+  // self-contained priority + due-date + starred fallback.
+  const ranked = () => {
+    if(typeof rankWhatNext === 'function'){
+      try{ return rankWhatNext(tasks, {}).map(r => r.t); }catch(e){}
+    }
+    const prioW = { urgent: 40, high: 28, normal: 14, low: 6, none: 0 };
+    const score = (t) => (prioW[t.priority || 'none'] || 0)
+      + (t.dueDate && t.dueDate < today ? 30 : (t.dueDate === today ? 22 : 0))
+      + (t.starred ? 12 : 0);
+    return active.slice().sort((a, b) => score(b) - score(a));
+  };
+
+  if(/\b(overdue|late|past due)\b/.test(s)){
+    const od = active.filter(t => t.dueDate && t.dueDate < today)
+      .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+    if(!od.length) return 'Nothing is overdue right now.';
+    return 'You have ' + od.length + ' overdue task' + (od.length !== 1 ? 's' : '') + ':\n' + bullets(od.slice(0, 8));
+  }
+
+  if(/\b(due today|today|due now)\b/.test(s)){
+    const td = active.filter(t => t.dueDate === today);
+    if(!td.length) return 'Nothing is due today.';
+    return td.length + ' task' + (td.length !== 1 ? 's' : '') + ' due today:\n' + bullets(td.slice(0, 8));
+  }
+
+  if(/\b(summar|overview|on my plate|how many|status|recap)\b/.test(s)){
+    const overdue = active.filter(t => t.dueDate && t.dueDate < today).length;
+    const dueToday = active.filter(t => t.dueDate === today).length;
+    const top = ranked().slice(0, 3);
+    let out = 'You have ' + active.length + ' open task' + (active.length !== 1 ? 's' : '')
+      + ' — ' + overdue + ' overdue, ' + dueToday + ' due today.';
+    if(top.length) out += '\nTop focus:\n' + bullets(top);
+    return out;
+  }
+
+  // Default: "what's next" / "what should I do" / focus-style questions.
+  if(!active.length) return 'You have no open tasks right now — your list is clear.';
+  return 'Here\'s what to focus on next:\n' + bullets(ranked().slice(0, 5));
+}
+
 /**
  * @param {string} query
  * @param {{ onToken?:(t:string)=>void, onReadRound?:(summary:object)=>void, signal?:AbortSignal }} [opts]
@@ -666,6 +735,14 @@ async function cognitaskRun(query, opts){
         if(typeof pushAskHistory === 'function') pushAskHistory(q);
         return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer };
       }
+      // The model produced nothing usable even in the dedicated prose pass.
+      // Fall back to a grounded answer computed directly from the user's tasks
+      // so a question like "what's next" never dead-ends on PARSE_FAILED.
+      const det = _askDeterministicAnswer(q);
+      if(det){
+        if(typeof pushAskHistory === 'function') pushAskHistory(q);
+        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer: det };
+      }
     }
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'PARSE_FAILED:' + (lastError && lastError.message ? lastError.message : 'no_ops') };
   }
@@ -777,6 +854,13 @@ async function cognitaskRun(query, opts){
         if(typeof pushAskHistory === 'function') pushAskHistory(q);
         return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer };
       }
+      // Prose pass came back empty too — answer from task data so the user
+      // gets something useful instead of a bare "No changes to apply."
+      const det = _askDeterministicAnswer(q);
+      if(det){
+        if(typeof pushAskHistory === 'function') pushAskHistory(q);
+        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer: det };
+      }
     }
     return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds };
   }
@@ -815,6 +899,7 @@ if(typeof window !== 'undefined'){
   window._askWriteRetrySystemPrompt = _askWriteRetrySystemPrompt;
   window._askIsQuestionLike = _askIsQuestionLike;
   window._askIsImperative = _askIsImperative;
+  window._askDeterministicAnswer = _askDeterministicAnswer;
   window._askCtx = _askCtx;
   window._askCalendarBlock = _askCalendarBlock;
 }

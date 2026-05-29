@@ -795,3 +795,51 @@ test('askRun: a direct generation abort surfaces reason ABORTED, not PARSE_FAILE
   assert.equal(res.ok, false);
   assert.equal(res.reason, 'ABORTED');
 });
+
+test('askRun: question with all-unparseable model output falls back to a deterministic answer', async () => {
+  // The reported bug: a terse question ("What's next") on a weak on-device
+  // model that never emits parseable ops OR usable prose used to dead-end on
+  // "Couldn't parse a valid plan." Now, when every model pass scrubs to empty,
+  // a grounded answer is computed straight from the user's tasks.
+  const tasks = [
+    { id: 1, name: 'Pay electric bill', status: 'open', priority: 'urgent', archived: false, lastModified: 2 },
+    { id: 2, name: 'Buy milk',          status: 'open', priority: 'normal', archived: false, lastModified: 1 },
+  ];
+  // '[,' fails parseOpsJson on every turn and scrubs to '' in the prose pass.
+  const { win } = mkSandbox({ tasks, genResponse: '[,' });
+  const res = await win.askRun("what's next", {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.equal(res.ops.length, 0);
+  assert.notEqual(res.reason, 'PARSE_FAILED');
+  assert.ok(res.chatAnswer && /electric bill/i.test(res.chatAnswer), 'expected grounded answer naming a task: ' + res.chatAnswer);
+});
+
+test('askRun: question with no open tasks answers deterministically, never PARSE_FAILED', async () => {
+  const { win } = mkSandbox({ tasks: [], genResponse: '[,' });
+  const res = await win.askRun("what's next", {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.notEqual(res.reason, 'PARSE_FAILED');
+  assert.ok(res.chatAnswer && /no open tasks/i.test(res.chatAnswer), res.chatAnswer);
+});
+
+test('_askDeterministicAnswer: routes overdue / today / next intents off task data', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const tasks = [
+    { id: 1, name: 'Overdue thing', status: 'open', priority: 'high',   archived: false, dueDate: '2000-01-01' },
+    { id: 2, name: 'Today thing',   status: 'open', priority: 'normal', archived: false, dueDate: today },
+    { id: 3, name: 'Someday thing', status: 'open', priority: 'low',    archived: false },
+  ];
+  const { win } = mkSandbox({ tasks });
+  const overdue = win._askDeterministicAnswer('what is overdue?');
+  assert.match(overdue, /Overdue thing/);
+  assert.ok(!/Someday thing/.test(overdue), 'overdue answer must not list non-overdue tasks: ' + overdue);
+  assert.match(win._askDeterministicAnswer('what is due today?'), /Today thing/);
+  // "what's next" ranks the overdue + high-priority task first.
+  assert.match(win._askDeterministicAnswer("what's next"), /Overdue thing/);
+});
+
+test('_askDeterministicAnswer: empty task list yields a clear-list answer, not ""', () => {
+  const { win } = mkSandbox({ tasks: [] });
+  assert.equal(typeof win._askDeterministicAnswer, 'function');
+  assert.match(win._askDeterministicAnswer("what's next"), /no open tasks/i);
+});
