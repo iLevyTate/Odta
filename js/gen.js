@@ -460,8 +460,12 @@ async function genGenerate(opts){
   try{
     // Route aborts through InterruptableStoppingCriteria when available so
     // decoding halts immediately instead of continuing in the background.
+    // Interrupt THIS call's own `stopping` (captured in closure) rather than
+    // gating on the global `_genStoppingCriteria`, which a concurrent
+    // generation can overwrite — otherwise aborting the earlier call would
+    // silently fail to stop it.
     ctl.signal.addEventListener('abort', () => {
-      if(stopping && _genStoppingCriteria === stopping && typeof stopping.interrupt === 'function'){
+      if(stopping && typeof stopping.interrupt === 'function'){
         try{ stopping.interrupt(); }catch(e){}
       }
     }, { once: true });
@@ -492,6 +496,13 @@ async function genGenerate(opts){
         stopping = new mod.InterruptableStoppingCriteria();
         _genStoppingCriteria = stopping;
         _genActiveStoppers.add(stopping); // (M5)
+        // If abort already fired while we were importing the runtime, the
+        // (once:true) listener above ran when `stopping` was still null and
+        // won't run again. Interrupt immediately so a pre-creation abort still
+        // halts decoding instead of running to max_new_tokens.
+        if(ctl.signal.aborted && typeof stopping.interrupt === 'function'){
+          try{ stopping.interrupt(); }catch(e){}
+        }
       }
     }catch(e){
       // streaming/stopping criteria are best-effort; generation still works without them.
@@ -561,7 +572,10 @@ function parseQwen25ToolCallBlocks(text){
   const pushOne = (obj) => {
     if(!obj || typeof obj.name !== 'string') return;
     const name = String(obj.name).toUpperCase().replace(/\s/g, '_');
-    let a = obj.arguments;
+    // Qwen2.5 emits `arguments`, but smaller models (and our own prompt
+    // examples / TOOL_SCHEMA) frequently use `args`. Accept either so valid
+    // tool calls aren't silently dropped, falling through to a parse failure.
+    let a = obj.arguments != null ? obj.arguments : obj.args;
     if(a == null) a = {};
     else if(typeof a === 'string'){
       try{ a = JSON.parse(a); }catch(e){ a = {}; }
