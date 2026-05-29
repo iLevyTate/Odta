@@ -446,6 +446,10 @@ function resetQuickTimer(id){
 function removeQuickTimer(id){
   const qt=quickTimers.find(t=>t.id===id);if(qt)cancelQtAudio(qt);
   quickTimers=quickTimers.filter(t=>t.id!==id);
+  // Removing the last running quick timer must release the wake-lock / silent
+  // keepalive oscillator, exactly like resetQuickTimer does — otherwise it
+  // keeps burning battery with nothing left to count.
+  maybeStopKeepalive();
   renderQuickTimers();saveState('user')
 }
 

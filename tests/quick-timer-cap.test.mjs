@@ -52,6 +52,17 @@ test('no call to the undefined pruneFinishedQuickTimers helper remains', () => {
   assert.equal(bareCalls.length, 0, 'found a call to the undefined pruneFinishedQuickTimers: ' + JSON.stringify(bareCalls));
 });
 
+test('removeQuickTimer releases keepalive when the last timer goes away', () => {
+  // Regression: removeQuickTimer dropped the timer but never called
+  // maybeStopKeepalive(), so deleting the last running quick timer left the
+  // wake-lock / silent oscillator burning battery (resetQuickTimer already
+  // guarded this).
+  const idx = timerSrc.indexOf('function removeQuickTimer');
+  assert.ok(idx > 0, 'removeQuickTimer not found');
+  const body = timerSrc.slice(idx, idx + 400);
+  assert.match(body, /maybeStopKeepalive\(\)/, 'removeQuickTimer must release keepalive');
+});
+
 test('_pruneFinishedQuickTimers cancels audio for pruned timers', () => {
   const idx = timerSrc.indexOf('function _pruneFinishedQuickTimers');
   assert.ok(idx > 0, '_pruneFinishedQuickTimers not found');
