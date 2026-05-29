@@ -86,8 +86,21 @@ function parseICS(text){
         if(p.startsWith('VALUE=')) valueType = p.slice(6);
       }
     }
-    if(keyPart === 'EXDATE' && current.EXDATE) current.EXDATE = String(current.EXDATE) + ',' + value;
-    else current[keyPart] = value;
+    if(keyPart === 'EXDATE'){
+      // Keep each EXDATE value WITH its own TZID/VALUE params. A timed or UTC
+      // EXDATE must be resolved to the same local date as the occurrence it
+      // cancels; dropping the zone (the old behaviour) made the literal date
+      // digits mismatch the local occurrence date and the exclusion silently
+      // missed. The concatenated string is retained only as a legacy fallback.
+      current._exdateSpecs = current._exdateSpecs || [];
+      for(const part of String(value).split(',')){
+        const v = part.trim();
+        if(v) current._exdateSpecs.push({ v, tzid, valueType });
+      }
+      current.EXDATE = current.EXDATE ? String(current.EXDATE) + ',' + value : value;
+    } else {
+      current[keyPart] = value;
+    }
     if(keyPart === 'DTSTART' || keyPart === 'DTEND'){
       current[keyPart + '_TZID'] = tzid;
       current[keyPart + '_VALUE'] = valueType;
@@ -104,7 +117,11 @@ function normaliseEvent(ev){
   const start = parseICSDate(ev.DTSTART, ev.DTSTART_VALUE === 'DATE', ev.DTSTART_TZID);
   if(!start) return null;
   const end = ev.DTEND ? parseICSDate(ev.DTEND, ev.DTEND_VALUE === 'DATE', ev.DTEND_TZID) : null;
-  const exdateSet = ev.EXDATE ? parseExdateList(ev.EXDATE) : new Set();
+  // Prefer zone-aware specs (resolve each EXDATE to a LOCAL date so it matches
+  // the occurrence dates); fall back to the literal-date parser for safety.
+  const exdateSet = Array.isArray(ev._exdateSpecs) && ev._exdateSpecs.length
+    ? _exdateSetFromSpecs(ev._exdateSpecs)
+    : (ev.EXDATE ? parseExdateList(ev.EXDATE) : new Set());
   return {
     uid:         (ev.UID || '').slice(0, 200),
     title:       unescapeICS(ev.SUMMARY || '(no title)'),
@@ -147,11 +164,18 @@ function parseICSDate(raw, isDateOnly, tzid){
     return toLocalIsoTime(d);
   }
   if(tzid){
-    // Approximate: find the UTC offset for this TZID at this date, then construct UTC Date
-    // This works for IANA zone names (America/New_York, Europe/London, etc.)
+    // Works for IANA zone names (America/New_York, Europe/London, etc.)
     try {
-      const offsetMin = getTzOffsetMinutes(tzid, +Y, +M, +D, +hh, +mm);
-      const d = new Date(Date.UTC(+Y, +M-1, +D, +hh, +mm) - offsetMin * 60000);
+      const wallUTC = Date.UTC(+Y, +M-1, +D, +hh, +mm);
+      // Pass 1: the offset assuming the wall time is UTC.
+      const off1 = getTzOffsetMinutes(tzid, +Y, +M, +D, +hh, +mm);
+      // Pass 2: re-evaluate the offset at the CANDIDATE instant. Near a DST
+      // transition the offset at the wall-as-UTC guess differs from the offset
+      // at the real instant by an hour, which shifts the result to the wrong
+      // side of the boundary. Correcting once converges everywhere except the
+      // (nonexistent) spring-forward gap.
+      const off2 = _tzOffsetAtInstantMin(tzid, wallUTC - off1 * 60000);
+      const d = new Date(wallUTC - off2 * 60000);
       return toLocalIsoTime(d);
     } catch(e) {
       // TZID unrecognised — record once per (feed, tzid) so the renderer can
@@ -202,6 +226,22 @@ function getTzOffsetMinutes(tzid, Y, M, D, hh, mm){
   return (targetUTC - asUTC.getTime()) / 60000;
 }
 
+// Minutes east of UTC that `tzid` is offset at a specific ABSOLUTE instant
+// (unlike getTzOffsetMinutes, which takes a wall-clock time treated as UTC).
+// Used for the second pass of the DST-aware conversion in parseICSDate.
+function _tzOffsetAtInstantMin(tzid, instantMs){
+  const dt = new Date(instantMs);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid, year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false,
+  });
+  const parts = {};
+  fmt.formatToParts(dt).forEach(p => { parts[p.type] = p.value; });
+  const h = +parts.hour === 24 ? 0 : +parts.hour;
+  const asIfUTC = Date.UTC(+parts.year, +parts.month-1, +parts.day, h, +parts.minute, +parts.second || 0);
+  return Math.round((asIfUTC - instantMs) / 60000);
+}
+
 // Unescape iCal text (RFC 5545 section 3.3.11)
 // IMPORTANT: order matters — \\ must be processed first, otherwise "\\n"
 // (literal backslash followed by n) would be misread as newline.
@@ -214,6 +254,21 @@ function parseExdateList(raw){
     if(!p) continue;
     const d = p.replace(/[^\d]/g, '');
     if(d.length >= 8) out.add(d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8));
+  }
+  return out;
+}
+
+/** Resolve EXDATE specs (each carrying its own TZID/VALUE) to a Set of LOCAL
+ *  YYYY-MM-DD dates, using the same conversion as occurrence dates so timezone'd
+ *  exclusions line up with the instances they cancel. */
+function _exdateSetFromSpecs(specs){
+  const out = new Set();
+  for(const s of specs){
+    if(!s || !s.v) continue;
+    const digits = String(s.v).replace(/[^\dTZ]/g, '');
+    const isDateOnly = s.valueType === 'DATE' || digits.length === 8;
+    const parsed = parseICSDate(s.v, isDateOnly, s.tzid);
+    if(parsed && parsed.iso) out.add(parsed.iso);
   }
   return out;
 }
@@ -275,6 +330,28 @@ function expandEventToDateRange(event, windowDays = 180){
   let iterations = 0;
   const maxIter = 2000;
 
+  // Each emitted occurrence is a CONCRETE instance: it must carry its own
+  // start/end dates and must NOT keep the rrule (otherwise _alldayRangeCovers
+  // bails and a recurring multi-day all-day event only shows on its start day,
+  // and timed occurrences inherit the first instance's stale end date). Shift
+  // endDateISO by the original start→end span so every occurrence spans the same
+  // number of days.
+  let _spanDays = 0;
+  if(event.endDateISO){
+    const s0 = new Date(event.dateISO + 'T00:00:00').getTime();
+    const e0 = new Date(event.endDateISO + 'T00:00:00').getTime();
+    if(Number.isFinite(s0) && Number.isFinite(e0) && e0 > s0) _spanDays = Math.round((e0 - s0) / 86400000);
+  }
+  const _occ = iso => {
+    const o = { ...event, dateISO: iso, rrule: null };
+    if(event.endDateISO){
+      const d = new Date(iso + 'T00:00:00');
+      d.setDate(d.getDate() + _spanDays);
+      o.endDateISO = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    }
+    return o;
+  };
+
   while(iterations < maxIter && current <= future){
     // For WEEKLY with BYDAY: expand each week cycle to all specified weekdays
     if(freq === 'WEEKLY' && byDays && byDays.length){
@@ -291,7 +368,7 @@ function expandEventToDateRange(event, windowDays = 180){
                     String(occ.getDate()).padStart(2,'0');
         if(until && iso > until.iso) continue;
         if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) continue;
-        results.push({ ...event, dateISO: iso });
+        results.push(_occ(iso));
         if(countActive && results.length >= count) break;
       }
       if(countActive && results.length >= count) break;
@@ -304,7 +381,7 @@ function expandEventToDateRange(event, windowDays = 180){
                     String(current.getDate()).padStart(2,'0');
         if(until && iso > until.iso) break;
         if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) { /* skip */ }
-        else { results.push({ ...event, dateISO: iso }); }
+        else { results.push(_occ(iso)); }
         if(countActive && results.length >= count) break;
       }
       if(freq === 'DAILY')        current.setDate(current.getDate() + interval);
@@ -718,17 +795,29 @@ function getWhatNextCalConflictHint(opts){
  * @param {string} eventUid
  * @returns {number|undefined} new task id
  */
-function createTaskFromCalEventCore(feedId, eventUid){
+function createTaskFromCalEventCore(feedId, eventUid, eventDate){
   _loadCalFeeds();
   const feed = _calFeeds.feeds.find(f => f.id === feedId);
   if(!feed) return;
-  const ev = (feed.events || []).find(e => (e.uid || '') === (eventUid || ''));
+  const events = feed.events || [];
+  const wantDate = eventDate ? String(eventDate) : null;
+  // A recurring event expands into many rows sharing ONE uid, so a uid-only
+  // match always returned the FIRST (often long-past) occurrence and the task
+  // got the wrong due date. Prefer an exact uid+date match for the clicked
+  // occurrence; fall back to uid-only for non-recurring events or callers that
+  // don't pass a date.
+  const ev = (wantDate && events.find(e => (e.uid || '') === (eventUid || '') && (e.dateISO || '') === wantDate))
+    || events.find(e => (e.uid || '') === (eventUid || ''));
   if(!ev) return;
   if(typeof taskIdCtr === 'undefined' || !Array.isArray(tasks) || typeof defaultTaskProps !== 'function') return;
-  const fid = String(feedId), uid = String(eventUid || '');
+  const fid = String(feedId), uid = String(eventUid || ''), occDate = String(ev.dateISO || '');
   for(const x of tasks){
     const ex = x && x._ext;
-    if(ex && String(ex.calFeedId) === fid && String(ex.calEventUid) === uid) return x.id;
+    // Dedup per OCCURRENCE so each instance of a recurring event can become its
+    // own task. A legacy task without calEventDate matches any date (preserves
+    // the old single-task-per-event dedup rather than spawning a duplicate).
+    if(ex && String(ex.calFeedId) === fid && String(ex.calEventUid) === uid
+        && (ex.calEventDate == null || String(ex.calEventDate) === occDate)) return x.id;
   }
   const descParts = [];
   if(ev.description) descParts.push(String(ev.description));
@@ -750,7 +839,7 @@ function createTaskFromCalEventCore(feedId, eventUid){
   if(Array.isArray(t.tags) && feed.label){
     t.tags[1] = String(feed.label).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 32) || 'feed';
   }
-  t._ext = Object.assign({}, t._ext || {}, { calFeedId: fid, calEventUid: uid });
+  t._ext = Object.assign({}, t._ext || {}, { calFeedId: fid, calEventUid: uid, calEventDate: occDate });
   tasks.push(t);
   if(typeof _taskIndexRegister === 'function') _taskIndexRegister(t);
   return t.id;
@@ -761,8 +850,8 @@ function createTaskFromCalEventCore(feedId, eventUid){
  * @param {string} feedId
  * @param {string} eventUid
  */
-function createTaskFromCalEvent(feedId, eventUid){
-  const id = createTaskFromCalEventCore(feedId, eventUid);
+function createTaskFromCalEvent(feedId, eventUid, eventDate){
+  const id = createTaskFromCalEventCore(feedId, eventUid, eventDate);
   if(id == null) return;
   if(typeof saveState === 'function') saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();

@@ -587,7 +587,7 @@ function executeIntelOp(op){
     case 'CREATE_FROM_EVENT':{
       if(a.eventUid == null || a.feedId == null) return null;
       if(typeof createTaskFromCalEventCore !== 'function') return null;
-      const idNew = createTaskFromCalEventCore(a.feedId, a.eventUid);
+      const idNew = createTaskFromCalEventCore(a.feedId, a.eventUid, a.eventDate);
       if(!idNew) return null;
       return { type: 'created', id: idNew };
     }

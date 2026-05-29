@@ -218,7 +218,7 @@ function _renderCalDayAgendaHtml(isoDate, byDate, dayOnly){
   feedEvents.slice().sort((a, b) => sortKey(a).localeCompare(sortKey(b))).forEach(ev => {
     const uid = String(ev.uid || '');
     const mk = uid && typeof createTaskFromCalEvent === 'function'
-      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+      ? `<button type="button" class="cal-agenda-mk" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid, String(ev.dateISO || '')])}'>+Task</button>`
       : '';
     rows += '<div class="cal-agenda-row cal-agenda-feed">'
       + '<span class="cal-agenda-dot" data-feed-color="'+escAttr(sanitizeListColor(ev.feedColor))+'"></span>'
@@ -282,7 +282,7 @@ function renderCalTasks(arr, isoDate){
     html += showEvs.map(ev => {
       const uid = String(ev.uid || '');
       const mk = uid && typeof createTaskFromCalEvent === 'function'
-        ? `<button type="button" class="cal-ev-mk-task" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid])}'>+Task</button>`
+        ? `<button type="button" class="cal-ev-mk-task" title="Create task from this event" aria-label="Create task from event" data-action="createTaskFromCalEvent" data-args='${JSON.stringify([String(ev.feedId), uid, String(ev.dateISO || '')])}'>+Task</button>`
         : '';
       return `<div class="cal-task cal-feed-event" data-feed-color="${escAttr(sanitizeListColor(ev.feedColor))}" title="${esc(ev.feedLabel)}: ${esc(ev.title)}${ev.time?' at '+esc(String(ev.time)):''}${ev.location?' — '+esc(ev.location):''}">`
         + mk
