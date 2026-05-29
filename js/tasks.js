@@ -1897,6 +1897,7 @@ function completeHabitCycle(t){
   t.status='open';
   t.completedAt=null;
   t.dueDate=advanceRecurringDate(t.dueDate||todayISO(),t.recur);
+  t.lastModified=Date.now();
   t._habitCycledInSession = true;
   _pinTaskVisibleBriefly(t.id, 5000);
   if(Array.isArray(t.checklist)){
@@ -1950,6 +1951,7 @@ function _cascadeOnDone(taskId){
       affected.push({ id: k.id, prev: { status: k.status, completedAt: k.completedAt } });
       k.status = 'done';
       k.completedAt = stampCompletion();
+      k.lastModified = Date.now();
       visit(k.id);
     }
   };
@@ -1971,6 +1973,7 @@ function _maybeAutoCompleteParent(childId){
   const snap = [{ id: parent.id, prev: { status: parent.status, completedAt: parent.completedAt } }];
   parent.status = 'done';
   parent.completedAt = stampCompletion();
+  parent.lastModified = Date.now();
   // Recurse upward — completing a parent may complete its own parent.
   return snap.concat(_maybeAutoCompleteParent(parent.id));
 }
@@ -1995,6 +1998,9 @@ function cycleStatus(id, ev){
   if(next==='done'&&t.recur){completeHabitCycle(t)}
   else{
     t.status=next;
+    // Bump lastModified so the status change wins sync's last-writer-wins merge
+    // (see toggleTaskDoneQuick for the full rationale).
+    t.lastModified=Date.now();
     if(t.status==='done'){
       t.completedAt=stampCompletion();
       if(activeTaskId===id){toggleTask(id)}
@@ -2045,14 +2051,19 @@ function toggleTaskDoneQuick(id, ev){
   const _wasDone = t.status === 'done';
   let cascade = [];
   let _toastAction = 'reopen';
-  if(_wasDone){t.status='open';t.completedAt=null}
+  // Bump lastModified on every status change. Sync resolves task conflicts by
+  // last-writer-wins on (lastModified || completedAt); reopening clears
+  // completedAt, so without this bump a reopened task carries a stale timestamp
+  // and a peer's older "done" record wins the merge — the task flips back to
+  // done ("stays reopened" / cross-device communication bug).
+  if(_wasDone){t.status='open';t.completedAt=null;t.lastModified=Date.now()}
   else{
     if(t.recur){
       completeHabitCycle(t);
       _toastAction = 'habit';
       if(activeTaskId===id){/* keep timer running on same task */ }
     }else{
-      t.status='done';t.completedAt=stampCompletion();
+      t.status='done';t.completedAt=stampCompletion();t.lastModified=Date.now();
       _toastAction = 'done';
       if(activeTaskId===id){toggleTask(id)}
       // Cascade down to subtasks and bubble up if siblings are all done.
