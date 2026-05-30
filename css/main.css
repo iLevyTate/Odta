@@ -277,6 +277,11 @@
   /* Settings tab uses a static (non-collapsing) body — the tab itself is the
      toggle, so the legacy max-height accordion is opted out via this class. */
   .sbody.sbody-static{overflow:visible;max-height:none!important;transition:none}
+  /* Settings body acts as a query container so the section grid + spacing
+     adapt to the *panel* width rather than the viewport. The .container at
+     line 850 caps app width at 960px, so on a 1920px monitor the panel is
+     ~928px regardless; @container avoids a hard breakpoint here. */
+  #settingsBody{container-type:inline-size;container-name:settings}
   .srow{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
   .srow--full{display:block}
   .notif-status{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:var(--r-sm);font-size:var(--fs-12);line-height:1.45}
@@ -3448,6 +3453,29 @@ body:has(.update-banner) .quota-warning{
 .set-section-body,.md-section-body{padding:4px 14px 14px}
 .set-section-body .srow:first-child{margin-top:0}
 .md-section-body .mfield:first-child{margin-top:0}
+
+/* Container queries on the settings panel.
+   Container declared on #settingsBody (see .sbody.sbody-static block).
+   These adapt to actual panel width — important because the app's outer
+   .container caps at 960px, and a foldable inner display or split-pane
+   desktop can put the panel at any width in between. Variants like
+   .srow--col / .srow--col-stretch / .srow--full / .srow--spread continue
+   to win because they appear later in the cascade and the container query
+   only touches base .srow + .sr-lbl + .set-section-body padding. */
+@container settings (min-width:560px){
+  /* Tablet+ panel: more breathing room and wider label column so the
+     eye can scan labels in a column instead of zig-zagging. */
+  .set-section-body{padding:var(--space-5) var(--space-8) var(--space-8)}
+  .set-section-body .sr-lbl{min-width:200px}
+  .set-section-body .srow{gap:var(--space-6);margin-bottom:var(--space-5)}
+}
+@container settings (min-width:880px){
+  /* Wide-panel (≈desktop, single-column app layout): extra label width
+     and section separation so the long flat list feels deliberate, not
+     dense. */
+  .set-section-body .sr-lbl{min-width:240px}
+  .set-section{margin-bottom:var(--space-6)}
+}
 
 .class-mgr-block{margin-bottom:16px}
 .class-mgr-hdr{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--text-3);text-transform:uppercase;margin-bottom:8px}
