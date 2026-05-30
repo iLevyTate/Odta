@@ -104,7 +104,7 @@
 
 A compact sentence-embedding model — **`Xenova/bge-small-en-v1.5`**, 384 dimensions, about 33 MB — loads into your browser via **Transformers.js**. Every task title + description is encoded into a vector. Cosine similarity in that vector space lets the app reason about **meaning and context**, not just keywords.
 
-Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model is served from `assets/models/` on the same origin and precached by the service worker — fully offline from a fresh install. **Generative Ask is opt-in** (Settings → Integrations → Generative AI): download a local SmolLM2/Qwen causal model (~135–230 MB) for conversational task planning via **Cmd/Ctrl+K → Ask** or a `?` prefix in the task input. Embeddings stay on by default; no cloud LLM, no API keys, no token streaming to a server.
+Runs on **WebGPU** when available, **WASM** everywhere else (including iPhone). The model is served from `assets/models/` on the same origin and precached by the service worker — fully offline from a fresh install. **Generative Ask is an experimental opt-in** (Settings → Integrations → Generative AI): download a local SmolLM2/Qwen causal model (~135–230 MB) for conversational task planning via **Cmd/Ctrl+K → Ask** or a `?` prefix in the task input. Its entry points only appear once you enable it in Settings. Embeddings stay on by default; no cloud LLM, no API keys, no token streaming to a server.
 
 What you get from embeddings (always-on when loaded):
 
@@ -117,6 +117,9 @@ What you get from embeddings (always-on when loaded):
 - **Similar tasks** — top neighbors surface in the task detail drawer.
 - **Suggest due date** — kNN over your task history infers a sensible due date for a new task.
 - **Align values only** — narrow button for Schwartz-only alignment if you don't want other fields touched.
+
+> [!WARNING]
+> **Generative Ask is experimental and a work in progress.** Output quality and reliability vary by model and device, and it may need troubleshooting before it behaves the way you expect. It is **hidden by default** — every Ask entry point (the Cmd/Ctrl+K palette action, the **Edit** toggle, and the `?` prefix in the palette and task input) stays out of the UI until you turn it on in **Settings → Integrations → Generative AI**. Everything below is opt-in and stays 100% on-device.
 
 **Generative Ask** (opt-in download) adds:
 
@@ -176,7 +179,7 @@ A derived impact score ranks every active task from signals you already have —
 - **Smart views**: All, **Inbox** (untriaged), Today, Week, Overdue, Unscheduled, Starred, **Impact (Pareto)**, **Waiting** (blocked on someone else), **Stuck** (untouched 14+ days), **Snoozed** (hidden until a date), **Habits** (recurring / `~daily` etc.), Done.
 - **Hide recurring from main lists** — optional (on by default): daily/weekly habits stay out of All/Today/Week/etc. and show in **Habits**; open **Filters** → **Display** → uncheck **Hide recurring from main** to mix them into main views.
 - **Group by** priority, status, due date, or list.
-- **Command palette** (`Cmd / Ctrl + K`) — fuzzy over tasks, actions, views, lists, AI commands, theme, sort, sync, everything. Toggle **Ask** or prefix with `?` for on-device generative planning (requires Generative AI download).
+- **Command palette** (`Cmd / Ctrl + K`) — fuzzy over tasks, actions, views, lists, AI commands, theme, sort, sync, everything. The **Ask** toggle and `?` prefix for on-device generative planning only appear once Generative AI is enabled in Settings (experimental).
 - **Dark and light themes** with a one-key toggle.
 - **Responsive** down to 320 px; touch-first on mobile; full keyboard on desktop.
 

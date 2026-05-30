@@ -489,7 +489,11 @@ function onTaskInputKey(event){
   if(event.key==='Enter' && !event.isComposing){
     const inp=event.target;
     const raw=(inp && typeof inp.value==='string') ? inp.value : '';
-    if(raw.trim().charAt(0)==='?' && typeof openCmdK==='function'){
+    // `?` routes to Ask only when generative Ask is enabled in Settings.
+    // Fail-open if the helper isn't present so isolated tests keep routing;
+    // the running app always loads gen.js (default disabled).
+    const askOn = typeof isGenEnabled === 'function' ? isGenEnabled() : true;
+    if(askOn && raw.trim().charAt(0)==='?' && typeof openCmdK==='function'){
       event.preventDefault();
       const rest=raw.trim().slice(1).trim();
       if(inp) inp.value='';
