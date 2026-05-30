@@ -321,7 +321,7 @@ function expandEventToDateRange(event, windowDays = 180){
   // BYDAY — e.g. "MO,WE,FR" — for weekly events that fire on multiple days per week
   const BY_DAY_MAP = { SU:0, MO:1, TU:2, WE:3, TH:4, FR:5, SA:6 };
   const byDays = params.BYDAY
-    ? params.BYDAY.split(',').map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null)
+    ? params.BYDAY.split(',').map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null).sort((a, b) => a - b)
     : null;
 
   const baseDate = new Date(event.dateISO + 'T12:00:00');
