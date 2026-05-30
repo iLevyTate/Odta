@@ -573,7 +573,7 @@
          pill row. Filter input narrows the rows by label text so a user
          can type "notif" and see only relevant settings across all sections. -->
     <div class="set-nav" role="navigation" aria-label="Settings sections">
-      <div class="set-nav-jump" role="tablist">
+      <div class="set-nav-jump">
         <button type="button" class="set-nav-btn" data-action="jumpToSettingsSection" data-arg="set-general">General</button>
         <button type="button" class="set-nav-btn" data-action="jumpToSettingsSection" data-arg="set-classifications">Categories</button>
         <button type="button" class="set-nav-btn" data-action="jumpToSettingsSection" data-arg="set-lists">Lists</button>
@@ -590,7 +590,7 @@
       <details class="set-section" id="set-general" open>
         <summary class="set-section-sum">General</summary>
         <div class="set-section-body">
-          <div class="srow"><span class="sr-lbl">Preset</span>
+          <div class="srow"><label class="sr-lbl" for="cfgPreset">Preset</label>
             <select class="sinput" id="cfgPreset" data-onchange="applyPhasePresetFromSelect" title="Switch to a named cadence; manually editing the durations below clears the preset">
               <option value="classic">Classic 25/5</option>
               <option value="short">Short 15/3</option>
@@ -599,10 +599,10 @@
               <option value="deepwork">Deep work 120/30</option>
             </select>
           </div>
-          <div class="srow"><span class="sr-lbl">Focus Duration</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgWork" value="25" min="1" max="120" data-onchange="updateConfig"><span class="sunit">min</span></div>
-          <div class="srow"><span class="sr-lbl">Short Break</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgShort" value="5" min="1" max="30" data-onchange="updateConfig"><span class="sunit">min</span></div>
-          <div class="srow"><span class="sr-lbl">Long Break</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgLong" value="15" min="1" max="60" data-onchange="updateConfig"><span class="sunit">min</span></div>
-          <div class="srow"><span class="sr-lbl">Sessions / Cycle</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgCycle" value="4" min="2" max="10" data-onchange="updateConfig"></div>
+          <div class="srow"><label class="sr-lbl" for="cfgWork">Focus Duration</label><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgWork" value="25" min="1" max="120" data-onchange="updateConfig"><span class="sunit">min</span></div>
+          <div class="srow"><label class="sr-lbl" for="cfgShort">Short Break</label><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgShort" value="5" min="1" max="30" data-onchange="updateConfig"><span class="sunit">min</span></div>
+          <div class="srow"><label class="sr-lbl" for="cfgLong">Long Break</label><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgLong" value="15" min="1" max="60" data-onchange="updateConfig"><span class="sunit">min</span></div>
+          <div class="srow"><label class="sr-lbl" for="cfgCycle">Sessions / Cycle</label><input type="number" inputmode="numeric" pattern="[0-9]*" class="sinput" id="cfgCycle" value="4" min="2" max="10" data-onchange="updateConfig"></div>
           <div class="srow"><span class="sr-lbl" id="lbl-togSnpNote">Ask for session note</span><button type="button" class="toggle on" id="togSnpNote" role="switch" aria-checked="true" aria-labelledby="lbl-togSnpNote" data-action="toggleOpt" data-arg="togSnpNote"><span class="tknob" aria-hidden="true"></span></button></div>
           <div class="srow"><span class="sr-lbl" id="lbl-togBreak">Auto-start Breaks</span><button type="button" class="toggle on" id="togBreak" role="switch" aria-checked="true" aria-labelledby="lbl-togBreak" data-action="toggleOpt" data-arg="togBreak"><span class="tknob" aria-hidden="true"></span></button></div>
           <div class="srow"><span class="sr-lbl" id="lbl-togWork">Auto-start Focus</span><button type="button" class="toggle" id="togWork" role="switch" aria-checked="false" aria-labelledby="lbl-togWork" data-action="toggleOpt" data-arg="togWork"><span class="tknob" aria-hidden="true"></span></button></div>
