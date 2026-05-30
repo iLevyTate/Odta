@@ -131,8 +131,9 @@ test('gen presets: primary HuggingFaceTB ids have an onnx-community alt slug map
 test('gen presets: alt-slug fallback is gated behind 401/403/404 heuristic', () => {
   // Sanity — the retry path must NOT fire on generic errors; only missing-file
   // responses. Otherwise a transient network blip would silently flip users
-  // to the alternate mirror and keep them there forever.
-  const src = readFileSync(join(root, 'js', 'gen.js'), 'utf8');
+  // to the alternate mirror and keep them there forever. The pipeline engine
+  // (shared by the worker and the main-thread fallback) owns this guard.
+  const src = readFileSync(join(root, 'js', 'gen-pipeline.js'), 'utf8');
   assert.match(src, /_isMissingFileError/, 'must define _isMissingFileError guard');
-  assert.match(src, /alt && _isMissingFileError\(e\)/, 'fallback must be gated on missing-file');
+  assert.match(src, /altSlug && _isMissingFileError\(e\)/, 'fallback must be gated on missing-file');
 });

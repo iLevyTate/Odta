@@ -82,13 +82,17 @@ function _syncGenDownloadProgress(v, ev){
   const status = ev && ev.status ? String(ev.status) : '';
   const file = ev && ev.file ? ' · ' + String(ev.file).split('/').pop() : '';
   const line = (status + file).trim().slice(0, 88) || 'Fetching ONNX shards…';
+  // When WebGPU init stalls we fall back to CPU; surface that explicitly so the
+  // 100%-but-still-working phase doesn't look frozen on "Initializing model…".
+  const isWasmFallback = /wasm/i.test(status);
+  const initLabel = isWasmFallback ? 'Switching to CPU (WASM)…' : 'Initializing model…';
   if(bar) bar.style.width = pct + '%';
   if(pctEl) pctEl.textContent = pct + '%';
   if(txt) txt.textContent = line;
-  if(statusEl) statusEl.textContent = pct >= 100 ? 'Initializing model…' : `Downloading weights · ${pct}%`;
-  const chipLine = pct >= 100 ? 'Initializing…' : (line.length > 48 ? line.slice(0, 45) + '…' : line);
+  if(statusEl) statusEl.textContent = pct >= 100 ? initLabel : `Downloading weights · ${pct}%`;
+  const chipLine = pct >= 100 ? (isWasmFallback ? 'CPU (WASM)…' : 'Initializing…') : (line.length > 48 ? line.slice(0, 45) + '…' : line);
   _genChipState = 'loading';
-  _genChipMsg = pct >= 100 ? 'Initializing model…' : pct + '% · ' + chipLine;
+  _genChipMsg = pct >= 100 ? initLabel : pct + '% · ' + chipLine;
   const c = _composeChipState();
   _renderHeaderAIChip(c.state, c.msg);
   const ribbon = document.getElementById('genLoadRibbon');
@@ -103,7 +107,7 @@ function _syncGenDownloadProgress(v, ev){
       // indeterminate bar so the user knows work is still in progress.
       if(ribbonTrack) ribbonTrack.classList.add('gen-load-ribbon__track--indeterminate');
       if(ribbonBar) ribbonBar.style.width = '40%';
-      if(ribbonTxt) ribbonTxt.textContent = 'On-device LLM · Initializing model…';
+      if(ribbonTxt) ribbonTxt.textContent = 'On-device LLM · ' + initLabel;
     }else{
       if(ribbonTrack) ribbonTrack.classList.remove('gen-load-ribbon__track--indeterminate');
       if(ribbonBar) ribbonBar.style.width = pct + '%';
@@ -3001,6 +3005,10 @@ async function genAutoRehydrateIfCached(){
   }finally{
     clearTimeout(ribbonTimeout);
     _hideGenLoadRibbon();
+    // Refresh Settings if it's open so its status text reflects the real
+    // end-state ("Ready on …") instead of the stale "Initializing model…"
+    // line that _syncGenDownloadProgress wrote directly into the DOM.
+    if(typeof renderGenSettings === 'function') renderGenSettings();
   }
 }
 

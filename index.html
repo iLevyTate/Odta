@@ -63,7 +63,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v59">
+<link rel="stylesheet" href="css/main.css?v=v60">
 <!-- Preconnect hints — speeds up first-load of the on-device embedding model (jsDelivr for Transformers.js, huggingface.co for model weights) -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://huggingface.co" crossorigin>
@@ -850,6 +850,7 @@
         <button type="button" class="cmdk-apply-mode-btn cmdk-apply-mode-btn--active" data-action="cmdkSetApplyMode" data-arg="review" aria-pressed="true">Review</button>
         <button type="button" class="cmdk-apply-mode-btn" data-action="cmdkSetApplyMode" data-arg="auto" aria-pressed="false">Auto</button>
       </div>
+      <button type="button" id="cmdkAskMinimize" class="cmdk-ask-toggle cmdk-ask-min" data-action="cmdkAskMinimize" title="Run in background — keep working while the answer finishes" aria-label="Run in background" hidden>Minimize</button>
       <button type="button" id="cmdkAskToggle" class="cmdk-ask-toggle" data-action="cmdkToggleAsk" title="Toggle Edit mode (prefix with ?)" aria-pressed="false">Edit</button>
     </div>
     <p class="cmdk-find-hint" id="cmdkFindHint" hidden>Quick actions &amp; search below · tap <strong>Edit</strong> or type <kbd>?</kbd> for on-device AI</p>
@@ -859,6 +860,12 @@
     <div class="cmdk-foot" id="cmdkFoot"></div>
   </div>
 </div>
+
+<!-- Floating pill for a minimized Ask conversation (kept running in background) -->
+<button type="button" class="ask-dock-pill" id="askDockPill" data-action="cmdkRestoreAsk" aria-label="Ask is working in the background — tap to view" hidden>
+  <span class="ask-dock-spinner" aria-hidden="true"></span>
+  <span class="ask-dock-label">Ask is working…</span>
+</button>
 
 <!-- Bulk import (paste multiple lines) -->
 <div class="modal-overlay" id="bulkImportModal" role="dialog" aria-modal="true" aria-labelledby="bulkImportTitle" data-action="closeBulkImportModalOnBackdrop">
