@@ -4379,21 +4379,27 @@ function bulkToggleSelect(id){
   if(_bulkSelectedIds.has(n)) _bulkSelectedIds.delete(n);
   else _bulkSelectedIds.add(n);
   renderBulkBar();
-  // Also flip the checkbox visual on the row
-  const cb = document.querySelector('.task-bulk-cb[data-id="' + n + '"]');
-  if(cb) cb.checked = _bulkSelectedIds.has(n);
 }
 function bulkClear(){
   _bulkSelectedIds.clear();
-  document.querySelectorAll('.task-bulk-cb').forEach(cb => { cb.checked = false; });
+  document.querySelectorAll('.task-item.task-bulk-selected').forEach(row => row.classList.remove('task-bulk-selected'));
   renderBulkBar();
 }
-function bulkSelectVisible(){
-  const visible = Array.isArray(tasks) ? tasks.filter(t => typeof matchesFilters === 'function' && matchesFilters(t)) : [];
-  visible.forEach(t => _bulkSelectedIds.add(t.id));
-  document.querySelectorAll('.task-bulk-cb').forEach(cb => {
-    const n = parseInt(cb.dataset.id, 10);
-    if(_bulkSelectedIds.has(n)) cb.checked = true;
+// Selects every task in the current view — all tasks passing the active
+// filters / smart-view, including ones collapsed under a parent or scrolled
+// out of sight — then highlights whatever rows are mounted. The selection set
+// stores numbers (see bulkToggleSelect), so ids are parsed to match.
+function bulkSelectAll(){
+  const inView = Array.isArray(tasks)
+    ? tasks.filter(t => typeof matchesFilters === 'function' ? matchesFilters(t) : true)
+    : [];
+  inView.forEach(t => {
+    const n = parseInt(t.id, 10);
+    if(Number.isFinite(n)) _bulkSelectedIds.add(n);
+  });
+  document.querySelectorAll('.task-item[data-task-id]').forEach(row => {
+    const n = parseInt(row.dataset.taskId, 10);
+    if(Number.isFinite(n) && _bulkSelectedIds.has(n)) row.classList.add('task-bulk-selected');
   });
   renderBulkBar();
 }
@@ -4482,7 +4488,7 @@ function renderBulkBar(){
     lsSel.onchange = function(){ if(lsSel.value) bulkChangeList(lsSel.value); lsSel.value=''; };
     bar.appendChild(lsSel);
   }
-  bar.appendChild(mkBtn('Select all visible', bulkSelectVisible));
+  bar.appendChild(mkBtn('Select all', bulkSelectAll));
   const close = mkBtn('✕', toggleBulkMode);
   close.className = 'bulk-btn bulk-close';
   bar.appendChild(close);
@@ -4491,7 +4497,7 @@ function renderBulkBar(){
 window.toggleBulkMode = toggleBulkMode;
 window.bulkToggleSelect = bulkToggleSelect;
 window.bulkClear = bulkClear;
-window.bulkSelectVisible = bulkSelectVisible;
+window.bulkSelectAll = bulkSelectAll;
 window.renderBulkBar = renderBulkBar;
 window._bulkSelectedIds = _bulkSelectedIds;
 
