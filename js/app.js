@@ -309,7 +309,7 @@ function _backdropClose(closeFn){
   return function(e){ if(e && e.target === this && typeof closeFn === 'function') closeFn(); };
 }
 window.closeWhatNextOnBackdrop        = _backdropClose(() => closeWhatNext());
-window.closeCmdKOnBackdrop            = _backdropClose(() => closeCmdK());
+window.closeCmdKOnBackdrop            = _backdropClose(() => (typeof cmdkDismiss === 'function' ? cmdkDismiss() : closeCmdK()));
 window.closeBulkImportModalOnBackdrop = _backdropClose(() => closeBulkImportModal());
 window.closeAppConfirmOnBackdrop      = _backdropClose(() => closeAppConfirm(false));
 window.closeAppPromptOnBackdrop       = _backdropClose(() => closeAppPrompt(null));

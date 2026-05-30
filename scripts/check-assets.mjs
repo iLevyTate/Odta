@@ -46,11 +46,18 @@ for (const asset of htmlAssets) {
   }
 }
 
-// Check: every JS/CSS in sw.js should exist in index.html (skip non-code assets like icons, manifest, and vendor/ scripts loaded dynamically)
+// Modules that are never <script>-tagged because they're loaded dynamically:
+// gen-worker.js is spawned as a module Web Worker and gen-pipeline.js is
+// imported by both the worker and gen.js's main-thread fallback. They still
+// belong in the SW precache so the on-device LLM works offline.
+const DYNAMIC_MODULES = new Set(['js/gen-worker.js', 'js/gen-pipeline.js']);
+
+// Check: every JS/CSS in sw.js should exist in index.html (skip non-code assets like icons, manifest, and vendor/ or dynamically-imported scripts)
 for (const asset of swAssets) {
   const normalized = asset.replace(/^\.\//, '');
   if (!/\.(js|css)$/.test(normalized)) continue;
   if (/vendor\//.test(normalized)) continue; // vendor scripts are dynamically imported
+  if (DYNAMIC_MODULES.has(normalized)) continue; // worker / fallback engine, loaded dynamically
   if (!htmlAssets.has(normalized) && !htmlAssets.has('./' + normalized)) {
     console.error(`sw.js ASSETS lists '${asset}' but index.html doesn't reference it`);
     ok = false;

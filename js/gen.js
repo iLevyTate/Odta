@@ -9,6 +9,8 @@ const _GC = window.ODTAULAI_CONFIG || {};
 const _gabs = (rel) => { try { return new URL(rel, (typeof document !== 'undefined' && document.baseURI) || (typeof location !== 'undefined' ? location.href : '')).href; } catch (_) { return rel; } };
 const GEN_TRANSFORMERS_URL = _GC.TRANSFORMERS_URL || _gabs('js/vendor/transformers/transformers.min.mjs');
 const GEN_TRANSFORMERS_WASM_DIR = _GC.TRANSFORMERS_WASM_DIR || _gabs('js/vendor/transformers/');
+const GEN_WORKER_URL = _GC.GEN_WORKER_URL || _gabs('js/gen-worker.js');
+const GEN_PIPELINE_URL = _GC.GEN_PIPELINE_URL || _gabs('js/gen-pipeline.js');
 const GEN_CFG_KEY  = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_CFG)     || 'stupind_gen_cfg';
 const GEN_HIST_KEY = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_HISTORY) || 'stupind_gen_history';
 
@@ -35,22 +37,27 @@ const GEN_MODEL_ALT_SLUGS = {
 // the current default preset. Keeps existing users from hitting a 401.
 const GEN_CFG_VERSION = 2;
 
-let _genPipe = null;
+// ── Pipeline state (mirrored from the worker, or maintained directly on the
+//    main-thread fallback path) ───────────────────────────────────────────────
 let _genReady = false;
 let _genLoading = false;
 let _genGenerating = false;
 let _genDevice = null;
 let _genModelId = null;
-let _genLoadPromise = null;
-let _genLoadAbortCtl = null;
-let _genAbortCtl = null;
 let _genLastError = null;
-let _genStoppingCriteria = null; // InterruptableStoppingCriteria instance (if available)
-// (M5) Sets tracking all concurrent in-flight abort controllers / stopping
-// criteria so genAbort() can cancel every active call, not just the latest.
-const _genActiveAbortCtls = new Set();
-const _genActiveStoppers  = new Set();
-let _genTransformersMod = null;  // cached module handle
+let _genLoadPromise = null;
+
+// The heavy Transformers.js pipeline lives in js/gen-worker.js (a module Web
+// Worker) so inference never blocks the main thread — multi-round analyses
+// stay responsive and Stop works mid-generation. When a Worker can't be
+// created (old browser, no module-worker / WebGPU-in-worker support) we
+// transparently fall back to running the SAME engine on the main thread.
+let _genWorker;                 // undefined = not yet tried, null = unavailable, Worker = active
+let _genEngine = null;          // in-thread fallback engine (createGenEngine)
+let _genLoadAbortCtl = null;    // fallback-path load cancellation
+let _genReqSeq = 0;
+const _genPending = new Map();  // reqId -> { resolve?, reject?, onToken? }
+let _genLoadResolvers = null;   // { resolve, reject, onProgress } for the in-flight worker load
 /** Ref-count concurrent genGenerate calls — only clear "busy" when the last in-flight run finishes. */
 let _genGenInFlight = 0;
 
@@ -63,40 +70,87 @@ function isGenBusy(){ return _genLoading || _genGenerating; }
 function getGenLastError(){ return _genLastError; }
 function clearGenLastError(){ _genLastError = null; }
 
-async function _importTransformers(){
-  if(_genTransformersMod) return _genTransformersMod;
-  _genTransformersMod = await import(GEN_TRANSFORMERS_URL);
-  return _genTransformersMod;
-}
-
-/**
- * Force-reload the Transformers.js module on next import.
- * Used when a WebGPU crash poisons the ONNX Runtime WASM instance — a fresh
- * import gets a new, un-aborted WASM module for the CPU fallback path.
- */
-function _resetTransformersCache(){
-  _genTransformersMod = null;
-}
-
-/**
- * Pre-flight check: verify the browser can actually create a WebGPU device.
- * Returns true only when adapter + device succeed; false on any failure.
- * Prevents the fatal ONNX Runtime WASM `Aborted()` crash that occurs when
- * WebGPU is nominally present but the GPU backend can't initialise.
- */
-async function _probeWebGPU(){
+// ── Worker lifecycle + message routing ───────────────────────────────────────
+function _ensureGenWorker(){
+  if(_genWorker !== undefined) return _genWorker;
   try{
-    if(typeof navigator === 'undefined' || !navigator.gpu) return false;
-    const adapter = await navigator.gpu.requestAdapter();
-    if(!adapter) return false;
-    const device = await adapter.requestDevice();
-    if(!device) return false;
-    device.destroy();
-    return true;
+    if(typeof Worker === 'undefined'){ _genWorker = null; return null; }
+    const w = new Worker(GEN_WORKER_URL, { type: 'module' });
+    w.onmessage = _onGenWorkerMessage;
+    w.onerror = _onGenWorkerError;
+    w.onmessageerror = _onGenWorkerError;
+    _genWorker = w;
   }catch(e){
-    console.info('[gen] WebGPU probe failed — will use WASM (CPU)', e);
-    return false;
+    console.warn('[gen] Web Worker unavailable — using main-thread pipeline', e);
+    _genWorker = null;
   }
+  return _genWorker;
+}
+
+/** Clear one generation's bookkeeping and update the busy ref-count. */
+function _settleGen(reqId){
+  _genPending.delete(reqId);
+  _genGenInFlight = Math.max(0, _genGenInFlight - 1);
+  _genGenerating = _genGenInFlight > 0;
+}
+
+function _onGenWorkerMessage(e){
+  const m = e.data || {};
+  switch(m.type){
+    case 'progress':
+      if(_genLoadResolvers && typeof _genLoadResolvers.onProgress === 'function'){
+        try{ _genLoadResolvers.onProgress(m.ev || {}); }catch(_){}
+      }
+      break;
+    case 'loaded':
+      _genReady = true;
+      _genDevice = m.device || null;
+      // Identity follows the slug that actually resolved (alt-slug retry).
+      _genModelId = m.finalSlug || m.modelId || _genModelId;
+      _genLastError = null;
+      try{ if(m.finalSlug) markGenDownloaded(m.finalSlug); }catch(_){}
+      if(_genLoadResolvers){ const r = _genLoadResolvers; _genLoadResolvers = null; r.resolve(); }
+      break;
+    case 'load-error':
+      if(_genLoadResolvers){ const r = _genLoadResolvers; _genLoadResolvers = null; r.reject(new Error(m.message || 'load failed')); }
+      break;
+    case 'token': {
+      const p = _genPending.get(m.reqId);
+      if(p && typeof p.onToken === 'function'){ try{ p.onToken(m.text); }catch(_){} }
+      break;
+    }
+    case 'result': {
+      const p = _genPending.get(m.reqId);
+      if(p){ _settleGen(m.reqId); if(p.resolve) p.resolve(m.text || ''); }
+      break;
+    }
+    case 'gen-error': {
+      const p = _genPending.get(m.reqId);
+      if(p){ _settleGen(m.reqId); if(p.reject) p.reject(new Error(m.message || 'generation failed')); }
+      break;
+    }
+    default: break;
+  }
+}
+
+// A worker crash (e.g. the ONNX runtime OOM-kills the worker mid-analysis) used
+// to surface as a silent freeze. Now it rejects every in-flight call, marks the
+// LLM not-ready, and discards the dead worker so the next genLoad() spins up a
+// fresh one — the user gets a clear, recoverable error instead of a hang.
+function _onGenWorkerError(e){
+  const raw = (e && e.message) ? e.message : 'The on-device LLM worker crashed (likely out of memory). Try a smaller model preset.';
+  console.error('[gen] worker error', e);
+  _genReady = false;
+  _genLoading = false;
+  _genDevice = null;
+  _genLastError = _friendlyGenError(raw, _genModelId);
+  if(_genLoadResolvers){ const r = _genLoadResolvers; _genLoadResolvers = null; try{ r.reject(new Error(raw)); }catch(_){} }
+  for(const [, p] of _genPending){ if(p && p.reject){ try{ p.reject(new Error(raw)); }catch(_){} } }
+  _genPending.clear();
+  _genGenInFlight = 0;
+  _genGenerating = false;
+  try{ if(_genWorker && typeof _genWorker.terminate === 'function') _genWorker.terminate(); }catch(_){}
+  _genWorker = undefined; // allow a fresh worker on the next load
 }
 
 function _pickDefaultPresetForDevice(){
@@ -228,11 +282,6 @@ async function clearLLMCache(){
   return removed;
 }
 
-function _isMissingFileError(e){
-  const m = String((e && e.message) || e || '');
-  return /Unauthorized|status:\s*40[134]|404|\bnot found\b/i.test(m);
-}
-
 /**
  * Load the text-generation pipeline. Does nothing if already loaded for this
  * modelId.
@@ -244,8 +293,9 @@ function _isMissingFileError(e){
  *     pipeline. (The UI disables the model dropdown while loading to avoid
  *     tripping this in practice.)
  *
- * Supports abort via genAbortLoad() and auto-retries an alternate namespace
- * (e.g. `onnx-community/*`) when the primary repo returns 401/403/404.
+ * Runs the pipeline in a Web Worker; supports abort via genAbortLoad() and
+ * auto-retries an alternate namespace (e.g. `onnx-community/*`) when the
+ * primary repo returns 401/403/404.
  *
  * @param {string} modelId
  * @param {string} dtype
@@ -259,115 +309,95 @@ async function genLoad(modelId, dtype, onProgress){
     throw new Error('GEN_SWITCH_IN_PROGRESS');
   }
 
+  const w = _ensureGenWorker();
+  if(!w) return _genLoadInThread(modelId, dtype, onProgress);
+
   _genLoading = true;
   _genModelId = modelId;
   _genReady = false;
-  _genPipe = null;
   _genDevice = null;
   _genLastError = null;
-  _genLoadAbortCtl = new AbortController();
-  const loadSignal = _genLoadAbortCtl.signal;
-
   const cb = typeof onProgress === 'function' ? onProgress : () => {};
+  const altSlug = GEN_MODEL_ALT_SLUGS[modelId] || null;
 
-  _genLoadPromise = (async () => {
-    let pipeline, env;
-    try{
-      const mod = await _importTransformers();
-      pipeline = mod.pipeline;
-      env = mod.env;
-    }catch(e){
-      _genLastError = 'Failed to load Transformers.js from CDN: ' + (e.message || e);
-      throw e;
+  _genLoadPromise = new Promise((resolve, reject) => {
+    _genLoadResolvers = { resolve, reject, onProgress: cb };
+    w.postMessage({
+      type: 'load', modelId, dtype, altSlug,
+      transformersUrl: GEN_TRANSFORMERS_URL,
+      wasmDir: GEN_TRANSFORMERS_WASM_DIR,
+    });
+  }).then(() => {
+    // If the worker resolved an alternate slug, persist it so the next session
+    // skips the dead primary (mirrors the legacy in-thread behaviour).
+    if(_genModelId && _genModelId !== modelId){
+      try{ const cfg = _loadGenCfg(); cfg.modelId = _genModelId; _saveGenCfg(cfg); }catch(_){}
     }
-    env.allowLocalModels = false;
-    env.backends.onnx.wasm.wasmPaths = GEN_TRANSFORMERS_WASM_DIR;
-  env.useBrowserCache = true;
-
-    // On WebGPU we prefer q4f16 (int4 weights + fp16 activations) when the
-    // caller's stored dtype is plain q4; on WASM we use q4 (fp16 activations
-    // aren't supported). This mirrors what works across Transformers.js v3.
-    const webgpuDtype = dtype === 'q4' ? 'q4f16' : (dtype || 'q4f16');
-    const wasmDtype   = dtype === 'q4f16' ? 'q4' : (dtype || 'q4');
-
-    const tryPipeline = async (slug) => {
-      // ---- WebGPU attempt (only if probe succeeds) ----
-      const gpuOk = await _probeWebGPU();
-      if(gpuOk){
-        try{
-          if(loadSignal.aborted) throw new Error('LOAD_ABORTED');
-          _genPipe = await pipeline('text-generation', slug, {
-            device: 'webgpu',
-            dtype: webgpuDtype,
-            progress_callback: cb,
-          });
-          _genDevice = 'webgpu';
-          return; // success — done
-        }catch(e){
-          if(loadSignal.aborted) throw new Error('LOAD_ABORTED');
-          console.warn('[gen] WebGPU pipeline failed, falling back to WASM', e);
-          // A fatal WASM Aborted() crash poisons the ONNX Runtime instance.
-          // Force-reset so the WASM fallback below gets a clean module.
-          _resetTransformersCache();
-          try{
-            const freshMod = await _importTransformers();
-            pipeline = freshMod.pipeline;
-          }catch(reimportErr){
-            console.error('[gen] Failed to re-import Transformers.js after WebGPU crash', reimportErr);
-          }
-        }
-      } else {
-        console.info('[gen] WebGPU not available — loading with WASM (CPU)');
-      }
-      // ---- WASM (CPU) fallback ----
-      if(loadSignal.aborted) throw new Error('LOAD_ABORTED');
-      try{ cb({ status: 'Loading with WASM (CPU)', file: slug, progress: undefined }); }catch(_){}
-      _genPipe = await pipeline('text-generation', slug, {
-        device: 'wasm',
-        dtype: wasmDtype,
-        progress_callback: cb,
-      });
-      _genDevice = 'wasm';
-    };
-
-    let finalSlug = modelId;
-    try{
-      await tryPipeline(modelId);
-    }catch(e){
-      if(String(e && e.message) === 'LOAD_ABORTED') throw e;
-      const alt = GEN_MODEL_ALT_SLUGS[modelId];
-      if(alt && _isMissingFileError(e)){
-        console.warn('[gen] primary slug failed, retrying alternate:', alt);
-        cb({ status: 'retry', file: alt, progress: 0 });
-        _genModelId = alt;
-        finalSlug = alt;
-        await tryPipeline(alt);
-        // Persist the working slug so next session doesn't re-try the
-        // dead primary. User can still switch back via the dropdown.
-        try{
-          const cfg = _loadGenCfg();
-          cfg.modelId = alt;
-          _saveGenCfg(cfg);
-        }catch(_){}
-      } else {
-        throw e;
-      }
-    }
-    _genReady = true;
-    _genLastError = null;
-    // Record successful download against whichever slug actually resolved, so
-    // the "cached" indicator matches what's in the browser HTTP cache.
-    try{ markGenDownloaded(finalSlug); }catch(_){}
-  })().catch(err => {
-    _genPipe = null;
+  }).catch(err => {
     _genReady = false;
     _genDevice = null;
     const msg = (err && err.message) ? err.message : String(err);
-    if(msg === 'LOAD_ABORTED'){
-      _genLastError = 'Download cancelled.';
-    } else if(msg !== 'GEN_SWITCH_IN_PROGRESS'){
-      _genLastError = _friendlyGenError(msg, modelId);
+    if(msg === 'LOAD_ABORTED') _genLastError = 'Download cancelled.';
+    else if(msg !== 'GEN_SWITCH_IN_PROGRESS') _genLastError = _friendlyGenError(msg, modelId);
+    throw err;
+  }).finally(() => {
+    _genLoading = false;
+    _genLoadPromise = null;
+    _genLoadResolvers = null;
+  });
+
+  return _genLoadPromise;
+}
+
+/**
+ * Fallback loader used only when a Web Worker can't be created. Runs the same
+ * engine on the main thread (so old browsers still work), accepting that long
+ * generations will be less responsive there.
+ */
+async function _genLoadInThread(modelId, dtype, onProgress){
+  // Free the previously loaded model before loading another (same rationale as
+  // the worker path) so switching presets doesn't leak the old pipeline.
+  if(_genEngine){ try{ _genEngine.dispose(); }catch(_){} _genEngine = null; }
+  _genLoading = true;
+  _genModelId = modelId;
+  _genReady = false;
+  _genDevice = null;
+  _genLastError = null;
+  _genLoadAbortCtl = new AbortController();
+  const cb = typeof onProgress === 'function' ? onProgress : () => {};
+
+  _genLoadPromise = (async () => {
+    let createGenEngine;
+    try{
+      ({ createGenEngine } = await import(GEN_PIPELINE_URL));
+    }catch(e){
+      _genLastError = 'Failed to load the on-device LLM engine: ' + ((e && e.message) || e);
+      throw e;
     }
+    _genEngine = createGenEngine({
+      transformersUrl: GEN_TRANSFORMERS_URL,
+      wasmDir: GEN_TRANSFORMERS_WASM_DIR,
+      onProgress: cb,
+      onToken: (reqId, text) => {
+        const p = _genPending.get(reqId);
+        if(p && typeof p.onToken === 'function'){ try{ p.onToken(text); }catch(_){} }
+      },
+    });
+    const altSlug = GEN_MODEL_ALT_SLUGS[modelId] || null;
+    const finalSlug = await _genEngine.load({ modelId, dtype, altSlug, signal: _genLoadAbortCtl.signal });
+    _genReady = true;
+    _genDevice = _genEngine.getDevice();
+    _genModelId = finalSlug || modelId;
+    _genLastError = null;
+    if(_genModelId !== modelId){ try{ const cfg = _loadGenCfg(); cfg.modelId = _genModelId; _saveGenCfg(cfg); }catch(_){} }
+    try{ markGenDownloaded(finalSlug); }catch(_){}
+  })().catch(err => {
+    _genEngine = null;
+    _genReady = false;
+    _genDevice = null;
+    const msg = (err && err.message) ? err.message : String(err);
+    if(msg === 'LOAD_ABORTED') _genLastError = 'Download cancelled.';
+    else if(msg !== 'GEN_SWITCH_IN_PROGRESS') _genLastError = _friendlyGenError(msg, modelId);
     throw err;
   }).finally(() => {
     _genLoading = false;
@@ -379,15 +409,14 @@ async function genLoad(modelId, dtype, onProgress){
 }
 
 /**
- * Cancel an in-flight model download. Transformers.js v3 honors an abort by
- * detecting it in our signal guard at each tryPipeline() step, so the next
- * `await` after the abort rejects with LOAD_ABORTED. In-flight fetches
- * already running will complete, but nothing further starts.
+ * Cancel an in-flight model download. The worker checks the abort signal at
+ * each pipeline step, so the next `await` after the abort rejects with
+ * LOAD_ABORTED. In-flight fetches already running will complete, but nothing
+ * further starts.
  */
 function genAbortLoad(){
-  if(_genLoadAbortCtl){
-    try{ _genLoadAbortCtl.abort(); }catch(e){}
-  }
+  if(_genWorker){ try{ _genWorker.postMessage({ type: 'abort-load' }); }catch(_){} }
+  if(_genLoadAbortCtl){ try{ _genLoadAbortCtl.abort(); }catch(_){} }
 }
 
 function _friendlyGenError(msg, modelId){
@@ -408,31 +437,14 @@ function _friendlyGenError(msg, modelId){
 }
 
 /**
- * Cancel ALL in-flight generation calls. Uses Transformers.js v3's
- * InterruptableStoppingCriteria when available so decoding actually halts
- * (vs. rejecting the promise but letting tokens keep decoding in the bg).
- *
- * (M5) Iterates the full Sets so concurrent calls are all cancelled, not
- * just the most recent one.
+ * Cancel ALL in-flight generation calls. The worker interrupts each
+ * generation's InterruptableStoppingCriteria so decoding actually halts — and
+ * because the worker runs off the main thread, the abort message is delivered
+ * promptly even while a heavy generation is in progress.
  */
 function genAbort(){
-  for(const sc of _genActiveStoppers){
-    if(sc && typeof sc.interrupt === 'function'){
-      try{ sc.interrupt(); }catch(e){}
-    }
-  }
-  for(const ctl of _genActiveAbortCtls){
-    if(ctl){
-      try{ ctl.abort(); }catch(e){}
-    }
-  }
-  // Legacy single-ref compat (genDispose calls genAbort before clearing these)
-  if(_genStoppingCriteria && typeof _genStoppingCriteria.interrupt === 'function'){
-    try{ _genStoppingCriteria.interrupt(); }catch(e){}
-  }
-  if(_genAbortCtl){
-    try{ _genAbortCtl.abort(); }catch(e){}
-  }
+  if(_genWorker){ try{ _genWorker.postMessage({ type: 'abort-all' }); }catch(_){} }
+  if(_genEngine) _genEngine.abortAll();
 }
 
 /**
@@ -441,100 +453,73 @@ function genAbort(){
  * @returns {Promise<string>} Full generated text (without the prompt).
  */
 async function genGenerate(opts){
-  if(!_genReady || !_genPipe) throw new Error('GEN_NOT_READY');
-  const maxTokens   = Math.min(1024, Math.max(16, opts.maxTokens || 512));
-  const temperature = typeof opts.temperature === 'number' ? opts.temperature : 0.2;
-  const onToken     = typeof opts.onToken === 'function' ? opts.onToken : null;
+  if(!_genReady) throw new Error('GEN_NOT_READY');
+  const o = opts || {};
+  const payload = {
+    messages: o.messages,
+    tools: o.tools,
+    prompt: o.prompt,
+    maxTokens: Math.min(1024, Math.max(16, o.maxTokens || 512)),
+    temperature: typeof o.temperature === 'number' ? o.temperature : 0.2,
+    onToken: typeof o.onToken === 'function' ? o.onToken : null,
+    signal: o.signal || null,
+  };
+  if(_genWorker) return _genGenerateViaWorker(payload);
+  if(_genEngine)  return _genGenerateInThread(payload);
+  throw new Error('GEN_NOT_READY');
+}
 
+function _genGenerateViaWorker(payload){
+  const w = _genWorker;
+  const reqId = ++_genReqSeq;
   _genGenInFlight++;
-  _genGenerating = _genGenInFlight > 0;
-  const ctl = new AbortController();
-  _genAbortCtl = ctl;
-  _genActiveAbortCtls.add(ctl); // (M5)
-  if(opts.signal){
-    if(opts.signal.aborted){ ctl.abort(); }
-    else opts.signal.addEventListener('abort', () => ctl.abort(), { once: true });
-  }
-
-  let stopping = null;
-  try{
-    // Route aborts through InterruptableStoppingCriteria when available so
-    // decoding halts immediately instead of continuing in the background.
-    // Interrupt THIS call's own `stopping` (captured in closure) rather than
-    // gating on the global `_genStoppingCriteria`, which a concurrent
-    // generation can overwrite — otherwise aborting the earlier call would
-    // silently fail to stop it.
-    ctl.signal.addEventListener('abort', () => {
-      if(stopping && typeof stopping.interrupt === 'function'){
-        try{ stopping.interrupt(); }catch(e){}
-      }
-    }, { once: true });
-
-    const tokenizer = _genPipe.tokenizer;
-    let inputs;
-    if(Array.isArray(opts.messages) && typeof tokenizer.apply_chat_template === 'function'){
-      const tplOpts = { tokenize: false, add_generation_prompt: true };
-      if(Array.isArray(opts.tools) && opts.tools.length) tplOpts.tools = opts.tools;
-      inputs = tokenizer.apply_chat_template(opts.messages, tplOpts);
-    } else if(typeof opts.prompt === 'string'){
-      inputs = opts.prompt;
-    } else {
-      throw new Error('GEN_NO_INPUT');
+  _genGenerating = true;
+  return new Promise((resolve, reject) => {
+    const sig = payload.signal;
+    // A signal that's already aborted must NOT start a worker generation: the
+    // worker would process our 'abort' before it registers the request (so the
+    // interrupt finds no stopper and is lost), then run the generation to
+    // completion. Reject up-front to match the caller's intent and the
+    // main-thread path's pre-abort semantics.
+    if(sig && sig.aborted){ _settleGen(reqId); reject(new Error('GEN_ABORTED')); return; }
+    _genPending.set(reqId, { resolve, reject, onToken: payload.onToken });
+    if(sig){
+      sig.addEventListener('abort', () => { try{ w.postMessage({ type: 'abort', reqId }); }catch(_){} }, { once: true });
     }
-
-    let streamer = null;
     try{
-      const mod = await _importTransformers();
-      if(mod && mod.TextStreamer && onToken){
-        streamer = new mod.TextStreamer(tokenizer, {
-          skip_prompt: true,
-          skip_special_tokens: true,
-          callback_function: (t) => { try{ onToken(t); }catch(e){} },
-        });
-      }
-      if(mod && mod.InterruptableStoppingCriteria){
-        stopping = new mod.InterruptableStoppingCriteria();
-        _genStoppingCriteria = stopping;
-        _genActiveStoppers.add(stopping); // (M5)
-        // If abort already fired while we were importing the runtime, the
-        // (once:true) listener above ran when `stopping` was still null and
-        // won't run again. Interrupt immediately so a pre-creation abort still
-        // halts decoding instead of running to max_new_tokens.
-        if(ctl.signal.aborted && typeof stopping.interrupt === 'function'){
-          try{ stopping.interrupt(); }catch(e){}
-        }
-      }
-    }catch(e){
-      // streaming/stopping criteria are best-effort; generation still works without them.
+      w.postMessage({
+        type: 'generate', reqId,
+        messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
+        maxTokens: payload.maxTokens, temperature: payload.temperature,
+      });
+    }catch(err){
+      _settleGen(reqId);
+      reject(err);
     }
+  });
+}
 
-    const generateOpts = {
-      max_new_tokens: maxTokens,
-      do_sample: temperature > 0,
-      temperature: temperature,
-      return_full_text: false,
-      streamer,
-    };
-    if(stopping) generateOpts.stopping_criteria = stopping;
-
-    const out = await _genPipe(inputs, generateOpts);
-
-    if(ctl.signal.aborted) throw new Error('GEN_ABORTED');
-
-    if(Array.isArray(out) && out.length){
-      const first = out[0];
-      if(first && typeof first.generated_text === 'string') return first.generated_text;
-    }
-    return '';
-  } finally {
-    // (M5) Remove this call's handles from the active sets AND clear the
-    // legacy single-ref when it still points at this call's instance.
-    _genActiveAbortCtls.delete(ctl);
-    if(stopping) _genActiveStoppers.delete(stopping);
-    if(stopping && _genStoppingCriteria === stopping) _genStoppingCriteria = null;
-    if(_genAbortCtl === ctl) _genAbortCtl = null;
-    _genGenInFlight = Math.max(0, _genGenInFlight - 1);
-    _genGenerating = _genGenInFlight > 0;
+async function _genGenerateInThread(payload){
+  if(!_genEngine) throw new Error('GEN_NOT_READY');
+  const reqId = ++_genReqSeq;
+  _genGenInFlight++;
+  _genGenerating = true;
+  _genPending.set(reqId, { onToken: payload.onToken });
+  const ctl = new AbortController();
+  if(payload.signal){
+    if(payload.signal.aborted) ctl.abort();
+    else payload.signal.addEventListener('abort', () => ctl.abort(), { once: true });
+  }
+  ctl.signal.addEventListener('abort', () => { if(_genEngine) _genEngine.abort(reqId); }, { once: true });
+  try{
+    return await _genEngine.generate({
+      reqId,
+      messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
+      maxTokens: payload.maxTokens, temperature: payload.temperature,
+      signal: ctl.signal,
+    });
+  }finally{
+    _settleGen(reqId);
   }
 }
 
@@ -651,7 +636,7 @@ function _formatGenTextCallOutput(raw){
 }
 
 async function _genJsonCall({ system, user, maxTokens = 192, temperature = 0.1, signal }){
-  if(!_genReady || !_genPipe) return null;
+  if(!_genReady) return null;
   try{
     const raw = await genGenerate({
       messages: [
@@ -669,7 +654,7 @@ async function _genJsonCall({ system, user, maxTokens = 192, temperature = 0.1, 
 }
 
 async function _genTextCall({ system, user, maxTokens = 64, temperature = 0.3, signal }){
-  if(!_genReady || !_genPipe) return null;
+  if(!_genReady) return null;
   try{
     const raw = await genGenerate({
       messages: [
@@ -943,21 +928,18 @@ async function genWeeklyReview(opts){
 // automatically on tab close but also exposed as `genDispose()` so callers can
 // proactively free memory after heavy generation runs on constrained devices.
 function genDispose(){
-  // Abort any in-flight generation first
+  // Abort any in-flight generation first.
   genAbort();
-  if(_genPipe && typeof _genPipe.dispose === 'function'){
-    try{ _genPipe.dispose(); }catch(_){}
-  }
-  _genPipe = null;
+  if(_genWorker){ try{ _genWorker.postMessage({ type: 'dispose' }); }catch(_){} }
+  if(_genEngine){ try{ _genEngine.dispose(); }catch(_){} _genEngine = null; }
+  // Reject anything still awaiting so callers don't hang after disposal.
+  for(const [, p] of _genPending){ if(p && p.reject){ try{ p.reject(new Error('GEN_DISPOSED')); }catch(_){} } }
+  _genPending.clear();
   _genReady = false;
   _genGenerating = false;
   _genGenInFlight = 0;
   _genDevice = null;
   _genModelId = null;
-  _genStoppingCriteria = null;
-  _genAbortCtl = null;
-  _genActiveAbortCtls.clear(); // (M5)
-  _genActiveStoppers.clear();  // (M5)
 }
 
 if(typeof window !== 'undefined'){

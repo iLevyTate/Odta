@@ -324,6 +324,9 @@ window.cmdkToggleAsk=cmdkToggleAsk;
 window.cmdkSetAskMode=cmdkSetAskMode;
 window.cmdkAskSubmit=cmdkAskSubmit;
 window.cmdkAskStop=cmdkAskStop;
+window.cmdkAskMinimize=cmdkAskMinimize;
+window.cmdkRestoreAsk=cmdkRestoreAsk;
+window.cmdkDismiss=cmdkDismiss;
 window.openAskMode=openAskMode;
 window.syncAskPromoChip=syncAskPromoChip;
 window.cmdkSetApplyMode=cmdkSetApplyMode;
@@ -343,6 +346,10 @@ let cmdkMode='find'; // 'find' | 'ask'
 let _cmdkAskCtl=null;
 let _cmdkAskHistoryIdx=-1;
 let _cmdkAskBusy=false;
+// True when the Ask panel was minimized while a question is running/unread.
+// Minimizing intentionally does NOT bump _cmdkAskReqSeq or abort, so the
+// in-flight turn keeps streaming in the background; reopening restores it.
+let _cmdkAskMinimized=false;
 // Monotonic request token. Each Ask submit captures the current value; any
 // abort/close/new-chat bumps it. Post-await steps (auto-apply, terminal
 // status updates, the finally cleanup) bail when their captured token is
@@ -396,6 +403,9 @@ function openCmdK(opts){
   const openAsk = opts && opts.ask === true;
   const prefill = (opts && typeof opts.prefill === 'string') ? opts.prefill : '';
   const ov=gid('cmdkOverlay');if(!ov)return;
+  // A question minimized to the background takes priority: reopening restores
+  // that live conversation (and its in-flight stream) instead of killing it.
+  if(_cmdkAskMinimized){ cmdkRestoreAsk(); return; }
   // Reopening the palette mid-run must actually stop the prior turn (and
   // invalidate it) rather than just clearing the busy flag and leaking a
   // background generation. _cmdkAbortAsk bumps the request token + clears busy.
@@ -407,7 +417,7 @@ function openCmdK(opts){
   const inp=gid('cmdkInput');
   if(inp)inp.value=prefill;
   cmdkActiveIdx=0;renderCmdK();
-  Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true });
+  Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true, onRequestClose:cmdkDismiss });
   if(inp && prefill){
     requestAnimationFrame(()=>{ try{ inp.setSelectionRange(prefill.length, prefill.length); }catch(_){} });
   }
@@ -416,6 +426,60 @@ function closeCmdK(){
   _cmdkAbortAsk();
   Modal.close('cmdkOverlay');
   _cmdkAskTurns = [];
+  _cmdkAskMinimized=false;
+  _syncAskDock();
+}
+/**
+ * Dismiss the palette via Esc / backdrop / swipe. While an Ask question is
+ * still running we minimize (keep it alive in the background) instead of
+ * aborting — only the explicit Stop button cancels. Otherwise it fully closes.
+ */
+function cmdkDismiss(){
+  if(cmdkMode==='ask' && (_cmdkAskBusy || _cmdkAskMinimized)){ cmdkAskMinimize(); return; }
+  closeCmdK();
+}
+/**
+ * Collapse the Ask panel into a small floating pill without aborting the
+ * in-flight question. With nothing to keep alive (no run, no conversation)
+ * this is just a normal close.
+ */
+function cmdkAskMinimize(){
+  if(!_cmdkAskBusy && !_cmdkAskTurns.length){ closeCmdK(); return; }
+  _cmdkAskMinimized=true;
+  Modal.close('cmdkOverlay');
+  _syncAskDock();
+}
+/** Reopen a minimized Ask conversation, restoring its (possibly streaming) state. */
+function cmdkRestoreAsk(){
+  _cmdkAskMinimized=false;
+  cmdkMode='ask';
+  _applyCmdkMode();
+  _renderAskConversation();
+  cmdkActiveIdx=0;renderCmdK();
+  Modal.open('cmdkOverlay', { variant:'palette', focus:'#cmdkInput', skipInitialFocus:true, onRequestClose:cmdkDismiss });
+  _syncAskDock();
+}
+/** Show/update the floating "Ask running…/ready" pill that hosts a minimized turn. */
+function _syncAskDock(){
+  const pill=gid('askDockPill');
+  if(!pill)return;
+  pill.hidden=!_cmdkAskMinimized;
+  if(!_cmdkAskMinimized)return;
+  const running=_cmdkAskBusy;
+  pill.classList.toggle('ask-dock-pill--running', running);
+  const label=pill.querySelector('.ask-dock-label');
+  if(label) label.textContent = running ? 'Ask is working…' : 'Ask ready — tap to view';
+  pill.setAttribute('aria-label', running ? 'Ask is working in the background — tap to view' : 'Ask finished — tap to view the answer');
+}
+/** Short, status-aware label for the finish toast shown when a backgrounded turn completes. */
+function _cmdkAskDockToastLabel(turn){
+  const s=turn&&turn.status;
+  if(s==='applied') return 'Ask applied your changes';
+  if(s==='ops')     return 'Ask proposed changes — tap to review';
+  if(s==='answer')  return 'Ask answered your question';
+  if(s==='error')   return 'Ask couldn’t finish — tap to view';
+  if(s==='need-model') return 'Ask needs the model loaded';
+  return 'Ask finished — tap to view';
 }
 function _cmdkAbortAsk(){
   // Invalidate any in-flight turn so its post-await work (including auto-apply)
@@ -468,6 +532,8 @@ function _applyCmdkMode(){
   }
   const applyMode = gid('cmdkApplyMode');
   if(applyMode) applyMode.hidden = cmdkMode !== 'ask';
+  const minBtn = gid('cmdkAskMinimize');
+  if(minBtn) minBtn.hidden = cmdkMode !== 'ask';
   const starters = gid('cmdkAskStarters');
   if(starters) starters.hidden = cmdkMode !== 'ask' || _cmdkAskTurns.length > 0;
   if(cmdkMode === 'ask') _syncCmdkApplyModeUi();
@@ -1059,6 +1125,24 @@ async function cmdkAskSubmit(){
     turn.readRounds = res.readRounds || 0;
 
     if(_cmdkAskApplyMode === 'auto'){
+      // Don't pop a destructive-confirm modal over the user while this run is
+      // backgrounded — they minimized precisely to do something else. Defer
+      // destructive batches to review; the finish toast invites them back to
+      // consciously approve. Safe (non-destructive) batches still auto-apply.
+      const deferDestructive = _cmdkAskMinimized
+        && typeof askDestructiveConfirmNeeded === 'function'
+        && askDestructiveConfirmNeeded(res.ops, res.destructiveLevel || 'none');
+      if(deferDestructive){
+        _cmdkAskUpdate(turn, {
+          status: 'ops',
+          text: `Proposed ${n} change${n!==1?'s':''}${extra}.${rrd} Includes destructive edits — tap to review and apply.`,
+          ops: res.ops,
+          rejected: res.rejected || null,
+          destructiveLevel: res.destructiveLevel,
+          readRounds: res.readRounds || 0,
+        });
+        return;
+      }
       const applyResult = await _cmdkApplyTurnOps(turn);
       if(applyResult && applyResult.cancelled){
         _cmdkAskUpdate(turn, {
@@ -1113,9 +1197,18 @@ async function cmdkAskSubmit(){
     if(reqId === _cmdkAskReqSeq){
       _cmdkAskBusy=false;
       _cmdkAskCtl=null;
-      // Re-focus the input so a follow-up question is one keystroke away.
-      const inp = gid('cmdkInput');
-      if(inp){ try{ inp.focus(); }catch(_){} }
+      if(_cmdkAskMinimized){
+        // Finished while backgrounded: update the pill and surface a toast the
+        // user can tap to read the answer (they're off doing something else).
+        _syncAskDock();
+        if(typeof showActionToast==='function'){
+          showActionToast(_cmdkAskDockToastLabel(turn), 'View', ()=>cmdkRestoreAsk(), 8000);
+        }
+      } else {
+        // Re-focus the input so a follow-up question is one keystroke away.
+        const inp = gid('cmdkInput');
+        if(inp){ try{ inp.focus(); }catch(_){} }
+      }
     }
   }
 }
@@ -1377,7 +1470,7 @@ function cmdkRun(idx){
   closeCmdK();setTimeout(()=>item.run(),50);
 }
 function cmdkKeydown(e){
-  if(e.key==='Escape'){closeCmdK();return}
+  if(e.key==='Escape'){cmdkDismiss();return}
   if(cmdkMode==='ask'){
     if(e.key==='Enter'){e.preventDefault();cmdkAskSubmit();return}
     if(e.key==='ArrowUp'){

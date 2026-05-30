@@ -1,5 +1,20 @@
 # Changelog
 
+## v60 — 2026-05-29
+
+- **Ask**: the Ask box no longer hijacks the whole screen for the duration of a question. A new **Minimize** button (and dismissing via Esc / tapping outside while a question is running) collapses it into a small floating pill so you can keep using the app while the answer finishes on-device. Reopen anytime to watch it stream; when it finishes in the background a **toast** lets you jump straight to the answer. Only the explicit **Stop** button cancels — backgrounding keeps the question alive.
+- **Fix (on-device LLM)**: the generative pipeline now runs in a dedicated module Web Worker (`js/gen-worker.js`) instead of on the main thread. A multi-round Ask analysis (e.g. "group my tasks by topic") used to monopolize the event loop and **freeze the whole UI** — including the Stop button — until it finished, especially on the CPU/WASM path. With inference off-thread the page stays responsive and **Stop now interrupts mid-generation** because the abort message reaches the worker immediately.
+- **Fix**: if the worker thread dies mid-analysis (e.g. the ONNX runtime OOMs and gets killed), the app now surfaces a clear, recoverable error and discards the dead worker so the next load spins up a fresh one — previously this looked like a silent, permanent freeze.
+- **Internal**: the load + inference logic moved into a shared, DOM-free engine (`js/gen-pipeline.js`) used by both the worker and a main-thread fallback (for browsers without module-worker / WebGPU-in-worker support), so there's one implementation of the WebGPU→WASM fallback, the 45s GPU-init timeout, streaming, and the interruptible stopping criteria. `js/gen.js` is now a thin proxy that preserves the existing public API. Added a worker message-protocol regression test.
+- **Fix (LLM abort)**: a generation whose abort signal was *already* aborted when it started no longer runs to completion in the worker. The proxy used to post `abort` then `generate`, but the worker processed the `abort` before the request existed (so the interrupt was lost). It now rejects up-front with `GEN_ABORTED`, matching the main-thread path.
+- **Fix (LLM memory)**: switching model presets no longer leaks the previous model's weights. Both the worker and the main-thread fallback now dispose the prior pipeline (freeing WASM heap / WebGPU buffers) before loading the next one.
+- **Fix (Ask, auto-apply)**: a backgrounded (minimized) question that resolves to a **destructive** batch (deletes / bulk moves) no longer pops a confirmation modal over whatever you're doing. Destructive batches are deferred to review and the finish toast invites you back to approve them; safe batches still auto-apply.
+
+## v59 — 2026-05-29
+
+- **Fix (on-device LLM)**: the generative model no longer gets stuck on "Initializing model…" after the download bar hits 100%. WebGPU session creation (shader compile + weight upload) emits no progress and can hang indefinitely on some drivers/integrated GPUs even after the device probe passes — the init phase is now capped (45s) and falls back to **WASM (CPU)** instead of hanging forever. The progress UI shows "Switching to CPU (WASM)…" during fallback so the 100%-but-still-working phase no longer looks frozen.
+- **Fix**: cached-weight auto-restore now refreshes the Settings panel when it finishes, so its status reflects the real end-state ("Ready on …") instead of leaving a stale "Initializing model…" line.
+
 ## v58 — 2026-05-26
 
 - **Fix**: the Tools-tab **Proposed changes** preview no longer collapses every row to a thin sliver on large batches (e.g. auto-organize with 20 list moves). Cards pin `flex-shrink:0` so the list scrolls instead of crushing its rows; safe task-name normalization and list-move confirmation markup improve readability.

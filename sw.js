@@ -1,6 +1,6 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v59';
+let CACHE_NAME = 'odtaulai-v60';
 try {
   importScripts('./js/version.js');
   if (self.ODTAULAI_RELEASE && self.ODTAULAI_RELEASE.swCache) {
@@ -24,7 +24,7 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v59',
+  './css/main.css?v=v60',
   './js/version.js',
   './js/event-delegation.js',
   './js/pwa.js',
@@ -47,6 +47,8 @@ const ASSETS = [
   './js/intel-features.js',
   './js/tool-schema.js',
   './js/gen.js',
+  './js/gen-pipeline.js',
+  './js/gen-worker.js',
   './js/ask.js',
   './js/ui.js',
   './js/ai.js',
