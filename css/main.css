@@ -2270,9 +2270,10 @@
     .sr-lbl{font-size:14px;flex:1;min-width:0}
     .sinput{min-height:44px;font-size:16px!important;width:72px!important;text-align:center}
     select.sinput{width:auto!important;min-width:100px;text-align:left;padding-right:24px!important;text-overflow:ellipsis}
-    .toggle{width:42px;height:24px;flex-shrink:0}
-    .toggle .tknob{width:18px;height:18px}
-    .toggle.on .tknob{left:21px}
+    /* Mobile toggle inherits desktop 44×26 size for a 44px-wide touch target
+       (WCAG 2.5.5). Only the flex-shrink override is needed so the toggle
+       doesn't compress inside a constrained .srow. */
+    .toggle{flex-shrink:0}
 
     /* Data tab */
     .stat-box{padding:12px}
@@ -3390,6 +3391,7 @@ body:has(.update-banner) .quota-warning{
   white-space:nowrap;min-height:40px;display:inline-flex;align-items:center;
 }
 .set-nav-btn:hover{color:var(--text-1);border-color:var(--text-3)}
+.set-nav-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;color:var(--text-1)}
 .set-nav-btn.active{background:var(--bg-3);border-color:var(--border-strong);color:var(--text-1)}
 .set-nav-filter{position:relative;flex:0 0 220px;max-width:100%}
 .set-nav-filter-input{width:100%;font-size:12px;padding:6px 28px 6px 10px}
@@ -3406,7 +3408,10 @@ body:has(.update-banner) .quota-warning{
 .srow.srow--filter-hidden{display:none!important}
 .srow.srow--filter-match{outline:1px solid var(--accent-border);outline-offset:-1px;border-radius:6px}
 @media (max-width:640px){
-  .set-nav{padding:8px;gap:8px;border-radius:8px;flex-direction:column;align-items:stretch}
+  /* Sticky nav respects safe-area-inset-top so it doesn't tuck behind the
+     iPhone notch / Android status bar when scrolled. max() keeps the 8px
+     floor on devices that report 0 inset. */
+  .set-nav{padding:max(8px, env(safe-area-inset-top, 0px)) 8px 8px;gap:8px;border-radius:8px;flex-direction:column;align-items:stretch}
   .set-nav-jump{
     overflow-x:auto;flex-wrap:nowrap;
     scrollbar-width:none;-ms-overflow-style:none;
@@ -3421,9 +3426,9 @@ body:has(.update-banner) .quota-warning{
   margin-bottom:10px;background:var(--bg-1);
 }
 .set-section-sum,.md-section-sum{
-  font-size:13px;font-weight:600;color:var(--text-1);
+  font-size:var(--fs-13);font-weight:600;color:var(--text-1);
   padding:12px 14px;cursor:pointer;list-style:none;
-  display:flex;align-items:center;
+  display:flex;align-items:center;min-height:44px;
 }
 .set-section-sum::-webkit-details-marker,.md-section-sum::-webkit-details-marker{display:none}
 /* Disclosure chevron for collapsible <details> summaries. The native marker
