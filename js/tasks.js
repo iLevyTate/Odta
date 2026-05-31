@@ -2140,11 +2140,27 @@ function haptic(ms){
 // Auto-organize (embeddings route tasks to the list whose name+description they
 // match best). Example: description "bills, taxes, budgets, investments" routes
 // "pay rent" or "review purchases" to Finance.
+//
+// DEFAULT_LISTS seeds a fresh install with a useful starter set so the app is
+// organized out of the gate. These are context/project buckets and stay
+// complementary to the values-driven Life areas (DEFAULT_CATEGORY_DEFS in
+// intel-features.js) rather than duplicating them. Descriptions are written as
+// routing keywords for Auto-organize and kept low-overlap so tasks land in the
+// right list. Personal is first, so it stays the active/orphan-fallback list.
+const DEFAULT_LISTS=[
+  {name:'Personal',       color:'#30d158', description:"Personal life and miscellaneous to-dos — family, friends, social plans, self-care, anything that doesn't fit another list."},
+  {name:'Work',           color:'#6aa8ff', description:'Work and career — projects, meetings, deadlines, emails, professional learning.'},
+  {name:'Home & Errands', color:'#ff9f0a', description:'Household and errands — chores, cleaning, repairs, maintenance, groceries, errands to run.'},
+  {name:'Finance',        color:'#bf5af2', description:'Money and finances — bills, rent, taxes, budgeting, investments, subscriptions.'},
+  {name:'Health',         color:'#ff375f', description:'Health and fitness — workouts, exercise, doctor and dentist appointments, medications, wellness.'},
+  {name:'Learning',       color:'#7db3ff', description:'Learning and growth — courses, studying, reading, tutorials, skills to practice.'},
+  {name:'Shopping',       color:'#ff453a', description:'Shopping and purchases — things to buy, wishlist items, online orders, gift ideas.'},
+  {name:'Side Projects',  color:'#a78bfa', description:'Side projects and hobbies — creative builds, personal projects, side hustles, experiments.'},
+];
 function ensureDefaultList(){
   if(lists.length===0){
     const t=Date.now();
-    lists.push({id:++listIdCtr,name:'Personal',color:'#30d158',description:'Personal life — errands, home, hobbies, relationships, health, self-care.',lastModified:t});
-    lists.push({id:++listIdCtr,name:'Work',color:'#6aa8ff',description:'Work and career — projects, meetings, deadlines, professional learning.',lastModified:t});
+    DEFAULT_LISTS.forEach(d=>lists.push({id:++listIdCtr,name:d.name,color:d.color,description:d.description,lastModified:t}));
     activeListId=lists[0].id;
   }
   if(!activeListId&&lists.length)activeListId=lists[0].id;
