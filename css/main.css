@@ -4631,7 +4631,7 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .gen-settings-warn{font-size:11px;color:var(--warning,#e67e22);line-height:1.4;padding:6px 10px;background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.3);border-radius:5px}
 .gen-settings-status{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
 .gen-settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
-.gen-settings-actions--secondary{margin-top:6px;padding-top:8px;border-top:1px dashed var(--border)}
+.gen-settings-actions--secondary{margin-top:6px}
 .gen-settings-hint{font-size:11px;color:var(--text-4);line-height:1.5;margin:6px 0 0}
 
 /* Ask promo chip (discoverability outside Cmd+K) */
