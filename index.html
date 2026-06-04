@@ -238,6 +238,10 @@
       </div>
       <button class="task-add" data-action="addTaskOrApplyPreview">+ Add</button>
     </div>
+    <!-- Tap-to-set quick properties: set Due / Priority / List without learning
+         token syntax. Writes to the same window._quickAddValues the parser
+         merges, so taps and typed tokens combine. Cleared after each add. -->
+    <div class="qa-quickset" id="qaQuickSet" role="group" aria-label="Quick set properties"></div>
     <div id="smartAddPreview" class="smart-add-preview" hidden></div>
     <!-- Live parse preview: chips reflect quick-add tokens parsed from current
          input text so users can SEE what will commit before pressing Enter.
