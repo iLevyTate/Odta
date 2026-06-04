@@ -2499,7 +2499,7 @@ function renderBoard(visibleTasks){
 // a chip looks like an immediate action, so it should be one. Typing into a
 // textarea and bailing should still discard, hence the per-field handling.
 let _taskModalSnapshot=null;
-const TASK_MODAL_CHIP_FIELDS = ['priority','effort','energyLevel','category','type','recur','tags','status','completedAt','dueDate'];
+const TASK_MODAL_CHIP_FIELDS = ['priority','effort','energyLevel','category','type','recur','tags','status','completedAt','dueDate','listId'];
 // Commit a chip-driven mutation: persist via saveState, refresh the chip
 // portion of the snapshot so closeTaskDetail's revert pass can't undo it,
 // re-render the task list (so chips on the row update live), and pulse the
@@ -2525,6 +2525,57 @@ function _syncTaskModalSnapshot(taskId, fields){
   });
 }
 window._syncTaskModalSnapshot = _syncTaskModalSnapshot;
+// Unified save model: the modal's free-text / date / number fields autosave on
+// blur or change, so the editor has ONE predictable behaviour — chip fields
+// already auto-commit via _commitChipChange, and now text fields do too. This
+// removes the old split where chips saved instantly but typed text only
+// persisted on an explicit "Save" (and was silently reverted on Cancel/ESC).
+// Keeps the modal open, only persists when something actually changed (blur
+// fires often), and re-syncs the close-revert snapshot so dismissing the panel
+// never discards or half-keeps an edit. Undo (Ctrl+Z) remains the recovery path.
+const TASK_MODAL_TEXT_FIELDS = ['name','dueDate','hiddenUntil','startDate','estimateMin','description','url','completionNote','remindAt','listId'];
+function _autosaveTaskDetailText(){
+  if(editingTaskId==null) return;
+  const t=findTask(editingTaskId); if(!t) return;
+  const before={};
+  TASK_MODAL_TEXT_FIELDS.forEach(f=>{ before[f]=t[f]; });
+  const v=id=>{ const el=gid(id); return el?el.value:undefined; };
+  if(gid('mdName')) t.name=(v('mdName')||'').trim()||t.name;
+  if(gid('mdDue')){ const nd=v('mdDue')||null; if(nd!==t.dueDate){ t.dueDate=nd; t.reminderFired=false; } }
+  if(gid('mdSnoozeUntil')) t.hiddenUntil=v('mdSnoozeUntil')||null;
+  if(gid('mdStartDate')) t.startDate=v('mdStartDate')||null;
+  if(gid('mdEstimate')) t.estimateMin=parseInt(v('mdEstimate'))||0;
+  if(gid('mdDesc')) t.description=v('mdDesc');
+  if(gid('mdUrl')) t.url=(v('mdUrl')||'').trim()||null;
+  if(gid('mdCompletionNote')) t.completionNote=(v('mdCompletionNote')||'').trim()||null;
+  if(gid('mdRemindAt')){ const ra=v('mdRemindAt'); if((ra||'')!==(t.remindAt||'')){ t.remindAt=ra||null; t.reminderFired=false; } }
+  if(gid('mdList')){ const lid=parseInt(v('mdList')); if(lid) t.listId=lid; }
+  let changed=false;
+  for(const f of TASK_MODAL_TEXT_FIELDS){ if(before[f]!==t[f]){ changed=true; break; } }
+  if(!changed) return;
+  if((before.dueDate!==t.dueDate||before.remindAt!==t.remindAt)&&typeof _maybeNudgeNotifPerm==='function') _maybeNudgeNotifPerm();
+  if(typeof recordTaskActivity==='function') recordTaskActivity(t, before);
+  // Keep the close-revert snapshot aligned so dismissing preserves these edits.
+  if(_taskModalSnapshot){ TASK_MODAL_TEXT_FIELDS.forEach(f=>{ _taskModalSnapshot[f]=t[f]; }); }
+  if(typeof saveState==='function') saveState('user'); // also pulses the Saved indicator
+  window._preserveTaskScroll=true;
+  if(typeof renderTaskList==='function') renderTaskList();
+  if(typeof _updateActiveTaskTickSchedule==='function') _updateActiveTaskTickSchedule();
+}
+window._autosaveTaskDetailText=_autosaveTaskDetailText;
+// Bind the autosave once on the persistent modal element. focusout/change both
+// bubble, so a single delegated listener covers every tracked input. mdList is
+// driven by the List dropdown, which commits via _commitChipChange (listId is
+// now in TASK_MODAL_CHIP_FIELDS), so it isn't tracked here.
+function _bindTaskDetailAutosave(){
+  const root=document.getElementById('taskModal');
+  if(!root || root.dataset.autosaveBound==='1') return;
+  root.dataset.autosaveBound='1';
+  const tracked=new Set(['mdName','mdDue','mdSnoozeUntil','mdStartDate','mdEstimate','mdDesc','mdUrl','mdCompletionNote','mdRemindAt']);
+  const handler=e=>{ if(editingTaskId!=null && e.target && tracked.has(e.target.id)) _autosaveTaskDetailText(); };
+  root.addEventListener('focusout', handler);
+  root.addEventListener('change', handler);
+}
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail
@@ -2750,6 +2801,7 @@ function openTaskDetail(id){
   // expansion would change the modal's height; on mobile (align-items:
   // flex-end) the bottom stays anchored and the TOP would jolt upward
   // ("jitter at the top"). editingTaskId guard cancels stale fetches.
+  _bindTaskDetailAutosave();
   Modal.open('taskModal', {
     variant: 'sheet',
     focus: '#mdName',
@@ -2978,42 +3030,18 @@ function removeTag(id,idx){const t=findTask(id);if(!t||!t.tags)return;t.tags.spl
 
 // _taskModalPrevFocus and _taskModalTabTrap removed in Stage 2 — Modal.open
 // owns focus capture/restore (via openFocusTrap) and Tab cycling for taskModal.
-// Snapshot-vs-form-fields divergence check. Only the *text/number* form
-// fields gate the discard-confirm — chip edits already committed via
-// _commitChipChange aren't considered "unsaved". Returns true when the user
-// has typed or changed an input that would be lost on revert.
-function _taskModalHasUnsavedTextEdits(){
-  if(!_taskModalSnapshot) return false;
-  const pairs = [
-    ['mdName',         _taskModalSnapshot.name         || ''],
-    ['mdDesc',         _taskModalSnapshot.description  || ''],
-    ['mdUrl',          _taskModalSnapshot.url          || ''],
-    ['mdCompletionNote', _taskModalSnapshot.completionNote || ''],
-    ['mdDue',          _taskModalSnapshot.dueDate      || ''],
-    ['mdStartDate',    _taskModalSnapshot.startDate    || ''],
-    ['mdSnoozeUntil',  _taskModalSnapshot.hiddenUntil  || ''],
-    ['mdRemindAt',     _taskModalSnapshot.remindAt     || ''],
-    ['mdEstimate',     String(_taskModalSnapshot.estimateMin ?? 0)],
-  ];
-  for(const [id, baseline] of pairs){
-    const el = gid(id);
-    if(!el) continue;
-    const cur = (id === 'mdName' || id === 'mdUrl' || id === 'mdCompletionNote') ? (el.value||'').trim() : (el.value||'');
-    const base = (id === 'mdName' || id === 'mdUrl' || id === 'mdCompletionNote') ? String(baseline).trim() : String(baseline);
-    if(cur !== base) return true;
-  }
-  return false;
-}
+// (The old _taskModalHasUnsavedTextEdits divergence check / "discard?" prompt
+// was removed when text fields moved to autosave-on-blur — see
+// _autosaveTaskDetailText — so closing always persists and never interrogates.)
 async function closeTaskDetail(opts){
   if(typeof closeAttachLightbox === 'function') closeAttachLightbox();
   _abortMdVoiceRecording();
   const skipRevert=opts&&opts.skipRevert;
-  // Confirm before discarding text/number edits the user typed but didn't
-  // save. Chip edits aren't gated by this — they were already committed.
-  if(!skipRevert && _taskModalSnapshot && _taskModalHasUnsavedTextEdits() && typeof showAppConfirm === 'function'){
-    const ok = await showAppConfirm('Discard unsaved text edits?');
-    if(!ok) return;
-  }
+  // Unified save model: commit any pending text/date edits on the way out so
+  // closing always persists (and the snapshot stays aligned). With autosave on
+  // blur this is usually a no-op, but it covers the case where a field still
+  // holds focus when the user clicks Done / taps the backdrop / presses ESC.
+  if(!skipRevert && editingTaskId!=null && typeof _autosaveTaskDetailText==='function') _autosaveTaskDetailText();
   if(!skipRevert&&_taskModalSnapshot&&editingTaskId!=null){
     const id=editingTaskId,si=tasks.findIndex(x=>x.id===id);
     if(si>=0){
