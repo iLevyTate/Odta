@@ -63,29 +63,35 @@
     /* Typography */
     --font-sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     --font-mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
-    /* Surface colors — --bg-0 matches index.html theme-color + manifest theme/background (#0a1320) */
-    --bg-0:#0a1320;
-    --bg-1:#111a2c;
-    --bg-2:#172335;
-    --bg-3:#1e2c42;
-    /* --border was identical to --bg-3 (#1e2c42), so card edges disappeared on
-       hover. Lifted to #26344a so cards keep a visible separator in active
-       states. --border-subtle preserves the previous value where the design
-       intentionally wanted a near-invisible divider. */
-    --border:#26344a;
-    --border-subtle:#1e2c42;
-    --border-strong:#2a3a54;
-    /* Text — --text-3 was #6b7a8f (3.5:1 on --bg-0), failing WCAG 2.2 AA for
-       normal text. Lifted to #8a98ad (4.6:1). --text-4 demoted to non-text use
-       (dividers, dot indicators) — too low for any readable copy. */
-    --text-1:#e8edf5;
-    --text-2:#a8b3c5;
-    --text-3:#8a98ad;
-    --text-4:#6b7a8f;
-    /* Accents */
-    --accent:#6aa8ff;
-    --accent-bg:rgba(106,168,255,.12);
-    --accent-border:rgba(106,168,255,.3);
+    /* Surface colors — deep indigo-charcoal canvas for the ClickUp-adjacent
+       brand. --bg-0 matches index.html theme-color + manifest theme/background
+       (#0b0f1c). Tuned to preserve AA text contrast against the new base. */
+    --bg-0:#0b0f1c;
+    --bg-1:#13172a;
+    --bg-2:#1a2038;
+    --bg-3:#232a47;
+    /* --border lifted off --bg-3 so card edges stay visible in active states.
+       --border-subtle keeps a near-invisible divider where intended. */
+    --border:#2b3352;
+    --border-subtle:#222a45;
+    --border-strong:#374063;
+    /* Text — kept high-contrast against the new indigo --bg-0. --text-3 holds
+       AA (~4.8:1 on #0b0f1c); --text-4 is non-text use (dividers, dots). */
+    --text-1:#e9ecf6;
+    --text-2:#a9b2c8;
+    --text-3:#8b94ad;
+    --text-4:#6a7390;
+    /* Accents — brand primary is an electric indigo-violet (ClickUp-adjacent,
+       deliberately our own; not ClickUp's #7B68EE). Paired with an orchid
+       secondary to form the brand gradient. */
+    --accent:#7b61ff;
+    --accent-bg:rgba(123,97,255,.14);
+    --accent-border:rgba(123,97,255,.34);
+    /* Brand gradient — primary "+ Add", FAB, active nav, header mark. */
+    --brand-2:#e35ada;
+    --brand-grad:linear-gradient(135deg,#7b61ff 0%,#a85ff0 50%,#e35ada 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(123,97,255,.18),rgba(227,90,218,.18));
+    --text-on-brand:#fff;
     --success:#30d158;
     --success-bg:rgba(48,209,88,.12);
     --success-border:rgba(48,209,88,.3);
@@ -104,7 +110,7 @@
     --prio-high:var(--warning);
     --prio-normal:var(--accent);
     --prio-low:var(--text-3);
-    --accent-hover:#7db3ff;
+    --accent-hover:#9079ff;
     /* Text/icon on saturated accent-colored buttons (readable on accent / success / warning fills) */
     --text-on-accent:#0f172a;
     --text-on-inverse:#fff;
@@ -112,7 +118,7 @@
     --panel-dot-tasks:var(--pink);
     --quick-accent:var(--accent);
     /* Phase colors (back-compat) */
-    --work:var(--accent);--work-glow:rgba(106,168,255,.4);--work-bg:#0d1a2d;--work-border:#1a2d44;
+    --work:var(--accent);--work-glow:rgba(123,97,255,.4);--work-bg:#161532;--work-border:#2a2658;
     --short:var(--success);--short-glow:rgba(48,209,88,.4);--short-bg:#0d2818;--short-border:#1a4a2a;
     --long:var(--warning);--long-glow:rgba(255,159,10,.4);--long-bg:#1a1508;--long-border:#3a2a10;
     /* Life-area category accents (task chips + settings) */
@@ -184,9 +190,17 @@
   [data-cat-id="general"]{--sv-cat:var(--cat-general);--md-cat:var(--cat-general);--ui-chip-dot:var(--cat-general);--cat-stripe:var(--cat-general)}
   body.light-theme{
     color-scheme:light;
-    --bg-0:#f4f6fa;--bg-1:#fff;--bg-2:#f8fafc;--bg-3:#e3e8f0;
+    /* Faint violet tint in the light canvas ties it to the brand. */
+    --bg-0:#f5f4fb;--bg-1:#fff;--bg-2:#faf9fe;--bg-3:#e9e7f4;
     /* Light-theme border lifted off --bg-3 to keep card edges visible. */
-    --border:#cfd6e1;--border-subtle:#e3e8f0;--border-strong:#c7d0de;
+    --border:#d9d5ea;--border-subtle:#e9e7f4;--border-strong:#cbc6e0;
+    /* Brand on light: a deeper violet so accent text/fills clear AA on white. */
+    --accent:#6a4dff;
+    --accent-bg:rgba(106,77,255,.10);
+    --accent-border:rgba(106,77,255,.30);
+    --brand-2:#d23fc4;
+    --brand-grad:linear-gradient(135deg,#6a4dff 0%,#9b46ee 50%,#d23fc4 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(106,77,255,.10),rgba(210,63,196,.10));
     /* --text-3 lifted from #64748b (4.3:1) to #475569 to clear AA on --bg-0. */
     --text-1:#0f172a;--text-2:#475569;--text-3:#475569;--text-4:#64748b;
     --work-bg:#f0f6fd;--work-border:#d0e3f7;
@@ -203,7 +217,7 @@
        large-text thresholds (3:1). Burnt orange + brick red both pass. */
     --ring-warn-color:#b45309;
     --ring-done-color:#b91c1c;
-    --accent-hover:#2563eb;
+    --accent-hover:#5a3df0;
     --prio-low:var(--text-4);
   }
 
@@ -710,8 +724,8 @@
     position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));right:20px;
     z-index:var(--z-fab,1100);display:none;align-items:center;justify-content:center;
     width:56px;height:56px;border-radius:50%;border:0;cursor:pointer;
-    background:var(--accent);color:var(--text-on-accent);
-    box-shadow:0 8px 24px rgba(0,0,0,.35),0 2px 6px rgba(0,0,0,.25);
+    background:var(--brand-grad);color:var(--text-on-brand);
+    box-shadow:0 8px 24px rgba(123,97,255,.40),0 2px 6px rgba(0,0,0,.25);
     font-family:inherit;font-size:0;line-height:1;
     transition:transform .15s ease,box-shadow .15s ease,background .15s ease;
   }
@@ -942,8 +956,8 @@
   /* Buttons — consistent, clean */
   .btn, .btn-primary, .btn-pause, .btn-ghost, .btn-skip, .btn-danger {font-family:var(--font-sans);font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;padding:10px 18px;border-radius:999px;transition:.15s;cursor:pointer;}
   .btn-sm {padding:6px 14px !important;font-size:11px !important;}
-  .btn-primary{background:var(--accent);color:var(--text-on-accent);border:none;}
-  .btn-primary:hover{background:var(--accent-hover)}
+  .btn-primary{background:var(--brand-grad);color:var(--text-on-brand);border:none;}
+  .btn-primary:hover{filter:brightness(1.06)}
   /* Secondary — neutral bordered (ghost / neutral actions) */
   .btn-secondary{background:var(--bg-2);color:var(--text-1);border:1px solid var(--border)}
   .btn-secondary:hover{background:var(--bg-3);border-color:var(--border-strong)}
@@ -1044,17 +1058,17 @@
      at line ~1419 sets 46px to be safe). */
   .task-add{
     padding:11px 18px;min-height:44px;
-    background:var(--accent);color:var(--text-on-accent);
+    background:var(--brand-grad);color:var(--text-on-brand);
     font-weight:700;font-size:var(--fs-13);letter-spacing:.01em;text-transform:none;
-    border:1px solid var(--accent);border-radius:999px;
-    box-shadow:0 2px 8px rgba(106,168,255,.28);
-    transition:filter var(--dur-fast) var(--ease-out),background var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
+    border:0;border-radius:999px;
+    box-shadow:0 2px 8px rgba(123,97,255,.30);
+    transition:filter var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
   }
-  .task-add:hover{background:var(--accent-hover);box-shadow:0 4px 14px rgba(106,168,255,.36);filter:none}
+  .task-add:hover{box-shadow:0 4px 16px rgba(123,97,255,.42);filter:brightness(1.06)}
   .task-add:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(106,168,255,.18);filter:none}
-  body.light-theme .task-add{box-shadow:0 2px 8px rgba(37,99,235,.22)}
-  body.light-theme .task-add:hover{box-shadow:0 4px 14px rgba(37,99,235,.30)}
+  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(123,97,255,.20);filter:none}
+  body.light-theme .task-add{box-shadow:0 2px 8px rgba(106,77,255,.24)}
+  body.light-theme .task-add:hover{box-shadow:0 4px 16px rgba(106,77,255,.34)}
 
   /* Quick-add hint — example tokens reuse the live-parse-preview chip styles
      (.qpc--*) so users learn by recognition: the chip color they see while
@@ -4680,3 +4694,99 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 
 .cmdk-ask-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .cmdk-ask-done--applied{color:var(--success,#27ae60)}
+
+/* ============================================================
+   ClickUp-style app shell — left sidebar + top bar + content,
+   a promoted view-tab strip, and a mobile bottom navigation.
+   Layout only; all colour comes from the :root brand tokens.
+   ============================================================ */
+.container{max-width:1320px;margin-inline:auto}
+.app-shell{
+  display:grid;
+  grid-template-columns:var(--sidebar-w,248px) minmax(0,1fr);
+  grid-template-rows:auto 1fr;
+  grid-template-areas:"sidebar topbar" "sidebar content";
+  column-gap:24px;align-items:start;
+}
+.app-shell.sidebar-collapsed{--sidebar-w:64px}
+
+.app-sidebar{
+  grid-area:sidebar;position:sticky;top:0;align-self:start;
+  height:100dvh;display:flex;flex-direction:column;gap:14px;
+  padding:16px 12px;
+  background:linear-gradient(180deg,var(--bg-1),var(--bg-0));
+  border-right:1px solid var(--border);
+  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;
+}
+.sidebar-brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
+.sidebar-brand-title{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--fs-20);font-weight:800;letter-spacing:-.02em;color:var(--text-1);white-space:nowrap}
+.sidebar-brand-title .header-logo{flex:0 0 auto}
+.sidebar-brand-name{background:var(--brand-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sidebar-collapse{margin-left:auto;width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);color:var(--text-3);cursor:pointer;font-size:14px;line-height:1;transition:background .15s,color .15s,border-color .15s}
+.sidebar-collapse:hover{background:var(--bg-2);color:var(--text-1);border-color:var(--border-strong)}
+
+.app-sidebar .nav-tabs{display:flex;flex-direction:column;gap:2px;width:100%;margin:0;background:transparent;border:0;border-radius:0;padding:0;box-shadow:none}
+.app-sidebar .nav-tab{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;width:100%;padding:10px 12px;border-radius:10px;text-align:left;font-size:var(--fs-14);color:var(--text-2)}
+.app-sidebar .nav-tab .nav-tab-icon{font-size:16px;width:22px;text-align:center;flex:0 0 auto}
+.app-sidebar .nav-tab:hover{background:var(--bg-2);color:var(--text-1)}
+.app-sidebar .nav-tab.active{background:var(--brand-grad-soft);color:var(--text-1);border:1px solid var(--accent-border)}
+.app-sidebar .nav-tab.active .nav-tab-icon{color:var(--accent)}
+
+.sidebar-lists{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border-subtle);padding-top:12px;margin-top:2px}
+.sidebar-sec-lbl{font-size:var(--fs-12);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);padding:2px 6px;margin-top:4px}
+.app-sidebar .lists-bar,
+.app-sidebar .smart-views{display:flex;flex-direction:column;gap:3px;width:100%;background:transparent;border:0;padding:0;margin:0;overflow:visible;-webkit-mask-image:none;mask-image:none;flex-wrap:nowrap}
+.app-sidebar .sv-chip,
+.app-sidebar .list-chip{width:100%;justify-content:flex-start}
+
+.app-shell.sidebar-collapsed .sidebar-brand-name,
+.app-shell.sidebar-collapsed .app-sidebar .nav-tab span:not(.nav-tab-icon),
+.app-shell.sidebar-collapsed .sidebar-lists,
+.app-shell.sidebar-collapsed .sidebar-sec-lbl{display:none}
+.app-shell.sidebar-collapsed .app-sidebar .nav-tab{justify-content:center;padding:10px 0}
+
+.app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:var(--z-sticky);background:linear-gradient(180deg,var(--bg-0) 72%,transparent)}
+.app-topbar .header-mid{flex-direction:row;align-items:center;gap:12px;margin:0;margin-right:auto}
+.app-topbar .header-utils{margin-left:auto}
+.drawer-toggle{display:none;width:40px;height:40px;border-radius:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);font-size:18px;cursor:pointer;align-items:center;justify-content:center}
+
+.app-content{grid-area:content;min-width:0;padding-top:4px}
+
+.view-tabs{display:flex;gap:4px;margin:0 0 14px;padding:4px;background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);width:fit-content;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.view-tabs::-webkit-scrollbar{display:none}
+.view-tab-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;border:0;background:transparent;color:var(--text-3);font-family:inherit;font-size:var(--fs-13);font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+.view-tab-btn .mv-ic{display:inline-flex;width:15px;height:15px}
+.view-tab-btn:hover{color:var(--text-1);background:var(--bg-2)}
+.view-tab-btn.active{background:var(--brand-grad);color:var(--text-on-brand);box-shadow:0 2px 8px rgba(123,97,255,.30)}
+
+.bottom-nav{display:none}
+.sidebar-backdrop{display:none}
+
+@media (max-width:640px){
+  .app-shell{display:block}
+  .app-topbar{padding:10px 0;gap:8px;margin-bottom:6px}
+  .drawer-toggle{display:inline-flex}
+  .app-sidebar{position:fixed;left:0;top:0;bottom:0;z-index:900;width:82vw;max-width:320px;height:100dvh;transform:translateX(-100%);transition:transform .26s var(--ease-out);box-shadow:var(--shadow-overlay)}
+  .app-sidebar.drawer-open{transform:translateX(0)}
+  .sidebar-collapse{display:none}
+  .app-shell.sidebar-collapsed{--sidebar-w:248px}
+  .sidebar-backdrop{display:block;position:fixed;inset:0;z-index:899;background:rgba(0,0,0,.5)}
+  body.drawer-open{overflow:hidden}
+
+  .bottom-nav{display:flex;align-items:stretch;justify-content:space-around;position:fixed;left:0;right:0;bottom:0;z-index:var(--z-fab);height:calc(58px + env(safe-area-inset-bottom,0px));padding:0 6px env(safe-area-inset-bottom,0px);background:color-mix(in srgb,var(--bg-1) 94%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border)}
+  .bn-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:transparent;border:0;color:var(--text-3);font-family:inherit;font-size:10px;font-weight:600;cursor:pointer;min-height:44px}
+  .bn-btn .bn-ic{font-size:18px;line-height:1}
+  .bottom-nav .nav-tab.active{background:transparent;border:0;color:var(--accent)}
+  .bn-spacer{flex:0 0 64px}
+  html.kb-open .bottom-nav{transform:translateY(120%)}
+
+  .quick-add-fab{left:50%;right:auto;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));width:60px;height:60px;z-index:calc(var(--z-fab) + 1)}
+  .quick-add-fab:hover,.quick-add-fab:focus-visible{transform:translateX(-50%) translateY(-2px)}
+  .quick-add-fab.scroll-hidden{transform:translateX(-50%) translateY(160%);opacity:0}
+  body:has(.mini-timer.visible) .quick-add-fab{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
+
+  body{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
+  .mini-timer{bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
+  .export-toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
+  body:has(.mini-timer.visible) .export-toast{bottom:calc(134px + env(safe-area-inset-bottom,0px))!important}
+}

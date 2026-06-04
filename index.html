@@ -7,7 +7,7 @@
 
 <!-- PWA meta -->
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0a1320">
+<meta name="theme-color" content="#0b0f1c">
 <meta name="description" content="Pomodoro deep-work timer and ClickUp-style task manager that uses on-device local embeddings to intelligently route your tasks, track your time, and ensure value alignment, all without your data ever leaving your machine.">
 <!-- Link preview (Open Graph / Twitter) — og:image must be absolute; change base if Pages URL or domain differs -->
 <meta property="og:type" content="website">
@@ -63,7 +63,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v61">
+<link rel="stylesheet" href="css/main.css?v=v62">
 <!-- Preconnect hints — speeds up first-load of the on-device embedding model (jsDelivr for Transformers.js, huggingface.co for model weights) -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://huggingface.co" crossorigin>
@@ -86,19 +86,21 @@
 <!-- Offline status indicator — only visible when navigator.onLine is false -->
 <div id="onlineStatus" class="offline-indicator" hidden role="status" aria-live="polite"></div>
 <main class="container" id="mainTabpanels" aria-label="App content">
-  <header class="header">
-    <h1>
+  <div class="app-shell" id="appShell">
+  <aside class="app-sidebar" id="appSidebar" aria-label="Primary navigation">
+    <div class="sidebar-brand">
+    <h1 class="sidebar-brand-title">
       <svg class="header-logo" viewBox="0 0 512 512" width="32" height="32" aria-hidden="true">
         <defs>
           <radialGradient id="hdrBg" cx="38%" cy="32%" r="78%">
-            <stop offset="0%" stop-color="#0e1a2e"/>
-            <stop offset="55%" stop-color="#0a1320"/>
-            <stop offset="100%" stop-color="#060c16"/>
+            <stop offset="0%" stop-color="#1a1640"/>
+            <stop offset="55%" stop-color="#0b0f1c"/>
+            <stop offset="100%" stop-color="#070611"/>
           </radialGradient>
           <linearGradient id="hdrMark" x1="18%" y1="22%" x2="82%" y2="88%">
-            <stop offset="0%" stop-color="#9cc3ff"/>
-            <stop offset="45%" stop-color="#6aa8ff"/>
-            <stop offset="100%" stop-color="#3d7fd4"/>
+            <stop offset="0%" stop-color="#c5b6ff"/>
+            <stop offset="45%" stop-color="#7b61ff"/>
+            <stop offset="100%" stop-color="#e35ada"/>
           </linearGradient>
           <filter id="hdrGlow" x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
@@ -112,26 +114,12 @@
         <path d="M 119.2 177 A 158 158 0 1 1 177 392.8" fill="none" stroke="url(#hdrMark)" stroke-width="22" stroke-linecap="round"/>
         <path d="M 168 268 L 228 328 L 352 184" fill="none" stroke="url(#hdrMark)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" filter="url(#hdrGlow)"/>
       </svg>
-      Odta
+      <span class="sidebar-brand-name">Odta</span>
     </h1>
-    <div class="header-mid">
-      <div class="header-date" id="headerDate"></div>
-      <button type="button" class="what-next-pill" id="whatNextBtn" data-action="openWhatNext" title="Top-ranked next actions">What next?</button>
+    <button type="button" class="sidebar-collapse" id="sidebarCollapseBtn" data-action="toggleSidebarCollapse" aria-label="Collapse sidebar" title="Collapse sidebar"><span aria-hidden="true">«</span></button>
     </div>
-  </header>
 
-  <div id="banner" class="track-banner" hidden>
-    <div class="track-banner-inner">
-      <div class="track-banner-pulse" aria-hidden="true"></div>
-      <span class="track-banner-label">Tracking</span>
-      <span id="bannerTask" class="track-banner-task"></span>
-      <span id="bannerTime" class="track-banner-time"></span>
-    </div>
-  </div>
-
-  <!-- Main Nav Tabs -->
-  <nav class="header-nav-bar" aria-label="Primary">
-    <div class="nav-tabs" id="navTabs" role="tablist" aria-label="Main">
+    <div class="nav-tabs" id="navTabs" role="tablist" aria-label="Main sections">
     <button type="button" class="nav-tab active" data-navtab="tasks" data-action="showTab" data-arg="tasks" role="tab" aria-selected="true" id="navTab-tasks">
       <span class="nav-tab-icon" aria-hidden="true">☰</span>
       <span>Tasks</span>
@@ -153,6 +141,39 @@
       <span>Settings</span>
     </button>
     </div>
+
+    <!-- Lists + Views hierarchy (ClickUp-style left rail). renderLists() binds
+         #listsBar by id; smart-view chips drive setSmartView. On mobile the
+         whole sidebar becomes an off-canvas drawer (see toggleSidebar). -->
+    <div class="sidebar-lists" data-navtab-scope="tasks">
+      <div class="sidebar-sec-lbl">Lists</div>
+      <div class="lists-bar" id="listsBar"></div>
+      <div class="sidebar-sec-lbl">Views</div>
+      <div class="smart-views" id="smartViews">
+        <button class="sv-chip active" data-view="all" data-action="setSmartView" data-arg="all"><span class="sv-icon" data-icon="list"></span>All<span class="sv-count" id="svcAll">0</span></button>
+        <button class="sv-chip" data-view="inbox" data-action="setSmartView" data-arg="inbox" title="Untriaged — no list, no category, no due date, no tags"><span class="sv-icon" data-icon="inbox"></span>Inbox<span class="sv-count" id="svcInbox">0</span></button>
+        <button class="sv-chip" data-view="today" data-action="setSmartView" data-arg="today"><span class="sv-icon" data-icon="calendar"></span>Today<span class="sv-count" id="svcToday">0</span></button>
+        <button class="sv-chip" data-view="week" data-action="setSmartView" data-arg="week"><span class="sv-icon" data-icon="calendarWeek"></span>Week<span class="sv-count" id="svcWeek">0</span></button>
+        <button class="sv-chip" data-view="overdue" data-action="setSmartView" data-arg="overdue"><span class="sv-icon" data-icon="alertTriangle"></span>Overdue<span class="sv-count" id="svcOverdue">0</span></button>
+        <button class="sv-chip" data-view="unscheduled" data-action="setSmartView" data-arg="unscheduled"><span class="sv-icon" data-icon="circleDashed"></span>Unscheduled<span class="sv-count" id="svcUnscheduled">0</span></button>
+        <button class="sv-chip" data-view="starred" data-action="setSmartView" data-arg="starred"><span class="sv-icon" data-icon="star"></span>Starred<span class="sv-count" id="svcStarred">0</span></button>
+        <button class="sv-chip" data-view="impact" data-action="setSmartView" data-arg="impact" title="Top ~20% by leverage — derived from priority, due, effort, unblocks, values, star"><span class="sv-icon" data-icon="zap"></span>Impact<span class="sv-count" id="svcImpact">0</span></button>
+        <button class="sv-chip" data-view="waiting" data-action="setSmartView" data-arg="waiting" title="Tasks blocked on someone else (type = waiting)"><span class="sv-icon" data-icon="hourglass"></span>Waiting<span class="sv-count" id="svcWaiting">0</span></button>
+        <button class="sv-chip" data-view="stuck" data-action="setSmartView" data-arg="stuck" title="Open tasks untouched for 14+ days"><span class="sv-icon" data-icon="alertCircle"></span>Stuck<span class="sv-count" id="svcStuck">0</span></button>
+        <button class="sv-chip" data-view="snoozed" data-action="setSmartView" data-arg="snoozed" title="Tasks hidden until a date (snoozed)"><span class="sv-icon" data-icon="moon"></span>Snoozed<span class="sv-count" id="svcSnoozed">0</span></button>
+        <button class="sv-chip" data-view="habits" data-action="setSmartView" data-arg="habits" title="Recurring &amp; habits"><span class="sv-icon" data-icon="refresh"></span>Habits<span class="sv-count" id="svcHabits">0</span></button>
+        <button class="sv-chip" data-view="completed" data-action="setSmartView" data-arg="completed"><span class="sv-icon" data-icon="checkCircle"></span>Done<span class="sv-count" id="svcCompleted">0</span></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Top bar — utilities + date. Houses the mobile drawer toggle. -->
+  <header class="app-topbar">
+    <button type="button" class="drawer-toggle" id="drawerToggle" data-action="toggleSidebar" aria-label="Open navigation" aria-controls="appSidebar" aria-expanded="false"><span aria-hidden="true">☰</span></button>
+    <div class="header-mid">
+      <div class="header-date" id="headerDate"></div>
+      <button type="button" class="what-next-pill" id="whatNextBtn" data-action="openWhatNext" title="Top-ranked next actions">What next?</button>
+    </div>
     <div class="header-utils">
     <button type="button" id="headerAIChip" class="ai-chip ai-chip--idle" data-action="headerAIClick" title="Task understanding — opens Tools">
       <span class="ai-chip-dot" aria-hidden="true"></span>
@@ -166,7 +187,18 @@
       <span class="cmdk-btn-kbd" aria-hidden="true">⌘K</span>
     </button>
     </div>
-  </nav>
+  </header>
+
+  <section class="app-content">
+
+  <div id="banner" class="track-banner" hidden>
+    <div class="track-banner-inner">
+      <div class="track-banner-pulse" aria-hidden="true"></div>
+      <span class="track-banner-label">Tracking</span>
+      <span id="bannerTask" class="track-banner-task"></span>
+      <span id="bannerTime" class="track-banner-time"></span>
+    </div>
+  </div>
 
   <!-- Tasks (primary ClickUp-style task manager) -->
   <div class="panel panel--tasks" data-tab="tasks">
@@ -257,7 +289,7 @@
          is no longer buried under five stacked, clipping scroll strips. Labels
          reflect the live filter state via syncFilterBar(). -->
     <div class="filter-bar" id="filterBar">
-      <button type="button" class="fb-btn" id="fbLists" data-action="openListsSheet" aria-haspopup="dialog" title="Lists & views">
+      <button type="button" class="fb-btn fb-btn--lists" id="fbLists" data-action="toggleSidebar" aria-haspopup="true" aria-controls="appSidebar" title="Lists &amp; views">
         <span class="fb-ic" aria-hidden="true">☰</span>
         <span class="fb-lbl" id="fbListsLabel">All Lists</span>
       </button>
@@ -296,35 +328,17 @@
          when nothing is active. -->
     <div class="active-filters-bar" id="activeFiltersBar" hidden aria-live="polite"></div>
 
-    <!-- ===== Lists & Views sheet ===== -->
-    <div class="modal-overlay sheet" id="listsSheet" role="dialog" aria-modal="true" aria-label="Lists and views" data-action="closeListsSheetOnBackdrop">
-      <div class="modal">
-        <div class="modal-head">
-          <h2 class="modal-title">Lists &amp; Views</h2>
-          <button type="button" class="modal-close" data-action="closeListsSheet" aria-label="Close">✕</button>
-        </div>
-        <div class="modal-body">
-          <div class="sheet-section-lbl">Lists</div>
-          <div class="lists-bar" id="listsBar"></div>
-          <div class="sheet-section-lbl">Views</div>
-          <div class="smart-views" id="smartViews">
-            <button class="sv-chip active" data-view="all" data-action="setSmartView" data-arg="all"><span class="sv-icon" data-icon="list"></span>All<span class="sv-count" id="svcAll">0</span></button>
-            <button class="sv-chip" data-view="inbox" data-action="setSmartView" data-arg="inbox" title="Untriaged — no list, no category, no due date, no tags"><span class="sv-icon" data-icon="inbox"></span>Inbox<span class="sv-count" id="svcInbox">0</span></button>
-            <button class="sv-chip" data-view="today" data-action="setSmartView" data-arg="today"><span class="sv-icon" data-icon="calendar"></span>Today<span class="sv-count" id="svcToday">0</span></button>
-            <button class="sv-chip" data-view="week" data-action="setSmartView" data-arg="week"><span class="sv-icon" data-icon="calendarWeek"></span>Week<span class="sv-count" id="svcWeek">0</span></button>
-            <button class="sv-chip" data-view="overdue" data-action="setSmartView" data-arg="overdue"><span class="sv-icon" data-icon="alertTriangle"></span>Overdue<span class="sv-count" id="svcOverdue">0</span></button>
-            <button class="sv-chip" data-view="unscheduled" data-action="setSmartView" data-arg="unscheduled"><span class="sv-icon" data-icon="circleDashed"></span>Unscheduled<span class="sv-count" id="svcUnscheduled">0</span></button>
-            <button class="sv-chip" data-view="starred" data-action="setSmartView" data-arg="starred"><span class="sv-icon" data-icon="star"></span>Starred<span class="sv-count" id="svcStarred">0</span></button>
-            <button class="sv-chip" data-view="impact" data-action="setSmartView" data-arg="impact" title="Top ~20% by leverage — derived from priority, due, effort, unblocks, values, star"><span class="sv-icon" data-icon="zap"></span>Impact<span class="sv-count" id="svcImpact">0</span></button>
-            <button class="sv-chip" data-view="waiting" data-action="setSmartView" data-arg="waiting" title="Tasks blocked on someone else (type = waiting)"><span class="sv-icon" data-icon="hourglass"></span>Waiting<span class="sv-count" id="svcWaiting">0</span></button>
-            <button class="sv-chip" data-view="stuck" data-action="setSmartView" data-arg="stuck" title="Open tasks untouched for 14+ days"><span class="sv-icon" data-icon="alertCircle"></span>Stuck<span class="sv-count" id="svcStuck">0</span></button>
-            <button class="sv-chip" data-view="snoozed" data-action="setSmartView" data-arg="snoozed" title="Tasks hidden until a date (snoozed)"><span class="sv-icon" data-icon="moon"></span>Snoozed<span class="sv-count" id="svcSnoozed">0</span></button>
-            <button class="sv-chip" data-view="habits" data-action="setSmartView" data-arg="habits" title="Recurring &amp; habits"><span class="sv-icon" data-icon="refresh"></span>Habits<span class="sv-count" id="svcHabits">0</span></button>
-            <button class="sv-chip" data-view="completed" data-action="setSmartView" data-arg="completed"><span class="sv-icon" data-icon="checkCircle"></span>Done<span class="sv-count" id="svcCompleted">0</span></button>
-          </div>
-        </div>
-      </div>
+    <!-- View-tab strip (ClickUp-style). Promoted out of #viewSheet so List /
+         Board / Calendar switching is always one tap. setTaskView toggles the
+         #viewList/#viewBoard/#viewCal .active state — single source of truth. -->
+    <div class="view-tabs" role="tablist" aria-label="Task view">
+      <button type="button" class="view-tab-btn active" id="viewList" role="tab" aria-selected="true" data-action="setTaskView" data-arg="list"><span class="mv-ic" data-icon="list" aria-hidden="true"></span><span>List</span></button>
+      <button type="button" class="view-tab-btn" id="viewBoard" role="tab" aria-selected="false" data-action="setTaskView" data-arg="board"><span class="mv-ic" data-icon="grid" aria-hidden="true"></span><span>Board</span></button>
+      <button type="button" class="view-tab-btn" id="viewCal" role="tab" aria-selected="false" data-action="setTaskView" data-arg="calendar"><span class="mv-ic" data-icon="calendar" aria-hidden="true"></span><span>Calendar</span></button>
     </div>
+
+    <!-- Lists & Views now live in the left sidebar (#appSidebar). On mobile the
+         #fbLists button opens that sidebar as a drawer. -->
 
     <!-- ===== Tags / Categories sheet ===== -->
     <div class="modal-overlay sheet" id="tagsSheet" role="dialog" aria-modal="true" aria-label="Filter by tag or category" data-action="closeTagsSheetOnBackdrop">
@@ -357,12 +371,7 @@
           <button type="button" class="modal-close" data-action="closeViewSheet" aria-label="Close">✕</button>
         </div>
         <div class="modal-body">
-          <div class="sheet-section-lbl">View</div>
-          <div class="view-toggle">
-            <button class="active" id="viewList" data-action="setTaskView" data-arg="list"><span class="mv-ic" data-icon="list"></span> List</button>
-            <button id="viewBoard" data-action="setTaskView" data-arg="board"><span class="mv-ic" data-icon="grid"></span> Board</button>
-            <button id="viewCal" data-action="setTaskView" data-arg="calendar"><span class="mv-ic" data-icon="calendar"></span> Cal</button>
-          </div>
+          <!-- View switching moved to the always-visible .view-tabs strip. -->
           <div class="sheet-section-lbl">Arrange</div>
           <button type="button" class="reorder-toggle" id="reorderModeToggle" data-action="toggleReorderMode" aria-pressed="false" title="Show move &amp; indent controls on each task row">
             <span class="reorder-toggle-ic" aria-hidden="true">↕</span>
@@ -771,6 +780,21 @@
   </div>
 
 </div>
+
+  </section><!-- /.app-content -->
+  </div><!-- /.app-shell -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop" data-action="closeSidebar" hidden></div>
+
+  <!-- Mobile bottom navigation (ClickUp-style). Buttons reuse showTab; the
+       shared .nav-tab class means showTab() auto-syncs their active state with
+       the sidebar nav (zero extra JS). The center "+" reuses #quickAddFab. -->
+  <nav class="bottom-nav" id="bottomNav" aria-label="Primary (mobile)">
+    <button type="button" class="bn-btn nav-tab active" data-navtab="tasks" data-action="showTab" data-arg="tasks" aria-label="Tasks"><span class="bn-ic" aria-hidden="true">☰</span><span class="bn-lbl">Tasks</span></button>
+    <button type="button" class="bn-btn nav-tab" data-navtab="focus" data-action="showTab" data-arg="focus" aria-label="Timer"><span class="bn-ic" aria-hidden="true">◉</span><span class="bn-lbl">Timer</span></button>
+    <span class="bn-spacer" aria-hidden="true"></span>
+    <button type="button" class="bn-btn nav-tab" data-navtab="tools" data-action="showTab" data-arg="tools" aria-label="Tools"><span class="bn-ic" aria-hidden="true">✦</span><span class="bn-lbl">Tools</span></button>
+    <button type="button" class="bn-btn nav-tab" data-navtab="settings" data-action="showTab" data-arg="settings" aria-label="Settings"><span class="bn-ic" aria-hidden="true">⚙</span><span class="bn-lbl">Settings</span></button>
+  </nav>
 
 <div class="save-indicator" id="saveInd">● Saved</div>
 
