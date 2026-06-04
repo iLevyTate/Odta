@@ -409,9 +409,8 @@
   .task-search:focus{border-color:var(--accent-border)}
   .task-tb-sel{padding:6px 8px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);font-size:10px;font-family:inherit;cursor:pointer;outline:0}
   .task-tb-sel:focus{border-color:var(--accent-border);box-shadow:0 0 0 2px var(--accent-bg)}
-  .view-toggle{display:flex;gap:0;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px}
-  .view-toggle button{padding:5px 10px;background:transparent;border:none;color:var(--text-3);font-size:10px;font-weight:600;letter-spacing:.5px;font-family:inherit;cursor:pointer;border-radius:4px;transition:background var(--dur-base) var(--ease-out),color var(--dur-base) var(--ease-out)}
-  .view-toggle button.active{background:var(--accent-bg);color:var(--accent)}
+  /* (Old .view-toggle removed — view switching is now the always-visible
+     .view-tabs strip.) */
 
   /* ── Compact filter bar ─────────────────────────────────────────────────
      Replaces the five stacked scroll strips. Four triggers; each opens a
@@ -883,9 +882,10 @@
   /* Container: max-width for desktop, centered */
   .container{max-width:960px;width:100%}
 
-  /* Header — understated, not a shouty ALL-CAPS wall */
-  .header{text-align:center;margin-bottom:28px}
-  .header h1{font-size:22px;font-weight:700;letter-spacing:-.02em;text-transform:none;color:var(--text-1);font-family:var(--font-sans);margin:0;display:inline-flex;align-items:center;gap:10px}
+  /* Brand logo mark (now in the sidebar). The old centered .header / .header h1
+     rules were removed with the ClickUp shell; brand text uses
+     .sidebar-brand-title. .header-logo / .header-mid / .header-date /
+     .what-next-pill are still used (sidebar brand + top bar). */
   .header-logo{width:32px;height:32px;border-radius:8px;display:block;flex-shrink:0}
   .header-line{display:none}
   .header-mid{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:6px}
@@ -1056,12 +1056,6 @@
   .task-search:focus{border-color:var(--accent-border);background:var(--bg-2)}
   .task-tb-sel{background:var(--bg-2);border-color:var(--border);color:var(--text-1);font-size:var(--fs-13);font-weight:500;letter-spacing:0;padding:8px 12px;border-radius:var(--r-md)}
   .task-tb-sel:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-color:var(--accent-border)}
-  .view-toggle{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:2px}
-  .view-toggle button{color:var(--text-3);font-size:11px;font-weight:600;letter-spacing:0;padding:6px 12px;border-radius:calc(var(--r-md) - 3px)}
-  .view-toggle button:hover{color:var(--text-1)}
-  /* Current view: solid accent fill — the primary view switch, a step above the
-     smart-view chips (accent tint) in the control hierarchy. */
-  .view-toggle button.active{background:var(--accent);color:var(--text-on-accent);box-shadow:var(--shadow-card)}
 
   /* Task input */
   .task-form{gap:8px}
@@ -4060,11 +4054,8 @@ body:has(.cmdk-overlay.open)  #exportToast{
 }
 
 
-/* ═══ Layout / IA: header bar, track banner, timer sub-nav, first-task CTA ═══ */
-.header-nav-bar{
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%;margin-bottom:14px;
-}
-.header-nav-bar .nav-tabs{flex:1;min-width:0;margin-bottom:0}
+/* ═══ Layout / IA: track banner, timer sub-nav, first-task CTA ═══ */
+/* (.header-nav-bar removed — primary nav now lives in .app-sidebar.) */
 .header-utils{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .header-icon-btn{
   min-width:36px;height:36px;padding:0 10px;border-radius:10px;
@@ -4092,7 +4083,7 @@ body:has(.cmdk-overlay.open)  #exportToast{
    class-based display rule (or el.style.display assignment) takes effect. */
 [hidden]{display:none !important}
 .track-banner{
-  width:100%;max-width:720px;margin:-4px 0 12px;padding:8px 12px;
+  width:100%;margin:0 0 12px;padding:8px 12px;
   background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-md);
   font-size:12px;
 }
@@ -4768,6 +4759,8 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .app-shell.sidebar-collapsed .sidebar-lists,
 .app-shell.sidebar-collapsed .sidebar-sec-lbl{display:none}
 .app-shell.sidebar-collapsed .app-sidebar .nav-tab{justify-content:center;padding:10px 0}
+.app-shell.sidebar-collapsed .sidebar-brand{justify-content:center}
+.app-shell.sidebar-collapsed .sidebar-collapse{transform:rotate(180deg)}
 
 .app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:var(--z-sticky);background:linear-gradient(180deg,var(--bg-0) 72%,transparent)}
 .app-topbar .header-mid{flex-direction:row;align-items:center;gap:12px;margin:0;margin-right:auto}
@@ -4813,4 +4806,29 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
   .mini-timer{bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
   .export-toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
   body:has(.mini-timer.visible) .export-toast{bottom:calc(134px + env(safe-area-inset-bottom,0px))!important}
+
+  /* Drawer correctness — the PASS-2 mobile block restyles .nav-tabs / .nav-tab /
+     .smart-views / .lists-bar for the OLD horizontal header bar. Lock the
+     sidebar copies to the vertical drawer layout so those rules can't hijack
+     them (defensive — these win on specificity too). */
+  .app-sidebar .nav-tabs{margin:0!important;gap:2px!important;padding:0!important}
+  .app-sidebar .nav-tab{flex-direction:row!important;font-size:var(--fs-14)!important;padding:10px 12px!important;min-height:44px}
+  .app-sidebar .nav-tab .nav-tab-icon{margin-bottom:0!important}
+  .app-sidebar .smart-views,
+  .app-sidebar .lists-bar{flex-direction:column!important;overflow:visible!important;padding:0!important;-webkit-mask-image:none!important;mask-image:none!important}
+  .app-sidebar .sv-chip,
+  .app-sidebar .list-chip{width:100%!important;scroll-snap-align:none}
+
+  /* View-tab strip spans the content width on phones for easier tapping. */
+  .view-tabs{width:100%}
+  .view-tab-btn{flex:1;justify-content:center}
+
+  /* Top bar must fit one phone row: drawer toggle + date + utilities. Drop the
+     What-next pill (still reachable from the ⌘K menu) and trim Cmd-K to an icon
+     so the utility cluster doesn't overflow. */
+  .app-topbar{gap:6px}
+  .app-topbar .header-mid{min-width:0}
+  .app-topbar .what-next-pill{display:none}
+  #cmdKBtn.header-icon-btn--cmdk{min-width:44px!important;padding:0!important}
+  #cmdKBtn .cmdk-btn-txt,#cmdKBtn .cmdk-btn-kbd{display:none}
 }
