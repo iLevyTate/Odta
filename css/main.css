@@ -4784,7 +4784,11 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
   padding:16px 12px;
   background:linear-gradient(180deg,var(--bg-1),var(--bg-0));
   border-right:1px solid var(--border);
-  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;
+  /* No `scrollbar-width:thin` here: setting the standard property makes Chromium
+     ignore the global `*::-webkit-scrollbar` theming (lines ~36-39) and fall back
+     to the native OS scrollbar, which doesn't match the rest of the app. Leaving
+     it unset lets the sidebar inherit the same themed 8px webkit scrollbar. */
+  overflow-y:auto;overflow-x:hidden;
 }
 .sidebar-brand{display:flex;align-items:center;gap:10px;padding:2px 6px}
 .sidebar-brand-title{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--fs-20);font-weight:800;letter-spacing:-.02em;color:var(--text-1);white-space:nowrap}
