@@ -2152,14 +2152,14 @@ function haptic(ms){
 // routing keywords for Auto-organize and kept low-overlap so tasks land in the
 // right list. Personal is first, so it stays the active/orphan-fallback list.
 const DEFAULT_LISTS=[
-  {name:'Personal',       color:'#88a766', description:"Personal life and miscellaneous to-dos — family, friends, social plans, self-care, anything that doesn't fit another list."},
-  {name:'Work',           color:'#6fa3a6', description:'Work and career — projects, meetings, deadlines, emails, professional learning.'},
-  {name:'Home & Errands', color:'#d6a23f', description:'Household and errands — chores, cleaning, repairs, maintenance, groceries, errands to run.'},
-  {name:'Finance',        color:'#a87ba0', description:'Money and finances — bills, rent, taxes, budgeting, investments, subscriptions.'},
-  {name:'Health',         color:'#d98c7a', description:'Health and fitness — workouts, exercise, doctor and dentist appointments, medications, wellness.'},
-  {name:'Learning',       color:'#7e9bbf', description:'Learning and growth — courses, studying, reading, tutorials, skills to practice.'},
-  {name:'Shopping',       color:'#c75c4a', description:'Shopping and purchases — things to buy, wishlist items, online orders, gift ideas.'},
-  {name:'Side Projects',  color:'#b6a0d6', description:'Side projects and hobbies — creative builds, personal projects, side hustles, experiments.'},
+  {name:'Personal',       color:'#1a8cff', description:"Personal life and miscellaneous to-dos — family, friends, social plans, self-care, anything that doesn't fit another list."},
+  {name:'Work',           color:'#18d4e6', description:'Work and career — projects, meetings, deadlines, emails, professional learning.'},
+  {name:'Home & Errands', color:'#ffb02e', description:'Household and errands — chores, cleaning, repairs, maintenance, groceries, errands to run.'},
+  {name:'Finance',        color:'#9b7bff', description:'Money and finances — bills, rent, taxes, budgeting, investments, subscriptions.'},
+  {name:'Health',         color:'#2ecf73', description:'Health and fitness — workouts, exercise, doctor and dentist appointments, medications, wellness.'},
+  {name:'Learning',       color:'#6aa6d6', description:'Learning and growth — courses, studying, reading, tutorials, skills to practice.'},
+  {name:'Shopping',       color:'#ff5247', description:'Shopping and purchases — things to buy, wishlist items, online orders, gift ideas.'},
+  {name:'Side Projects',  color:'#ff66b3', description:'Side projects and hobbies — creative builds, personal projects, side hustles, experiments.'},
 ];
 function ensureDefaultList(){
   if(lists.length===0){
@@ -2181,7 +2181,7 @@ async function addList(){
   const descriptionRaw=await showAppPrompt(LIST_DESC_HINT,'',{multiline:true});
   if(descriptionRaw===null)return;
   const description=String(descriptionRaw).trim();
-  const colors=['#88a766','#6fa3a6','#d6a23f','#a87ba0','#d98c7a','#7e9bbf','#c75c4a','#b6a0d6'];
+  const colors=['#1a8cff','#18d4e6','#ffb02e','#9b7bff','#2ecf73','#6aa6d6','#ff5247','#ff66b3'];
   const color=colors[lists.length%colors.length];
   lists.push({id:++listIdCtr,name:String(name).trim(),color,description,lastModified:Date.now()});
   activeListId=listIdCtr;

@@ -3,11 +3,11 @@
 
   // Inline fallback icon (for file:// where external PNGs can't be fetched by manifest)
   const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-    <rect width="512" height="512" rx="112" fill="#16150f"/>
-    <circle cx="256" cy="256" r="160" stroke="#33402a" stroke-width="18"/>
-    <path d="M 256 96 A 160 160 0 1 1 96 256" stroke="#88a766" stroke-width="22" stroke-linecap="round"/>
-    <circle cx="256" cy="96" r="14" fill="#88a766"/>
-    <text x="256" y="292" text-anchor="middle" font-family="monospace" font-weight="800" font-size="90" fill="#edeadf">28</text>
+    <rect width="512" height="512" rx="112" fill="#0a1019"/>
+    <circle cx="256" cy="256" r="160" stroke="#1c3a5a" stroke-width="18"/>
+    <path d="M 256 96 A 160 160 0 1 1 96 256" stroke="#1a8cff" stroke-width="22" stroke-linecap="round"/>
+    <circle cx="256" cy="96" r="14" fill="#18d4e6"/>
+    <text x="256" y="292" text-anchor="middle" font-family="monospace" font-weight="800" font-size="90" fill="#e9eff7">28</text>
   </svg>`;
   const iconUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(iconSvg);
 
@@ -28,8 +28,8 @@
       start_url: scope + (path[path.length - 1] || ''),
       scope: scope,
       display: 'standalone',
-      background_color: '#16150f',
-      theme_color: '#16150f',
+      background_color: '#0a1019',
+      theme_color: '#0a1019',
       icons: [
         {src: iconUrl, sizes: '192x192', type: 'image/svg+xml', purpose: 'any'},
         {src: iconUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any'},
@@ -127,7 +127,7 @@
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
       const swBase = (typeof window !== 'undefined' && window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.swCache)
         ? window.ODTAULAI_RELEASE.swCache
-        : 'odtaulai-v65';
+        : 'odtaulai-v66';
       const swCode = `
         const CACHE = '${swBase}-inline';
         self.addEventListener('install', e => self.skipWaiting());

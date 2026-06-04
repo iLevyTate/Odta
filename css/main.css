@@ -29,7 +29,7 @@
   .task-checkbox:focus-visible{border-radius:50%}
   .toggle:focus-visible{border-radius:10px}
   input,select,textarea{font-family:inherit}
-  ::selection{background:rgba(136,167,102,.25);color:var(--text-1)}
+  ::selection{background:rgba(26,140,255,.25);color:var(--text-1)}
   /* Scrollbar — themed via tokens; light-theme override at body.light-theme below.
      A second hardcoded ::-webkit-scrollbar rule used to live below this and silently
      shadowed it at equal specificity (4px wide, hex color); removed so this wins. */
@@ -63,73 +63,73 @@
     /* Typography */
     --font-sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     --font-mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
-    /* Surface colors — warm stone/taupe canvas for a natural, organic feel.
-       --bg-0 matches index.html theme-color + manifest theme/background
-       (#16150f). Tuned to preserve AA text contrast against the warm base. */
-    --bg-0:#16150f;
-    --bg-1:#1e1c15;
-    --bg-2:#27241b;
-    --bg-3:#343026;
+    /* Surface colors — cool graphite/slate canvas for an Intel "Pentium" tech
+       feel. --bg-0 matches index.html theme-color + manifest theme/background
+       (#0a1019). Tuned to preserve AA text contrast against the cool base. */
+    --bg-0:#0a1019;
+    --bg-1:#111a27;
+    --bg-2:#182536;
+    --bg-3:#213348;
     /* --border lifted off --bg-3 so card edges stay visible in active states.
        --border-subtle keeps a near-invisible divider where intended. */
-    --border:#3e3a2d;
-    --border-subtle:#2a2820;
-    --border-strong:#4c4838;
-    /* Text — warm off-white, high-contrast on the stone --bg-0. --text-3 holds
-       AA (~4.7:1 on #16150f); --text-4 is non-text use (dividers, dots). */
-    --text-1:#edeadf;
-    --text-2:#b9b3a1;
-    --text-3:#918b77;
-    --text-4:#6c6757;
-    /* Accents — brand primary is a natural sage green, paired with a warm gold
-       to form an earthy "sunlit meadow" gradient. */
-    --accent:#88a766;
-    --accent-bg:rgba(136,167,102,.14);
-    --accent-border:rgba(136,167,102,.34);
+    --border:#2a3c52;
+    --border-subtle:#1d2c3e;
+    --border-strong:#38506b;
+    /* Text — cool off-white, high-contrast on the slate --bg-0. --text-3 holds
+       AA (~4.7:1 on #0a1019); --text-4 is non-text use (dividers, dots). */
+    --text-1:#e9eff7;
+    --text-2:#aab8cc;
+    --text-3:#8593a8;
+    --text-4:#647285;
+    /* Accents — brand primary is electric Intel blue, paired with a cyan to
+       form the iconic blue→cyan "Pentium" gradient. */
+    --accent:#1a8cff;
+    --accent-bg:rgba(26,140,255,.14);
+    --accent-border:rgba(26,140,255,.34);
     /* Brand gradient — primary "+ Add", FAB, active nav, header mark. */
-    --brand-2:#d8b25a;
-    --brand-grad:linear-gradient(135deg,#88a766 0%,#b3ab5c 50%,#d8b25a 100%);
-    --brand-grad-soft:linear-gradient(135deg,rgba(136,167,102,.18),rgba(216,178,90,.16));
-    --text-on-brand:#1c1a10;
-    --success:#5fa46b;
-    --success-bg:rgba(95,164,107,.13);
-    --success-border:rgba(95,164,107,.32);
-    --warning:#d6a23f;
-    --warning-bg:rgba(214,162,63,.14);
-    --warning-border:rgba(214,162,63,.32);
-    --danger:#c75c4a;
-    --danger-bg:rgba(199,92,74,.14);
-    --danger-border:rgba(199,92,74,.34);
-    --purple:#a87ba0;
-    --purple-bg:rgba(168,123,160,.14);
-    --purple-border:rgba(168,123,160,.32);
-    --pink:#c97e84;
+    --brand-2:#18d4e6;
+    --brand-grad:linear-gradient(135deg,#1a8cff 0%,#14b4e0 50%,#18d4e6 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(26,140,255,.18),rgba(24,212,230,.16));
+    --text-on-brand:#04121f;
+    --success:#2ecf73;
+    --success-bg:rgba(46,207,115,.13);
+    --success-border:rgba(46,207,115,.32);
+    --warning:#ffb02e;
+    --warning-bg:rgba(255,176,46,.14);
+    --warning-border:rgba(255,176,46,.32);
+    --danger:#ff5247;
+    --danger-bg:rgba(255,82,71,.14);
+    --danger-border:rgba(255,82,71,.34);
+    --purple:#9b7bff;
+    --purple-bg:rgba(155,123,255,.14);
+    --purple-border:rgba(155,123,255,.32);
+    --pink:#ff4d8d;
     /* Aliases — priority chips, hovers, semantic dots (see DESIGN_SYSTEM.md).
-       Hues stay distinct (brick / ochre / sage / stone) for fast scanning. */
+       Hues stay distinct (red / amber / blue / slate) for fast scanning. */
     --prio-urgent:var(--danger);
     --prio-high:var(--warning);
     --prio-normal:var(--accent);
     --prio-low:var(--text-3);
-    --accent-hover:#99b878;
-    /* Text/icon on saturated brand/success/warning fills (warm near-black reads
-       better on sage/gold than white). */
-    --text-on-accent:#1c1a10;
+    --accent-hover:#3d9eff;
+    /* Text/icon on saturated brand/success/warning fills (dark navy reads better
+       on the bright blue/cyan/green/amber than white). */
+    --text-on-accent:#04121f;
     --text-on-inverse:#fff;
     --starred:var(--warning);
     --panel-dot-tasks:var(--pink);
     --quick-accent:var(--accent);
-    /* Phase colors (back-compat) — warm, earthy tints. */
-    --work:var(--accent);--work-glow:rgba(136,167,102,.4);--work-bg:#1b2014;--work-border:#33402a;
-    --short:var(--success);--short-glow:rgba(95,164,107,.4);--short-bg:#13241a;--short-border:#244a30;
-    --long:var(--warning);--long-glow:rgba(214,162,63,.4);--long-bg:#221b0d;--long-border:#473a18;
-    /* Life-area category accents — muted, earthy variants for cohesion. */
-    --cat-bodyMindSpirit:#b6a0d6;
-    --cat-relationships:#d98c7a;
-    --cat-community:#d9b25a;
-    --cat-jobLearningFinances:#84ab6a;
-    --cat-interests:#6fa3a6;
-    --cat-personalCare:#d195ac;
-    --cat-general:#a7a08c;
+    /* Phase colors (back-compat) — cool, tech tints. */
+    --work:var(--accent);--work-glow:rgba(26,140,255,.4);--work-bg:#0d1c30;--work-border:#1c3a5a;
+    --short:var(--success);--short-glow:rgba(46,207,115,.4);--short-bg:#0c241a;--short-border:#1a4a32;
+    --long:var(--warning);--long-glow:rgba(255,176,46,.4);--long-bg:#241c0b;--long-border:#4a3a18;
+    /* Life-area category accents — cool/tech variants for cohesion. */
+    --cat-bodyMindSpirit:#9b7bff;
+    --cat-relationships:#ff6b6b;
+    --cat-community:#ffb02e;
+    --cat-jobLearningFinances:#2ecf73;
+    --cat-interests:#18d4e6;
+    --cat-personalCare:#ff66b3;
+    --cat-general:#8a9bb5;
     /* Radii */
     --r-sm:6px;--r-md:10px;--r-lg:14px;
     /* Spacing — 4-pt baseline. Migrate components incrementally; literals in
@@ -175,9 +175,9 @@
     --z-cmdk:1500;
     --z-skip-link:9999;
     /* Ring-time warn/done — token-driven so light-theme can override them.
-       Warm gold + brick clear AA against the dark --work-bg. */
-    --ring-warn-color:#e0ad48;
-    --ring-done-color:#d96a55;
+       Amber + red clear AA against the dark --work-bg. */
+    --ring-warn-color:#ffb02e;
+    --ring-done-color:#ff5247;
     color-scheme:dark;
   }
   /* Life-area chip/stripe tokens via data-cat-id — no inline style= (CSP). */
@@ -190,49 +190,49 @@
   [data-cat-id="general"]{--sv-cat:var(--cat-general);--md-cat:var(--cat-general);--ui-chip-dot:var(--cat-general);--cat-stripe:var(--cat-general)}
   body.light-theme{
     color-scheme:light;
-    /* Warm parchment/cream canvas — natural, low-glare paper feel. */
-    --bg-0:#f3f1e8;--bg-1:#fffdf7;--bg-2:#faf8f0;--bg-3:#e8e4d6;
+    /* Cool silver/white canvas — clean tech surface with a faint blue tint. */
+    --bg-0:#eef2f8;--bg-1:#ffffff;--bg-2:#f5f8fc;--bg-3:#dde5f0;
     /* Light-theme border lifted off --bg-3 to keep card edges visible. */
-    --border:#d8d3c2;--border-subtle:#e8e4d6;--border-strong:#c9c3af;
-    /* Brand on light: a deeper forest-sage so accent text/fills clear AA on cream. */
-    --accent:#5f7d44;
-    --accent-bg:rgba(95,125,68,.12);
-    --accent-border:rgba(95,125,68,.30);
-    --brand-2:#b08a2f;
-    --brand-grad:linear-gradient(135deg,#5f7d44 0%,#8a8a3a 50%,#b08a2f 100%);
-    --brand-grad-soft:linear-gradient(135deg,rgba(95,125,68,.12),rgba(176,138,47,.12));
-    /* Warm-grey text tuned to clear AA on the cream --bg-0. */
-    --text-1:#2b2a20;--text-2:#5a5648;--text-3:#5a5648;--text-4:#7a7565;
-    --work-bg:#f3f6ec;--work-border:#dde3c8;
-    --short-bg:#eef7ee;--short-border:#cfe6cf;
-    --long-bg:#fbf4e2;--long-border:#f0e0b6;
-    --success:#4f8a59;
-    --success-bg:rgba(79,138,89,.12);
-    --success-border:rgba(79,138,89,.30);
-    --warning:#b9822a;
-    --warning-bg:rgba(185,130,42,.13);
-    --warning-border:rgba(185,130,42,.30);
-    --danger:#b14a3a;
-    --danger-bg:rgba(177,74,58,.12);
-    --danger-border:rgba(177,74,58,.30);
-    --purple:#8a6184;
-    --purple-bg:rgba(138,97,132,.12);
-    --purple-border:rgba(138,97,132,.30);
-    --pink:#b25e66;
+    --border:#cdd8e6;--border-subtle:#dde5f0;--border-strong:#bcc9da;
+    /* Brand on light: a deeper Intel blue so accent text/fills clear AA on white. */
+    --accent:#0a6fd6;
+    --accent-bg:rgba(10,111,214,.10);
+    --accent-border:rgba(10,111,214,.30);
+    --brand-2:#0aa6c4;
+    --brand-grad:linear-gradient(135deg,#0a6fd6 0%,#0a9bcf 50%,#0aa6c4 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(10,111,214,.10),rgba(10,166,196,.10));
+    /* Cool-grey text tuned to clear AA on the silver --bg-0. */
+    --text-1:#0e1726;--text-2:#46566b;--text-3:#46566b;--text-4:#6a7a90;
+    --work-bg:#eaf3fd;--work-border:#cbe1f7;
+    --short-bg:#eafaf1;--short-border:#cdeedc;
+    --long-bg:#fff6e6;--long-border:#fbe4ba;
+    --success:#1f9d57;
+    --success-bg:rgba(31,157,87,.12);
+    --success-border:rgba(31,157,87,.30);
+    --warning:#b5781a;
+    --warning-bg:rgba(181,120,26,.13);
+    --warning-border:rgba(181,120,26,.30);
+    --danger:#cf3b34;
+    --danger-bg:rgba(207,59,52,.12);
+    --danger-border:rgba(207,59,52,.30);
+    --purple:#6b4ed6;
+    --purple-bg:rgba(107,78,214,.12);
+    --purple-border:rgba(107,78,214,.30);
+    --pink:#c43d72;
     --text-on-brand:#fff;
     --text-on-accent:#fff;
-    --cat-bodyMindSpirit:#6f539e;
-    --cat-relationships:#b5503a;
-    --cat-community:#9c6f1e;
-    --cat-jobLearningFinances:#4f8a59;
-    --cat-interests:#3f7e82;
-    --cat-personalCare:#a8527a;
-    --cat-general:#6b6655;
+    --cat-bodyMindSpirit:#6b4ed6;
+    --cat-relationships:#cf3b34;
+    --cat-community:#b5781a;
+    --cat-jobLearningFinances:#1f9d57;
+    --cat-interests:#0a8ba6;
+    --cat-personalCare:#bd3a78;
+    --cat-general:#5a6b80;
     /* Ring-time on light --work-bg needs deeper hues to clear AA at large-text
        thresholds (3:1). Burnt amber + brick red both pass. */
-    --ring-warn-color:#9c6f1e;
-    --ring-done-color:#a83f2f;
-    --accent-hover:#4f6c38;
+    --ring-warn-color:#b5781a;
+    --ring-done-color:#bf322b;
+    --accent-hover:#0860bb;
     --prio-low:var(--text-4);
   }
 
@@ -739,7 +739,7 @@
     z-index:var(--z-fab,1100);display:none;align-items:center;justify-content:center;
     width:56px;height:56px;border-radius:50%;border:0;cursor:pointer;
     background:var(--brand-grad);color:var(--text-on-brand);
-    box-shadow:0 8px 24px rgba(136,167,102,.40),0 2px 6px rgba(0,0,0,.25);
+    box-shadow:0 8px 24px rgba(26,140,255,.40),0 2px 6px rgba(0,0,0,.25);
     font-family:inherit;font-size:0;line-height:1;
     transition:transform .15s ease,box-shadow .15s ease,background .15s ease;
   }
@@ -1070,14 +1070,14 @@
     background:var(--brand-grad);color:var(--text-on-brand);
     font-weight:700;font-size:var(--fs-13);letter-spacing:.01em;text-transform:none;
     border:0;border-radius:999px;
-    box-shadow:0 2px 8px rgba(136,167,102,.30);
+    box-shadow:0 2px 8px rgba(26,140,255,.30);
     transition:filter var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
   }
-  .task-add:hover{box-shadow:0 4px 16px rgba(136,167,102,.42);filter:brightness(1.06)}
+  .task-add:hover{box-shadow:0 4px 16px rgba(26,140,255,.42);filter:brightness(1.06)}
   .task-add:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(136,167,102,.20);filter:none}
-  body.light-theme .task-add{box-shadow:0 2px 8px rgba(95,125,68,.24)}
-  body.light-theme .task-add:hover{box-shadow:0 4px 16px rgba(95,125,68,.34)}
+  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(26,140,255,.20);filter:none}
+  body.light-theme .task-add{box-shadow:0 2px 8px rgba(10,111,214,.24)}
+  body.light-theme .task-add:hover{box-shadow:0 4px 16px rgba(10,111,214,.34)}
 
   /* Quick-add hint — example tokens reuse the live-parse-preview chip styles
      (.qpc--*) so users learn by recognition: the chip color they see while
@@ -2003,7 +2003,7 @@
   .reorder-toggle .reorder-toggle-ic{font-size:16px;opacity:.85}
 
   .task-cat-stripe{box-shadow:inset 3px 0 0 0 var(--cat-stripe, transparent)}
-  .task-item--pareto{box-shadow:0 0 0 1px rgba(214,162,63,.35),var(--shadow-card)}
+  .task-item--pareto{box-shadow:0 0 0 1px rgba(255,176,46,.35),var(--shadow-card)}
   .task-item--tracking .task-name::before{
     content:'';display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:middle;
     border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);
@@ -3842,9 +3842,9 @@ body:has(.cmdk-overlay.open)  #exportToast{
   .task-item--pareto{
     border-left-width:4px!important;
     border-left-color:var(--warning)!important;
-    background:linear-gradient(90deg,rgba(214,162,63,.06) 0%,transparent 40%)
+    background:linear-gradient(90deg,rgba(255,176,46,.06) 0%,transparent 40%)
   }
-  .task-item--pareto:hover{background:linear-gradient(90deg,rgba(214,162,63,.10) 0%,var(--bg-2) 40%)}
+  .task-item--pareto:hover{background:linear-gradient(90deg,rgba(255,176,46,.10) 0%,var(--bg-2) 40%)}
   .task-item--pareto .task-row-primary::after{
     content:'';
     position:absolute;
@@ -3866,9 +3866,9 @@ body:has(.cmdk-overlay.open)  #exportToast{
   }
   .nav-tab.active .nav-tab-icon{filter:none;color:var(--accent)}
   body.light-theme .nav-tab.active{
-    background:rgba(95,125,68,.10);
+    background:rgba(10,111,214,.10);
     color:var(--accent);
-    border-color:rgba(95,125,68,.28)
+    border-color:rgba(10,111,214,.28)
   }
 
   /* === UNIFIED EASING LANGUAGE === */
@@ -4774,7 +4774,7 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .view-tab-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;border:0;background:transparent;color:var(--text-3);font-family:inherit;font-size:var(--fs-13);font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
 .view-tab-btn .mv-ic{display:inline-flex;width:15px;height:15px}
 .view-tab-btn:hover{color:var(--text-1);background:var(--bg-2)}
-.view-tab-btn.active{background:var(--brand-grad);color:var(--text-on-brand);box-shadow:0 2px 8px rgba(136,167,102,.30)}
+.view-tab-btn.active{background:var(--brand-grad);color:var(--text-on-brand);box-shadow:0 2px 8px rgba(26,140,255,.30)}
 
 .bottom-nav{display:none}
 .sidebar-backdrop{display:none}

@@ -708,7 +708,7 @@ function _applyState(s){
       lists       = s.lists.filter(l=>l&&l.id&&l.name).map(l=>({
         id: l.id,
         name: l.name,
-        color: l.color || '#88a766',
+        color: l.color || '#1a8cff',
         description: typeof l.description==='string' ? l.description : '',
         lastModified: typeof l.lastModified === 'number' && l.lastModified > 0 ? l.lastModified : 0,
       }));
@@ -1722,7 +1722,7 @@ function _importTasksFromJSON(text){
         lists.push({
           id: rl.id,
           name: rl.name || 'Imported',
-          color: rl.color || '#88a766',
+          color: rl.color || '#1a8cff',
           description: typeof rl.description==='string' ? rl.description : '',
         });
         if(rl.id > listIdCtr) listIdCtr = rl.id;
