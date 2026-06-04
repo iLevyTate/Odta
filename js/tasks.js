@@ -431,6 +431,7 @@ async function addTask(){
   // explicitly each time.
   if(typeof window!=='undefined'){window._quickAddValues=null}
   if(typeof renderQuickAddPanel==='function') renderQuickAddPanel();
+  if(typeof renderQuickSetBar==='function') renderQuickSetBar();
   // Hint to renderTaskItem: animate this card on the upcoming render and
   // scroll it into view. The flag self-clears in the renderer.
   window._lastAddedTaskId=_newT.id;
@@ -4209,6 +4210,106 @@ function _qaLbl(text){
   l.className='qa-more-field-lbl';
   l.textContent = text;
   return l;
+}
+
+// ── Tap-to-set quick-property bar ──────────────────────────────────────────
+// Always-visible pills (Due / Priority / List) under the quick-add input, so
+// the common properties can be set WITHOUT learning @ / # / ~ token syntax.
+// Each pill opens a Dropdown popover and writes to the same window._quickAddValues
+// that addTask merges, so typed tokens and taps combine. Cleared after each add.
+function _qsLabelDue(){
+  const d=_qaVal().dueDate;
+  if(!d) return 'Due';
+  if(typeof prettyDate==='function'){ try{ return prettyDate(d); }catch(_){ } }
+  return d;
+}
+function _qsLabelPriority(){
+  const p=_qaVal().priority;
+  return p ? ((typeof PRIORITIES==='object'&&PRIORITIES[p])?PRIORITIES[p].label:p) : 'Priority';
+}
+function _qsLabelList(){
+  const id=_qaVal().listId;
+  if(id==null) return 'List';
+  const L=(typeof lists!=='undefined'&&Array.isArray(lists))?lists.find(x=>x.id===id):null;
+  return L?L.name:'List';
+}
+function renderQuickSetBar(){
+  const bar=document.getElementById('qaQuickSet');
+  if(!bar) return;
+  const v=_qaVal();
+  const defs=[
+    {id:'qsDue',      action:'qaPickDue',      label:_qsLabelDue(),      set:v.dueDate!=null,  mod:'due'},
+    {id:'qsPriority', action:'qaPickPriority', label:_qsLabelPriority(), set:v.priority!=null, mod:'priority'},
+    {id:'qsList',     action:'qaPickList',     label:_qsLabelList(),     set:v.listId!=null,   mod:'list'},
+  ];
+  bar.replaceChildren();
+  defs.forEach(d=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='qs-pill qs-pill--'+d.mod+(d.set?' qs-pill--set':'');
+    b.id=d.id;
+    b.dataset.action=d.action;
+    b.setAttribute('aria-haspopup','listbox');
+    b.textContent=d.label;
+    bar.appendChild(b);
+  });
+}
+window.renderQuickSetBar=renderQuickSetBar;
+function qaPickPriority(){
+  const anchor=document.getElementById('qsPriority');
+  if(!anchor||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  Dropdown.open(anchor, {
+    options:[['urgent','Urgent'],['high','High'],['normal','Normal'],['low','Low'],['','No priority']].map(([val,l])=>({value:val,label:l})),
+    selected:_qaVal().priority||'',
+    onSelect:(val)=>{ _qaSet('priority', val||null); renderQuickSetBar(); }
+  });
+}
+function qaPickList(){
+  const anchor=document.getElementById('qsList');
+  if(!anchor||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  const opts=[{value:'',label:'— default —'}];
+  if(typeof lists!=='undefined'&&Array.isArray(lists)) lists.forEach(L=>{
+    const color=(L.color&&typeof sanitizeListColor==='function')?sanitizeListColor(L.color):L.color;
+    opts.push({value:String(L.id),label:L.name,color:color||null});
+  });
+  Dropdown.open(anchor, {
+    options:opts, selected:_qaVal().listId!=null?String(_qaVal().listId):'', searchable:opts.length>8,
+    onSelect:(val)=>{ _qaSet('listId', val?parseInt(val,10):null); renderQuickSetBar(); }
+  });
+}
+function qaPickDue(){
+  const anchor=document.getElementById('qsDue');
+  if(!anchor||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  Dropdown.open(anchor, {
+    options:[
+      {value:'0',label:'Today'},{value:'1',label:'Tomorrow'},{value:'7',label:'Next week'},
+      {value:'clear',label:'No date'},{value:'pick',label:'Pick exact date…'},
+    ],
+    selected:null,
+    onSelect:(v)=>{
+      if(v==='pick'){ _qaPickExactDue(); return; }
+      if(v==='clear'){ _qaSet('dueDate', null); }
+      else { const d=new Date(); d.setDate(d.getDate()+parseInt(v,10)); _qaSet('dueDate', d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')); }
+      renderQuickSetBar();
+    }
+  });
+}
+function _qaPickExactDue(){
+  let inp=document.getElementById('qsDueHidden');
+  if(!inp){
+    inp=document.createElement('input'); inp.type='date'; inp.id='qsDueHidden';
+    inp.className='sr-only'; inp.tabIndex=-1; inp.setAttribute('aria-hidden','true');
+    (document.getElementById('qaQuickSet')||document.body).appendChild(inp);
+    inp.addEventListener('change', ()=>{ _qaSet('dueDate', inp.value||null); renderQuickSetBar(); });
+  }
+  inp.value=_qaVal().dueDate||'';
+  try{ inp.showPicker(); }catch(_){ try{ inp.focus(); }catch(__){} }
+}
+window.qaPickPriority=qaPickPriority; window.qaPickList=qaPickList; window.qaPickDue=qaPickDue;
+// Initial paint (the bar is static markup; values reset after each add).
+if(typeof document!=='undefined'){
+  if(document.readyState!=='loading') renderQuickSetBar();
+  else document.addEventListener('DOMContentLoaded', ()=>renderQuickSetBar(), {once:true});
 }
 
 function renderQuickAddPanel(){
