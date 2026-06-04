@@ -999,13 +999,17 @@
   .tb-divider{background:var(--border)}
 
   /* ── Shared chip primitive (list-style pills + Settings preview) ──────── */
-  .ui-chip{
+  /* `.list-chip` shares this base (its own dedicated base was retired in favour
+     of this primitive) — without it list chips fall back to bare <button>s with
+     centered text and no pill shape. */
+  .ui-chip,
+  .list-chip{
     box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;
     padding:var(--space-3) var(--space-6);min-height:32px;border-radius:999px;
     font-size:12px;font-weight:500;line-height:1.25;letter-spacing:0;text-transform:none;
     font-family:inherit;border:1px solid var(--border);background:var(--bg-2);color:var(--text-2);
   }
-  button.ui-chip{cursor:pointer;transition:background var(--dur-base) var(--ease-out),color var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out)}
+  button.ui-chip,button.list-chip{cursor:pointer;transition:background var(--dur-base) var(--ease-out),color var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out)}
   .ui-chip:focus-visible:not(.ui-chip--preview){outline:2px solid var(--accent);outline-offset:2px}
   .ui-chip--dot::before{
     content:"";width:8px;height:8px;border-radius:50%;
@@ -4778,9 +4782,23 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .sidebar-lists{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border-subtle);padding-top:12px;margin-top:2px}
 .sidebar-sec-lbl{font-size:var(--fs-12);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);padding:2px 6px;margin-top:4px}
 .app-sidebar .lists-bar,
-.app-sidebar .smart-views{display:flex;flex-direction:column;gap:3px;width:100%;background:transparent;border:0;padding:0;margin:0;overflow:visible;-webkit-mask-image:none;mask-image:none;flex-wrap:nowrap}
+.app-sidebar .smart-views{display:flex;flex-direction:column;gap:2px;width:100%;align-items:stretch;background:transparent;border:0;padding:0;margin:0;overflow:visible;-webkit-mask-image:none;mask-image:none;flex-wrap:nowrap}
+/* Lists & Views read like the nav items above them: full-width rows, left-aligned
+   label, transparent until hover/active, count parked on the right edge. This
+   replaces the stack of heavy centered pills. */
 .app-sidebar .sv-chip,
-.app-sidebar .list-chip{width:100%;justify-content:flex-start}
+.app-sidebar .list-chip{width:100%;justify-content:flex-start;gap:10px;min-height:36px;padding:8px 12px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--text-2);font-size:var(--fs-14);font-weight:500;text-align:left}
+.app-sidebar .sv-chip:hover,
+.app-sidebar .list-chip:hover{background:var(--bg-2);color:var(--text-1);border-color:transparent}
+.app-sidebar .list-chip.active,
+.app-sidebar .sv-chip.active{background:var(--brand-grad-soft);color:var(--text-1);border:1px solid var(--accent-border);font-weight:600}
+.app-sidebar .list-chip .lc-count,
+.app-sidebar .sv-chip .sv-count{margin-left:auto}
+.app-sidebar .sv-chip.active .sv-count{background:var(--accent);color:var(--text-on-accent)}
+/* + List / Focus controls become full-width rows so the column reads as one unit
+   rather than two stray centered buttons. */
+.app-sidebar .list-add{width:100%;justify-content:flex-start;text-align:left;padding:8px 12px;min-height:36px;border-radius:10px;font-size:var(--fs-13);margin-top:2px}
+.app-sidebar .list-focus-toggle{width:100%;justify-content:flex-start;text-align:left;padding:8px 12px;min-height:36px;border-radius:10px;margin-left:0;margin-top:4px}
 
 .app-shell.sidebar-collapsed .sidebar-brand-name,
 .app-shell.sidebar-collapsed .app-sidebar .nav-tab span:not(.nav-tab-icon),
