@@ -399,8 +399,13 @@ function _syncCmdkApplyModeUi(){
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
+// Ask (generative) entry points are hidden until the user enables the feature
+// in Settings. Fail-open if the helper isn't loaded so unit tests that exercise
+// these functions in isolation keep their current behavior; in the running app
+// gen.js always defines isGenEnabled() (default false).
+function _askEntryEnabled(){ return typeof isGenEnabled === 'function' ? isGenEnabled() : true; }
 function openCmdK(opts){
-  const openAsk = opts && opts.ask === true;
+  const openAsk = opts && opts.ask === true && _askEntryEnabled();
   const prefill = (opts && typeof opts.prefill === 'string') ? opts.prefill : '';
   const ov=gid('cmdkOverlay');if(!ov)return;
   // A question minimized to the background takes priority: reopening restores
@@ -490,6 +495,8 @@ function _cmdkAbortAsk(){
   _cmdkAskBusy=false;
 }
 function cmdkSetAskMode(on){
+  // Ask is hidden until enabled in Settings — never enter Ask mode when off.
+  if(on && !_askEntryEnabled()) on = false;
   // Leaving ask mode mid-generation must actually stop the model, not just
   // the UI affordance. Otherwise tokens keep decoding in the background and
   // the next Ask turn sees stale state.
@@ -525,6 +532,8 @@ function _applyCmdkMode(){
       :'Search tasks, actions, views… (? for Edit)';
   }
   if(tog){
+    // Hide the Edit toggle entirely when generative Ask is disabled.
+    tog.hidden = !_askEntryEnabled();
     tog.textContent = 'Edit';
     tog.classList.toggle('cmdk-ask-toggle--active',cmdkMode==='ask');
     tog.setAttribute('aria-pressed',cmdkMode==='ask'?'true':'false');
@@ -1246,8 +1255,9 @@ window.hideAskPromo=hideAskPromo;
 function renderCmdK(){
   const rawInput=gid('cmdkInput');
   let rawVal=rawInput?rawInput.value:'';
-  // Prefix "? " toggles Ask mode and strips the prefix from the query.
-  if(cmdkMode!=='ask'&&(rawVal.startsWith('?')||rawVal.startsWith('？'))){
+  // Prefix "? " toggles Ask mode and strips the prefix from the query — but
+  // only when generative Ask is enabled. When off, `?` stays literal search text.
+  if(cmdkMode!=='ask'&&_askEntryEnabled()&&(rawVal.startsWith('?')||rawVal.startsWith('？'))){
     const rest=rawVal.replace(/^[?？]\s*/,'');
     if(rawInput)rawInput.value=rest;
     rawVal=rest;
@@ -1313,7 +1323,8 @@ function renderCmdK(){
     {type:'action',label:'Toggle semantic search',icon:ic('search'),run:()=>{showTab('tasks');if(typeof isIntelReady !== 'function' || !isIntelReady()){if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('error', 'Load model first — open Tools');showTab('tools');return}const cb=gid('taskSearchSemantic');if(cb){cb.checked=!cb.checked;if(typeof toggleTaskSearchSemantic==='function')toggleTaskSearchSemantic()}}},
   ];
   const items=[];
-  const askMatches=!q||askAction.label.toLowerCase().includes(q);
+  // The Ask action only appears when generative Ask is enabled in Settings.
+  const askMatches=_askEntryEnabled()&&(!q||askAction.label.toLowerCase().includes(q));
   if(askMatches){
     items.push({section:'Ask'});
     items.push(askAction);

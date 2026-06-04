@@ -26,7 +26,7 @@ const FN_TAIL  = SRC.indexOf('\nwindow.onTaskInputKey=onTaskInputKey;', FN_START
 assert.ok(FN_START >= 0 && FN_TAIL > FN_START, 'failed to slice onTaskInputKey from tasks.js');
 const FN_SRC = SRC.slice(FN_START, FN_TAIL);
 
-function loadHandler(){
+function loadHandler({ genEnabled = true } = {}){
   const calls = {
     openCmdK: [],
     applySmartAddAndSubmit: 0,
@@ -37,6 +37,8 @@ function loadHandler(){
   const win = { _smartAddPreview: null };
   const ctx = {
     window: win,
+    // Mirror the gen.js gate: `?` only routes to Ask when the feature is on.
+    isGenEnabled: () => genEnabled,
     openCmdK: (opts) => { calls.openCmdK.push(opts); },
     applySmartAddAndSubmit: () => { calls.applySmartAddAndSubmit++; },
     addTask: () => { calls.addTask++; },
@@ -120,4 +122,15 @@ test('onTaskInputKey: `?` only counts at the start — mid-string `?` is a liter
   handler(makeEnter('what is this ? thing'));
   assert.equal(calls.addTask, 1);
   assert.equal(calls.openCmdK.length, 0);
+});
+
+test('onTaskInputKey: `?` does NOT route to Ask when generative Ask is disabled', () => {
+  // With the feature off (the default), the entry point is hidden — a leading
+  // `?` must fall through to a normal add instead of opening Ask.
+  const { handler, calls } = loadHandler({ genEnabled: false });
+  const ev = makeEnter('? archive everything done last week');
+  handler(ev);
+  assert.equal(calls.openCmdK.length, 0, 'Ask must not open when disabled');
+  assert.equal(calls.addTask, 1, 'plain add runs instead');
+  assert.equal(ev.prevented, false, 'no Ask routing means no preventDefault for the `?` branch');
 });

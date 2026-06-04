@@ -63,6 +63,11 @@ let _genGenInFlight = 0;
 
 function getGenDevice(){ return _genDevice; }
 function getGenModel(){ return _genModelId; }
+// Single source of truth for "is the generative Ask feature turned on?".
+// Drives whether the UI exposes any Ask entry points — when this is false
+// (the default), the palette action, Edit toggle, and `?` prefixes all stay
+// hidden. Distinct from isGenReady(), which also requires a loaded model.
+function isGenEnabled(){ try { return !!(typeof getGenCfg === 'function' && getGenCfg().enabled); } catch(_){ return false; } }
 function isGenReady(){ return _genReady; }
 function isGenLoading(){ return _genLoading; }
 function isGenGenerating(){ return _genGenerating; }
@@ -955,6 +960,7 @@ if(typeof window !== 'undefined'){
   window.parseQwen25ToolCallBlocks = parseQwen25ToolCallBlocks;
   window.isGenModelNativeQwen25Tools = isGenModelNativeQwen25Tools;
   window.genAbort = genAbort;
+  window.isGenEnabled = isGenEnabled;
   window.isGenReady = isGenReady;
   window.isGenLoading = isGenLoading;
   window.isGenGenerating = isGenGenerating;

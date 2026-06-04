@@ -9,6 +9,7 @@
 - **Fix (LLM abort)**: a generation whose abort signal was *already* aborted when it started no longer runs to completion in the worker. The proxy used to post `abort` then `generate`, but the worker processed the `abort` before the request existed (so the interrupt was lost). It now rejects up-front with `GEN_ABORTED`, matching the main-thread path.
 - **Fix (LLM memory)**: switching model presets no longer leaks the previous model's weights. Both the worker and the main-thread fallback now dispose the prior pipeline (freeing WASM heap / WebGPU buffers) before loading the next one.
 - **Fix (Ask, auto-apply)**: a backgrounded (minimized) question that resolves to a **destructive** batch (deletes / bulk moves) no longer pops a confirmation modal over whatever you're doing. Destructive batches are deferred to review and the finish toast invites you back to approve them; safe batches still auto-apply.
+- **Generative Ask is now clearly experimental and hidden by default.** Every Ask entry point — the Cmd/Ctrl+K palette action, the **Edit** toggle, and the `?` prefix in both the palette and the main task input — stays out of the UI until you enable generative Ask in **Settings → Integrations → Generative AI**. Gated through a single `isGenEnabled()` source of truth in `js/gen.js`. README now marks Ask as a work-in-progress that may need troubleshooting. New tests cover the disabled `?`-prefix fall-through and the palette Ask-mode gate.
 
 ## v59 — 2026-05-29
 
