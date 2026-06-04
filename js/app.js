@@ -526,7 +526,7 @@ setTimeout(() => {
           if(name.endsWith('.ics')){
             // Paste-as-calendar: hand to addCalFeed if available
             if(typeof addCalFeed === 'function'){
-              addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: text, color: '#88a766' });
+              addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: text, color: '#1a8cff' });
               if(typeof showExportToast === 'function') showExportToast('Calendar feed added: ' + file.name);
             }
           } else if(name.endsWith('.json')){
