@@ -4497,6 +4497,28 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .md-tabpane[hidden]{display:none}
 body.light-theme .md-tabs{background:var(--bg-1)}
 body.light-theme .md-tab:hover{background:var(--bg-2)}
+/* Header property pills — Status / Priority / Due / List as one-click popovers
+   above the tabs. Each carries a current-value label; colour cues priority and
+   non-default status. Reuses the chip/pill radius language. */
+.md-pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.md-pill{
+  display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  padding:5px 12px;border-radius:999px;
+  background:var(--bg-1);border:1px solid var(--border);
+  color:var(--text-2);font-size:var(--fs-12);font-weight:600;cursor:pointer;
+  transition:background var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);
+}
+.md-pill:hover{background:var(--bg-3);border-color:var(--border-strong);color:var(--text-1)}
+.md-pill .dropdown-trigger-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
+.md-pill--status.status-progress{color:var(--accent)}
+.md-pill--status.status-review{color:var(--warning)}
+.md-pill--status.status-blocked{color:var(--danger)}
+.md-pill--status.status-done{color:var(--success)}
+.md-pill--priority.prio-urgent{color:var(--prio-urgent);border-color:var(--prio-urgent)}
+.md-pill--priority.prio-high{color:var(--prio-high)}
+.md-pill--priority.prio-normal{color:var(--prio-normal)}
+.md-pill--priority.prio-low{color:var(--prio-low)}
+.md-pill--due.md-pill--set{color:var(--text-1)}
 .md-block--last{margin-bottom:0;padding-bottom:0;border-bottom:none}
 .md-block{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-subtle)}
 .md-block-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}

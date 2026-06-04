@@ -997,6 +997,22 @@
     <div class="modal-body">
       <div class="modal-stat" id="mdStats"></div>
 
+      <!-- Header property pills: the most-edited fields (Status / Priority /
+           Due / List) as one-click popovers, always visible above the tabs.
+           They replace the duplicated chip controls that used to sit in the
+           Details pane. mdDue/mdList are kept (hidden) as the canonical inputs
+           the save/list logic already reads. -->
+      <div class="md-pills" id="mdPills" role="group" aria-label="Quick properties">
+        <button type="button" class="md-pill md-pill--status status-open" id="mdPillStatus" data-action="pickStatusPill" aria-haspopup="listbox" title="Status">Open</button>
+        <button type="button" class="md-pill md-pill--priority prio-none" id="mdPillPriority" data-action="pickPriorityPill" aria-haspopup="listbox" title="Priority">No priority</button>
+        <button type="button" class="md-pill md-pill--due" id="mdPillDue" data-action="pickDuePill" aria-haspopup="listbox" title="Due date">No date</button>
+        <button type="button" class="md-pill md-pill--list" id="mdListTrigger" data-action="openListDropdown" aria-haspopup="listbox" aria-labelledby="mdListLabel" title="List">
+          <span class="dropdown-trigger-label" id="mdListLabel">List</span>
+        </button>
+        <select class="dropdown-shadow-select" id="mdList" hidden tabindex="-1" aria-hidden="true"></select>
+        <input type="date" id="mdDue" class="sr-only" tabindex="-1" aria-hidden="true">
+      </div>
+
       <!-- Segmented sections replace the old single 2000px scroll: each pane is
            ~one viewport. All field IDs are unchanged so openTaskDetail's wiring
            is untouched — only the container nesting changed. -->
@@ -1007,28 +1023,7 @@
       </div>
 
       <div class="md-tabpane" id="mdTabDetails" role="tabpanel" aria-labelledby="mdTabBtn-details" data-pane="details">
-        <div class="mfield-row">
-          <div class="mfield">
-            <div class="mfield-lbl" id="mdStatusLbl">Status</div>
-            <div class="mfield-chips" id="mdStatusChips" role="group" aria-labelledby="mdStatusLbl"></div>
-          </div>
-          <div class="mfield">
-            <div class="mfield-lbl" id="mdPriorityLbl">Priority</div>
-            <div class="mfield-chips" id="mdPriorityChips" role="group" aria-labelledby="mdPriorityLbl"></div>
-          </div>
-        </div>
-
         <div class="mfield-row mfield-row--modal-grid">
-          <div class="mfield">
-            <label class="mfield-lbl" for="mdDue">Due Date</label>
-            <input type="date" class="mfield-in" id="mdDue">
-            <div class="quick-dates" role="group" aria-label="Quick due date">
-              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[0]'>Today</button>
-              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[1]'>Tomorrow</button>
-              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[7]'>+1 Week</button>
-              <button type="button" class="qd-btn" data-action="setQuickDate" data-arg="clear">Clear</button>
-            </div>
-          </div>
           <div class="mfield">
             <label class="mfield-lbl" for="mdRemindAt">Remind me at</label>
             <input type="datetime-local" class="mfield-in" id="mdRemindAt">
@@ -1085,27 +1080,14 @@
         </div>
 
         <div class="md-block">
-          <div class="md-block-title">Tags &amp; list</div>
+          <div class="md-block-title">Tags &amp; start</div>
           <div class="mfield">
             <div class="mfield-lbl" id="mdTagsLbl">Tags</div>
             <div class="tags-editor" id="mdTagsEditor" role="group" aria-labelledby="mdTagsLbl"></div>
           </div>
-          <div class="mfield-row">
-            <div class="mfield">
-              <label class="mfield-lbl" for="mdListTrigger" id="mdListLbl">List</label>
-              <button type="button" id="mdListTrigger" class="dropdown-trigger" data-action="openListDropdown" aria-haspopup="listbox" aria-labelledby="mdListLbl mdListLabel">
-                <span class="dropdown-trigger-label" id="mdListLabel">List</span>
-                <span class="dropdown-trigger-caret" aria-hidden="true">▾</span>
-              </button>
-              <!-- Hidden shadow-select keeps the existing save logic
-                   (saveTaskDetail reads gid('mdList').value) working
-                   unchanged while the visible trigger drives selection. -->
-              <select class="dropdown-shadow-select" id="mdList" hidden tabindex="-1" aria-hidden="true"></select>
-            </div>
-            <div class="mfield">
-              <label class="mfield-lbl" for="mdStartDate">Start Date</label>
-              <input type="date" class="mfield-in" id="mdStartDate">
-            </div>
+          <div class="mfield">
+            <label class="mfield-lbl" for="mdStartDate">Start Date</label>
+            <input type="date" class="mfield-in" id="mdStartDate">
           </div>
         </div>
       </div>

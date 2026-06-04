@@ -2202,12 +2202,15 @@ function renderTaskItem(t,depth){
   }
 
   const status=STATUSES[t.status||'open'];
-  // Status badge is interactive (click/Enter cycles through statuses). It
-  // was previously a plain <span> with no tabindex/role and was display:none
-  // for the "open" state — keyboard users couldn't reach it AT ALL and even
-  // mouse users had to know to hover (#14 in UX audit). Now it's a <button>
-  // visible across all states and routed through the keyboard delegation.
-  const statusBadge='<button type="button" class="status-badge '+status.cls+'" data-action="cycleStatus" data-args="['+t.id+']" title="Cycle status (current: '+esc(status.label)+')" aria-label="Status: '+esc(status.label)+'. Activate to cycle to next status.">'+status.label+'</button>';
+  // Calmer resting row: "Open" is the default on every task, so showing it adds
+  // noise without information. Render the interactive status badge only for the
+  // meaningful (non-open) statuses. Open tasks can still set status from the row
+  // ⋯ menu (Status…) or the detail panel, so keyboard users aren't stranded —
+  // which was the original reason (#14 in the UX audit) the badge was kept
+  // always-visible. The badge still cycles on click for the statuses it shows.
+  const statusBadge=(t.status&&t.status!=='open')
+    ? '<button type="button" class="status-badge '+status.cls+'" data-action="cycleStatus" data-args="['+t.id+']" title="Cycle status (current: '+esc(status.label)+')" aria-label="Status: '+esc(status.label)+'. Activate to cycle to next status.">'+status.label+'</button>'
+    : '';
   const tagsVisible=(t.tags||[]).slice(0,3).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
   const descPrev=(t.description&&t.description.length>0)?'<span class="task-desc-inline">'+esc(t.description.slice(0,50))+(t.description.length>50?'…':'')+'</span>':'';
 
@@ -2557,6 +2560,8 @@ function _autosaveTaskDetailText(){
   if(typeof recordTaskActivity==='function') recordTaskActivity(t, before);
   // Keep the close-revert snapshot aligned so dismissing preserves these edits.
   if(_taskModalSnapshot){ TASK_MODAL_TEXT_FIELDS.forEach(f=>{ _taskModalSnapshot[f]=t[f]; }); }
+  // A due change via the native picker (mdDue) should refresh the Due pill.
+  if(before.dueDate!==t.dueDate && typeof _updateTaskPillLabels==='function') _updateTaskPillLabels(t);
   if(typeof saveState==='function') saveState('user'); // also pulses the Saved indicator
   window._preserveTaskScroll=true;
   if(typeof renderTaskList==='function') renderTaskList();
@@ -2621,6 +2626,105 @@ function _taskDetailStep(dir){
   if(tab){ try{ tab.focus({preventScroll:true}); }catch(_){ try{ tab.focus(); }catch(_){} } }
 }
 window._taskDetailStep = _taskDetailStep;
+
+// ── Inline property pickers ────────────────────────────────────────────────
+// Status / Priority / Due editing as small popovers (the Dropdown utility),
+// shared by the detail-panel header pills AND the task-row ⋯ menu — so the most
+// common edits are one click in either place, with no need to open (or scroll)
+// the full editor. List reuses the existing openListDropdown.
+function _isoOffset(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _pillDueLabel(t){
+  if(!t.dueDate) return 'No date';
+  const d=(typeof describeDue==='function')?describeDue(t.dueDate):null;
+  return (d&&d.label) || ((typeof fmtDue==='function')?fmtDue(t.dueDate):t.dueDate);
+}
+// Refresh the detail-panel header pills from the task. The List pill label is
+// owned by openTaskDetail/openListDropdown (mdListLabel), so it's left alone.
+function _updateTaskPillLabels(t){
+  if(!t) return;
+  const ps=gid('mdPillStatus');
+  if(ps){ const s=STATUSES[t.status||'open']; ps.textContent=s.label; ps.dataset.status=t.status||'open'; ps.className='md-pill md-pill--status '+s.cls; }
+  const pp=gid('mdPillPriority');
+  if(pp){ const pr=t.priority||'none'; pp.textContent=PRIORITIES[pr].label; pp.dataset.priority=pr; pp.className='md-pill md-pill--priority prio-'+pr; }
+  const pd=gid('mdPillDue');
+  if(pd){ pd.textContent=_pillDueLabel(t); pd.classList.toggle('md-pill--set', !!t.dueDate); }
+}
+window._updateTaskPillLabels=_updateTaskPillLabels;
+// Persist a property change. When the change is on the open task, route through
+// _commitChipChange (saves, re-renders the list, syncs the close-revert
+// snapshot, pulses the Saved indicator) and refresh the header pills/checkbox.
+// Otherwise (row ⋯ menu on a different task) just save + re-render the list.
+function _commitTaskProp(t, before){
+  if(before && typeof recordTaskActivity==='function') recordTaskActivity(t, before);
+  if(editingTaskId===t.id && _taskModalSnapshot){
+    const cb=gid('mdCheckbox'); if(cb){ cb.classList.toggle('checked',t.status==='done'); cb.textContent=t.status==='done'?'✓':''; }
+    _updateTaskPillLabels(t);
+    _commitChipChange(t);
+  } else {
+    if(typeof saveState==='function') saveState('user');
+    window._preserveTaskScroll=true;
+    if(typeof renderTaskList==='function') renderTaskList();
+  }
+}
+function pickStatus(id, anchor){
+  const t=findTask(id); if(!t||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  Dropdown.open(anchor||gid('mdPillStatus'), {
+    options: STATUS_ORDER.map(s=>({value:s,label:STATUSES[s].label})),
+    selected: t.status||'open',
+    onSelect:(st)=>{
+      const before={status:t.status,completedAt:t.completedAt};
+      if(st==='done'&&t.recur&&typeof completeHabitCycle==='function'){
+        completeHabitCycle(t);
+      }else{
+        t.status=st;
+        if(st==='done'&&!t.completedAt&&typeof stampCompletion==='function') t.completedAt=stampCompletion();
+        if(st!=='done') t.completedAt=null;
+      }
+      _commitTaskProp(t, before);
+      if(editingTaskId===id){
+        if(typeof renderMdHabitLog==='function') renderMdHabitLog(t);
+        if(typeof renderMdSessions==='function') renderMdSessions(t);
+        const tr=gid('mdTracked'); if(tr&&typeof getRolledUpTime==='function') tr.textContent=fmtHMS(getRolledUpTime(id))+' · '+getRolledUpSessions(id)+' sessions';
+      }
+    }
+  });
+}
+function pickPriority(id, anchor){
+  const t=findTask(id); if(!t||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  Dropdown.open(anchor||gid('mdPillPriority'), {
+    options:['urgent','high','normal','low','none'].map(p=>({value:p,label:PRIORITIES[p].label})),
+    selected:t.priority||'none',
+    onSelect:(pr)=>{ const before={priority:t.priority}; t.priority=pr; _commitTaskProp(t, before); }
+  });
+}
+function pickDue(id, anchor){
+  const t=findTask(id); if(!t||typeof Dropdown==='undefined'||!Dropdown.open) return;
+  Dropdown.open(anchor||gid('mdPillDue'), {
+    options:[
+      {value:'0',label:'Today'},{value:'1',label:'Tomorrow'},{value:'7',label:'Next week'},
+      {value:'clear',label:'No date'},{value:'pick',label:'Pick exact date…'},
+    ],
+    selected:null,
+    onSelect:(v)=>{
+      if(v==='pick'){
+        if(editingTaskId===id){ const inp=gid('mdDue'); if(inp){ try{ inp.showPicker(); }catch(_){ try{ inp.focus(); }catch(__){} } } }
+        else { openTaskDetail(id); }
+        return;
+      }
+      const before={dueDate:t.dueDate};
+      t.dueDate = (v==='clear') ? null : _isoOffset(parseInt(v,10));
+      if(t.dueDate!==before.dueDate) t.reminderFired=false;
+      if(editingTaskId===id && gid('mdDue')) gid('mdDue').value=t.dueDate||'';
+      _commitTaskProp(t, before);
+    }
+  });
+}
+window.pickStatus=pickStatus; window.pickPriority=pickPriority; window.pickDue=pickDue;
+// data-action wrappers for the header pills (always act on the open task).
+function pickStatusPill(){ if(editingTaskId!=null) pickStatus(editingTaskId, gid('mdPillStatus')); }
+function pickPriorityPill(){ if(editingTaskId!=null) pickPriority(editingTaskId, gid('mdPillPriority')); }
+function pickDuePill(){ if(editingTaskId!=null) pickDue(editingTaskId, gid('mdPillDue')); }
+window.pickStatusPill=pickStatusPill; window.pickPriorityPill=pickPriorityPill; window.pickDuePill=pickDuePill;
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail
@@ -2695,47 +2799,9 @@ function openTaskDetail(id){
     [...container.children].forEach(c => { c.classList.remove('active'); if(c.setAttribute) c.setAttribute('aria-pressed', 'false'); });
     if(isActive){ btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); }
   };
-  // Status chips
-  const sChips=gid('mdStatusChips');sChips.innerHTML='';
-  sChips.setAttribute('role','radiogroup');
-  STATUS_ORDER.forEach(st=>{
-    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.status||'open')===st?' active':'');
-    b.setAttribute('role','radio');
-    b.setAttribute('aria-checked', (t.status||'open')===st ? 'true' : 'false');
-    b.textContent=STATUSES[st].label;
-    b.onclick=function(){
-      if(st==='done'&&t.recur&&typeof completeHabitCycle==='function'){
-        completeHabitCycle(t);
-        gid('mdCheckbox').classList.remove('checked');gid('mdCheckbox').textContent='';
-        [...sChips.children].forEach((c,i)=>{ const active=(STATUS_ORDER[i]==='open'); c.classList.toggle('active',active); c.setAttribute('aria-checked', active?'true':'false'); });
-        renderMdHabitLog(t);
-        renderMdSessions(t);
-        gid('mdTracked').textContent=fmtHMS(getRolledUpTime(t.id))+' · '+getRolledUpSessions(t.id)+' sessions';
-      }else{
-        t.status=st;
-        if(st==='done' && !t.completedAt && typeof stampCompletion === 'function') t.completedAt = stampCompletion();
-        if(st!=='done') t.completedAt = null;
-        gid('mdCheckbox').classList.toggle('checked',st==='done');gid('mdCheckbox').textContent=st==='done'?'✓':'';
-        _setRadioGroupSelection(sChips, b);
-      }
-      _commitChipChange(t);
-    };
-    sChips.appendChild(b)
-  });
-  // Priority chips
-  const pChips=gid('mdPriorityChips');pChips.innerHTML='';
-  pChips.setAttribute('role','radiogroup');
-  ['urgent','high','normal','low','none'].forEach(pr=>{
-    const b=document.createElement('button');b.type='button';b.className='mfield-chip-btn'+((t.priority||'none')===pr?' active':'');
-    b.setAttribute('role','radio');
-    b.setAttribute('aria-checked', (t.priority||'none')===pr ? 'true' : 'false');
-    // Use a CSS-token-driven color so "low" hits AA contrast in both themes —
-    // hard-coded #7f8c8d was ~3.6:1 on the dark modal bg (#22 in UX audit).
-    b.style.color=pr!=='none'?({urgent:'var(--prio-urgent)',high:'var(--prio-high)',normal:'var(--prio-normal)',low:'var(--prio-low)'}[pr]):'';
-    b.textContent=PRIORITIES[pr].label;
-    b.onclick=function(){t.priority=pr;_setRadioGroupSelection(pChips, b);_commitChipChange(t)};
-    pChips.appendChild(b)
-  });
+  // Status / Priority / Due now live as header pills (each opens a popover via
+  // pickStatus/pickPriority/pickDue). Populate their labels from the task.
+  _updateTaskPillLabels(t);
   // Effort chips (toggle — clicking the active chip deselects)
   const eChips=gid('mdEffortChips');eChips.innerHTML='';
   eChips.setAttribute('role','group');
@@ -3273,6 +3339,9 @@ function showTaskActionMenu(id){
   menu.className='task-action-menu';
   menu.setAttribute('role','menu');
   const rows=[
+    {ic:'◐', label:'Status…', run:()=>pickStatus(id, anchor)},
+    {ic:'⚑', label:'Priority…', run:()=>pickPriority(id, anchor)},
+    {ic:'◷', label:'Due date…', run:()=>pickDue(id, anchor)},
     {ic:'→', label:'Move to list…', run:()=>showTaskListPickerSheet(id)},
     {ic:t.starred?'★':'☆', label:t.starred?'Unpin':'Pin to top', run:()=>toggleStar(id)},
     {ic:'+', label:'Add subtask', run:()=>addSubtaskPrompt(id)},
@@ -3540,8 +3609,8 @@ function toggleTaskDone(){
     renderMdSessions(t);
     gid('mdTracked').textContent=fmtHMS(getRolledUpTime(t.id))+' · '+getRolledUpSessions(t.id)+' sessions';
   }else{t.status='done';t.completedAt=stampCompletion();gid('mdCheckbox').classList.add('checked');gid('mdCheckbox').textContent='✓'}
-  // Update status chips
-  const sChips=gid('mdStatusChips');if(sChips){[...sChips.children].forEach((c,i)=>c.classList.toggle('active',STATUS_ORDER[i]===t.status))}
+  // Update the header Status pill
+  if(typeof _updateTaskPillLabels==='function') _updateTaskPillLabels(t);
   _commitChipChange(t);
 }
 
