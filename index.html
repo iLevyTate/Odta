@@ -305,6 +305,14 @@
         <span class="fb-lbl" id="fbViewLabel">List</span>
         <span class="ft-count" id="filtersActiveCount" hidden>0</span>
       </button>
+      <!-- Visual filter builder: pick a dimension then a value to add an
+           operator filter without typing tag:/priority:/due: syntax. The
+           generated operator feeds the existing search pipeline and shows as a
+           removable chip in #activeFiltersBar. -->
+      <button type="button" class="fb-btn fb-btn--addfilter" id="fbAddFilter" data-action="openFilterBuilder" aria-haspopup="listbox" title="Add a filter (tag, priority, due, status, flag)">
+        <span class="fb-ic" aria-hidden="true">+</span>
+        <span class="fb-lbl">Filter</span>
+      </button>
     </div>
 
     <!-- Collapsible search — hidden until the 🔍 trigger is tapped. -->

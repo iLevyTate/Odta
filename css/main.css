@@ -465,6 +465,11 @@
     gap:10px;
     padding-inline-end:12px;
   }
+  /* "+ Filter" builder trigger — subtle accent so the add affordance reads as
+     an action, distinct from the neutral view/list triggers. */
+  .fb-btn--addfilter{flex:0 0 auto;color:var(--accent)}
+  .fb-btn--addfilter .fb-ic{font-weight:700}
+  .fb-btn--addfilter:hover{border-color:var(--accent-border);background:var(--accent-bg)}
   /* Badge anchored so adding a digit never shifts label width */
   .fb-btn--view .ft-count{
     position:absolute;top:6px;right:6px;
