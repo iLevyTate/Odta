@@ -2575,6 +2575,18 @@ function _bindTaskDetailAutosave(){
   const handler=e=>{ if(editingTaskId!=null && e.target && tracked.has(e.target.id)) _autosaveTaskDetailText(); };
   root.addEventListener('focusout', handler);
   root.addEventListener('change', handler);
+  // j / k step between tasks while the editor is open and focused (and the user
+  // isn't typing in a field). Bound on document so it survives focus landing on
+  // the modal container; guarded to the task modal being topmost.
+  document.addEventListener('keydown', e=>{
+    if(editingTaskId==null) return;
+    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    if(!window.Modal || !Modal.isOpen('taskModal') || Modal.topmost()!=='taskModal') return;
+    const el=e.target, tag=(el&&el.tagName||'').toLowerCase();
+    if(tag==='input'||tag==='textarea'||tag==='select'||(el&&el.isContentEditable)) return;
+    if(e.key==='j'||e.key==='J'){ e.preventDefault(); _taskDetailStep(1); }
+    else if(e.key==='k'||e.key==='K'){ e.preventDefault(); _taskDetailStep(-1); }
+  });
 }
 // Segmented detail panel: show one pane (Details / Tracking / More) at a time
 // instead of one long scroll. Routed via data-action so it stays CSP-safe.
@@ -2591,6 +2603,24 @@ function switchTaskDetailTab(key){
   if(body) body.scrollTop = 0;
 }
 window.switchTaskDetailTab = switchTaskDetailTab;
+// Side-peek keyboard nav: j / k step to the next / previous task in the current
+// list without leaving the panel (Linear-style). openTaskDetail re-populates in
+// place — Modal.open is a no-op while already open — so this just commits the
+// current edits and re-points the editor. Focus lands on the active tab so the
+// keys keep working across steps (chip buttons get rebuilt on each open).
+function _taskDetailStep(dir){
+  if(editingTaskId==null) return;
+  if(typeof _autosaveTaskDetailText==='function') _autosaveTaskDetailText();
+  const ids=[...document.querySelectorAll('#taskList .task-item[data-task-id]')].map(r=>r.dataset.taskId);
+  const cur=ids.indexOf(String(editingTaskId));
+  if(cur<0) return;
+  const nid=ids[cur+dir];
+  if(nid==null) return;
+  openTaskDetail(/^\d+$/.test(nid)?parseInt(nid,10):nid);
+  const tab=document.querySelector('#taskModal .md-tab.active');
+  if(tab){ try{ tab.focus({preventScroll:true}); }catch(_){ try{ tab.focus(); }catch(_){} } }
+}
+window._taskDetailStep = _taskDetailStep;
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail

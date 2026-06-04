@@ -591,6 +591,19 @@
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
   .modal{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);width:100%;max-width:560px;box-shadow:var(--shadow-overlay);transform:translateY(-20px);opacity:0;transition:transform var(--dur-modal) var(--ease-out),opacity var(--dur-modal) var(--ease-out)}
   .modal-overlay.open .modal{transform:translateY(0);opacity:1}
+  /* Side-peek drawer (≥900px): the task editor docks to the right edge as a
+     full-height panel so the task list stays visible behind it (Linear "peek"
+     model) instead of a centered dialog that blocks the list. Narrow / touch
+     keep the centered dialog + bottom-sheet behaviour untouched. Scoped to
+     #taskModal so other modals (bulk import, confirm) stay centered. */
+  @media (min-width:900px){
+    #taskModal.modal-overlay{justify-content:flex-end;align-items:stretch;padding:0;overflow:hidden;background:rgba(0,0,0,.45)}
+    #taskModal .modal{width:480px;max-width:46vw;height:100%;max-height:100%;border-radius:0;border-top:none;border-right:none;border-bottom:none;display:flex;flex-direction:column;transform:translateX(100%);opacity:1}
+    #taskModal.modal-overlay.open .modal{transform:translateX(0)}
+    #taskModal .modal-head,#taskModal .modal-foot{flex-shrink:0}
+    #taskModal .modal-body{max-height:none;flex:1 1 auto}
+    body.light-theme #taskModal.modal-overlay{background:rgba(15,23,42,.32)}
+  }
   /* prefers-reduced-motion: collapse modal/overlay transitions to ~instant.
      Modal.open's onOpen callback still fires correctly under reduced motion
      thanks to its transitionend listener + 400ms safety timeout fallback. */
