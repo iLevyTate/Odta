@@ -8,8 +8,8 @@
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#0a1320",
-  "theme_color": "#0a1320",
+  "background_color": "#0b0f1c",
+  "theme_color": "#0b0f1c",
   "categories": ["productivity", "utilities", "lifestyle"],
   "launch_handler": {
     "client_mode": ["focus-existing", "auto"]

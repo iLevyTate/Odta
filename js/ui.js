@@ -3121,6 +3121,41 @@ window.closeViewSheet=()=>closeSheet('viewSheet');
 window.closeListsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='listsSheet') closeSheet('listsSheet'); };
 window.closeTagsSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='tagsSheet') closeSheet('tagsSheet'); };
 window.closeViewSheetOnBackdrop=(e)=>{ if(e&&e.target&&e.target.id==='viewSheet') closeSheet('viewSheet'); };
+
+// ===== Sidebar (ClickUp-style left rail) =====
+// Desktop: a persistent column that collapses to an icon rail. Mobile: an
+// off-canvas drawer toggled by #drawerToggle and the #fbLists filter button.
+function _setDrawerExpanded(open){
+  document.querySelectorAll('[data-action="toggleSidebar"]').forEach(b=>{ try{ b.setAttribute('aria-expanded',open?'true':'false'); }catch(_){} });
+}
+window.toggleSidebar=()=>{
+  const sb=document.getElementById('appSidebar');
+  if(!sb) return;
+  const open=!sb.classList.contains('drawer-open');
+  sb.classList.toggle('drawer-open',open);
+  const bd=document.getElementById('sidebarBackdrop');
+  if(bd){ if(open) bd.removeAttribute('hidden'); else bd.setAttribute('hidden',''); }
+  document.body.classList.toggle('drawer-open',open);
+  _setDrawerExpanded(open);
+};
+window.closeSidebar=()=>{
+  const sb=document.getElementById('appSidebar');
+  if(sb) sb.classList.remove('drawer-open');
+  const bd=document.getElementById('sidebarBackdrop');
+  if(bd) bd.setAttribute('hidden','');
+  document.body.classList.remove('drawer-open');
+  _setDrawerExpanded(false);
+};
+window.toggleSidebarCollapse=()=>{
+  const shell=document.getElementById('appShell');
+  if(!shell) return;
+  const collapsed=shell.classList.toggle('sidebar-collapsed');
+  const btn=document.getElementById('sidebarCollapseBtn');
+  if(btn){
+    btn.setAttribute('aria-label',collapsed?'Expand sidebar':'Collapse sidebar');
+    btn.setAttribute('title',collapsed?'Expand sidebar':'Collapse sidebar');
+  }
+};
 function toggleSearchBar(){
   const bar=document.getElementById('searchBarWrap');
   if(!bar) return;
@@ -3673,6 +3708,9 @@ function showTab(tab){
     window.scrollTo({top:nav.offsetTop-20,behavior:'smooth'});
   }
   if(tab==='focus'&&typeof setTimerSub==='function') setTimerSub(cfg.timerSub||'pomo');
+  // Switching sections from the mobile bottom-nav/drawer should dismiss the
+  // off-canvas sidebar so the chosen panel is visible. No-op on desktop.
+  if(typeof closeSidebar==='function') closeSidebar();
   updateMiniTimer();
   saveState('auto');
 }
