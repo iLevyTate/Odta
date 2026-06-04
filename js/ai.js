@@ -1777,7 +1777,7 @@ function _renderValuesGrid(){
         <span class="schwartz-name">${key}</span>
         ${sel ? `<span class="schwartz-rank">#${rank}</span>` : ''}
       </div>
-      <div class="schwartz-short">${v.def.slice(0, 55)}</div>
+      <div class="schwartz-short">${esc(v.def)}</div>
     </div>`;
   }).join('');
 }
