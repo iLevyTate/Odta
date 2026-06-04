@@ -2626,6 +2626,64 @@ function _afStripOperatorFromInput(key, value){
   renderTaskList();
 }
 
+// ── Visual filter builder ──────────────────────────────────────────────────
+// "+ Filter" opens a two-step picker (dimension → value) that appends an
+// operator (tag:/priority:/status:/due:/is:) to the search input. The existing
+// parse + filter pipeline applies it and #activeFiltersBar renders it as a
+// removable chip — so operators become discoverable without typing the syntax.
+function _afAppendOperator(key, value){
+  const inp = gid('taskSearch');
+  if(!inp) return;
+  const token = /\s/.test(String(value)) ? key + ':"' + value + '"' : key + ':' + value;
+  const escVal = String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const dupRe = new RegExp('\\b' + key + ':"?' + escVal + '"?(\\s|$)', 'i');
+  if(!dupRe.test(inp.value)) inp.value = (inp.value.trim() + ' ' + token).trim();
+  if(typeof updateTaskFilters === 'function') updateTaskFilters();
+  if(typeof renderTaskList === 'function') renderTaskList();
+}
+function _allTaskTags(){
+  const set = new Set();
+  if(typeof tasks !== 'undefined' && Array.isArray(tasks)) tasks.forEach(t => (t.tags || []).forEach(tg => set.add(tg)));
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+function openFilterBuilder(){
+  const anchor = document.getElementById('fbAddFilter');
+  if(!anchor || typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  Dropdown.open(anchor, {
+    options: [
+      { value:'tag',      label:'Tag…' },
+      { value:'priority', label:'Priority…' },
+      { value:'status',   label:'Status…' },
+      { value:'due',      label:'Due…' },
+      { value:'flag',     label:'Flag…' },
+    ],
+    onSelect:(dim) => { setTimeout(() => _openFilterValueMenu(dim, anchor), 0); },
+  });
+}
+function _openFilterValueMenu(dim, anchor){
+  if(!anchor || typeof Dropdown === 'undefined' || !Dropdown.open) return;
+  // dim 'flag' maps to the is: operator (state flags, no date overlap with due).
+  const key = (dim === 'flag') ? 'is' : dim;
+  let opts = [];
+  if(dim === 'priority'){
+    opts = ['urgent','high','normal','low','none'].map(v => ({ value:v, label:(typeof PRIORITIES==='object'&&PRIORITIES[v])?PRIORITIES[v].label:v }));
+  } else if(dim === 'status'){
+    opts = (typeof STATUS_ORDER !== 'undefined' ? STATUS_ORDER : ['open','progress','review','blocked','done'])
+      .map(s => ({ value:s, label:(typeof STATUSES==='object'&&STATUSES[s])?STATUSES[s].label:s }));
+  } else if(dim === 'due'){
+    opts = [['today','Today'],['tomorrow','Tomorrow'],['week','This week'],['overdue','Overdue'],['none','No date']].map(([v,l]) => ({ value:v, label:l }));
+  } else if(dim === 'flag'){
+    opts = [['overdue','Overdue'],['starred','Starred'],['recurring','Recurring'],['snoozed','Snoozed']].map(([v,l]) => ({ value:v, label:l }));
+  } else if(dim === 'tag'){
+    const tags = _allTaskTags();
+    if(!tags.length){ if(typeof showActionToast === 'function') showActionToast('No tags yet — add #tags to a task first', null, null, 3500); return; }
+    opts = tags.map(t => ({ value:t, label:'#' + t }));
+  }
+  if(!opts.length) return;
+  Dropdown.open(anchor, { options:opts, searchable: opts.length > 8, onSelect:(val) => _afAppendOperator(key, val) });
+}
+if(typeof window !== 'undefined'){ window.openFilterBuilder = openFilterBuilder; }
+
 // Unified "active filters" bar. Renders ONE chip per active filter from
 // every source (smart view, active list, free-text search, search
 // operators, filter-panel status/priority/category). Each chip's × clears
