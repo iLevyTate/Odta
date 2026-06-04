@@ -1408,6 +1408,15 @@
   .board-card.priority-normal-card{border-left-color:var(--accent)}
   .board-card.priority-low-card{border-left-color:var(--text-3)}
   .board-col-empty{font-size:var(--fs-12);color:var(--text-4);text-align:center;padding:var(--space-9) 0;font-style:italic}
+  /* ClickUp-style status-coloured column tops (keyed off the col's data-status,
+     set in renderBoard). The header pill already carries the same hue. */
+  .board-col{border-top-width:3px}
+  .board-col[data-status="open"]{border-top-color:var(--text-4)}
+  .board-col[data-status="progress"]{border-top-color:var(--accent)}
+  .board-col[data-status="review"]{border-top-color:var(--purple)}
+  .board-col[data-status="blocked"]{border-top-color:var(--danger)}
+  .board-col[data-status="done"]{border-top-color:var(--success)}
+  .board-col-hdr .cc-count{font-weight:600;min-width:22px;text-align:center}
 
   /* Mini timer — refined */
   .mini-timer{background:var(--bg-1);border-color:var(--border);padding:10px 14px;border-radius:999px;box-shadow:var(--shadow-raised)}
@@ -2000,7 +2009,7 @@
   .reorder-toggle .reorder-toggle-ic{font-size:16px;opacity:.85}
 
   .task-cat-stripe{box-shadow:inset 3px 0 0 0 var(--cat-stripe, transparent)}
-  .task-item--pareto{box-shadow:0 0 0 1px rgba(255,159,10,.35),var(--shadow-card)}
+  .task-item--pareto{box-shadow:0 0 0 1px rgba(214,162,63,.35),var(--shadow-card)}
   .task-item--tracking .task-name::before{
     content:'';display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:middle;
     border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);
@@ -3839,9 +3848,9 @@ body:has(.cmdk-overlay.open)  #exportToast{
   .task-item--pareto{
     border-left-width:4px!important;
     border-left-color:var(--warning)!important;
-    background:linear-gradient(90deg,rgba(255,159,10,.06) 0%,transparent 40%)
+    background:linear-gradient(90deg,rgba(214,162,63,.06) 0%,transparent 40%)
   }
-  .task-item--pareto:hover{background:linear-gradient(90deg,rgba(255,159,10,.10) 0%,var(--bg-2) 40%)}
+  .task-item--pareto:hover{background:linear-gradient(90deg,rgba(214,162,63,.10) 0%,var(--bg-2) 40%)}
   .task-item--pareto .task-row-primary::after{
     content:'';
     position:absolute;
