@@ -42,7 +42,8 @@ test('the old single-scroll <details> sections are gone from the modal', () => {
 });
 
 test('every field id is preserved (openTaskDetail wiring untouched)', () => {
-  for (const id of ['mdStatusChips','mdPriorityChips','mdDue','mdRemindAt','mdRecur','mdSnoozeUntil',
+  // Status/Priority/Due/List moved to header pills (mdDue/mdList kept hidden).
+  for (const id of ['mdDue','mdRemindAt','mdRecur','mdSnoozeUntil',
                     'mdTypeChips','mdDesc','mdTagsEditor','mdList','mdStartDate','mdEstimate','mdTracked',
                     'mdCompletionNote','mdSessions','mdHabitLog','mdCategoryChips','mdEffortChips',
                     'mdEnergyChips','mdAttachments','mdUrl','mdBlockedBy','mdChecklist','mdNotes']) {

@@ -23,7 +23,6 @@ test('task-modal chip handlers call _commitChipChange', () => {
   // immediately following (or within the next 4 lines) must contain the
   // commit call.
   const expectations = [
-    { marker: 't.priority=pr;',                      label: 'priority' },
     { marker: 't.effort=t.effort===key?null:key;',    label: 'effort' },
     { marker: 't.energyLevel=t.energyLevel===key?null:key;', label: 'energyLevel' },
     { marker: 't.category=t.category===key?null:key;', label: 'category' },
@@ -36,6 +35,20 @@ test('task-modal chip handlers call _commitChipChange', () => {
     const window = ui.slice(idx, idx + (label === 'recur' ? 900 : 600));
     assert.match(window, /_commitChipChange\(t\)/, `${label} chip mutation must call _commitChipChange`);
   }
+});
+
+test('status/priority pickers persist via _commitTaskProp → _commitChipChange', () => {
+  // Status/Priority moved from chip groups to header-pill popovers; they now
+  // mutate inside pickStatus/pickPriority and persist through _commitTaskProp.
+  for(const fn of ['pickStatus', 'pickPriority']){
+    const idx = ui.indexOf(`function ${fn}(id, anchor)`);
+    assert.ok(idx >= 0, `${fn} not found`);
+    assert.match(ui.slice(idx, idx + 900), /_commitTaskProp\(t, before\)/, `${fn} must call _commitTaskProp`);
+  }
+  // And _commitTaskProp itself commits chip-style (snapshot-synced) for the open task.
+  const cIdx = ui.indexOf('function _commitTaskProp(');
+  assert.ok(cIdx >= 0, '_commitTaskProp not found');
+  assert.match(ui.slice(cIdx, cIdx + 500), /_commitChipChange\(t\)/, '_commitTaskProp must call _commitChipChange');
 });
 
 test('addTag and removeTag persist via _commitChipChange', () => {
