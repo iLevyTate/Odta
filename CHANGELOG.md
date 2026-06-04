@@ -1,5 +1,11 @@
 # Changelog
 
+## v68 — 2026-06-04
+
+- **Fix (Lists)**: the expanded commonly-used starter Lists (Personal, Work, Home & Errands, Finance, Health, Learning, Shopping, Side Projects) now actually reach existing installs. The first-run seed only ever fired on a brand-new, zero-list install, so anyone who already had Lists — e.g. the old Personal + Work pair — never received the fuller set even after it shipped. A one-time storage migration (`migrateState` step 9) now backfills any **missing** default Lists by name, case-insensitively, so it never duplicates a List you already have. It runs exactly once, so a List you delete afterwards stays deleted, and your existing Lists' names/colors/descriptions are left untouched. `DEFAULT_LISTS` is exported from `js/tasks.js` as the single source of truth for both the seed and the backfill.
+- **Tests**: the migration-order regression test now covers step 9 ordering and the v6→v9 single-pass upgrade; a new `storage-default-lists-backfill` test covers the backfill (missing defaults appended, case-insensitive dedup, run-once / no-resurrection of deleted Lists).
+- Service worker cache rotated to `odtaulai-v68`.
+
 ## v60 — 2026-05-29
 
 - **Ask**: the Ask box no longer hijacks the whole screen for the duration of a question. A new **Minimize** button (and dismissing via Esc / tapping outside while a question is running) collapses it into a small floating pill so you can keep using the app while the answer finishes on-device. Reopen anytime to watch it stream; when it finishes in the background a **toast** lets you jump straight to the answer. Only the explicit **Stop** button cancels — backgrounding keeps the question alive.
