@@ -2576,6 +2576,21 @@ function _bindTaskDetailAutosave(){
   root.addEventListener('focusout', handler);
   root.addEventListener('change', handler);
 }
+// Segmented detail panel: show one pane (Details / Tracking / More) at a time
+// instead of one long scroll. Routed via data-action so it stays CSP-safe.
+function switchTaskDetailTab(key){
+  const valid = (key==='details'||key==='tracking'||key==='more') ? key : 'details';
+  document.querySelectorAll('#taskModal .md-tabpane').forEach(p=>{ p.hidden = (p.dataset.pane !== valid); });
+  document.querySelectorAll('#taskModal .md-tab').forEach(b=>{
+    const on = b.dataset.arg === valid;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  // Reset scroll so each pane starts at its head, not the prior pane's offset.
+  const body = document.querySelector('#taskModal .modal-body');
+  if(body) body.scrollTop = 0;
+}
+window.switchTaskDetailTab = switchTaskDetailTab;
 function openTaskDetail(id){
   const t=findTask(id);if(!t)return;
   // Re-entrance guard: a rapid double-tap on a task row can fire openTaskDetail
@@ -2802,6 +2817,7 @@ function openTaskDetail(id){
   // flex-end) the bottom stays anchored and the TOP would jolt upward
   // ("jitter at the top"). editingTaskId guard cancels stale fetches.
   _bindTaskDetailAutosave();
+  if(typeof switchTaskDetailTab === 'function') switchTaskDetailTab('details');
   Modal.open('taskModal', {
     variant: 'sheet',
     focus: '#mdName',

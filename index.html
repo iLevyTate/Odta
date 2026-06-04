@@ -997,86 +997,95 @@
     <div class="modal-body">
       <div class="modal-stat" id="mdStats"></div>
 
-      <div class="mfield-row">
-        <div class="mfield">
-          <div class="mfield-lbl" id="mdStatusLbl">Status</div>
-          <div class="mfield-chips" id="mdStatusChips" role="group" aria-labelledby="mdStatusLbl"></div>
-        </div>
-        <div class="mfield">
-          <div class="mfield-lbl" id="mdPriorityLbl">Priority</div>
-          <div class="mfield-chips" id="mdPriorityChips" role="group" aria-labelledby="mdPriorityLbl"></div>
-        </div>
+      <!-- Segmented sections replace the old single 2000px scroll: each pane is
+           ~one viewport. All field IDs are unchanged so openTaskDetail's wiring
+           is untouched — only the container nesting changed. -->
+      <div class="md-tabs" role="tablist" aria-label="Task detail sections">
+        <button type="button" class="md-tab active" id="mdTabBtn-details" role="tab" aria-selected="true" aria-controls="mdTabDetails" data-action="switchTaskDetailTab" data-arg="details">Details</button>
+        <button type="button" class="md-tab" id="mdTabBtn-tracking" role="tab" aria-selected="false" aria-controls="mdTabTracking" data-action="switchTaskDetailTab" data-arg="tracking">Tracking</button>
+        <button type="button" class="md-tab" id="mdTabBtn-more" role="tab" aria-selected="false" aria-controls="mdTabMore" data-action="switchTaskDetailTab" data-arg="more">More</button>
       </div>
 
-      <div class="mfield-row mfield-row--modal-grid">
-        <div class="mfield">
-          <label class="mfield-lbl" for="mdDue">Due Date</label>
-          <input type="date" class="mfield-in" id="mdDue">
-          <div class="quick-dates" role="group" aria-label="Quick due date">
-            <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[0]'>Today</button>
-            <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[1]'>Tomorrow</button>
-            <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[7]'>+1 Week</button>
-            <button type="button" class="qd-btn" data-action="setQuickDate" data-arg="clear">Clear</button>
-          </div>
-        </div>
-        <div class="mfield">
-          <label class="mfield-lbl" for="mdRemindAt">Remind me at</label>
-          <input type="datetime-local" class="mfield-in" id="mdRemindAt">
-          <div class="quick-dates" role="group" aria-label="Quick reminder time">
-            <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,9]'>9am</button>
-            <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,17]'>5pm</button>
-            <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[1,9]'>Tmrw 9am</button>
-            <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='["due",9]'>Due 9am</button>
-            <button type="button" class="qd-btn" data-action="setQuickReminder" data-arg="clear">Clear</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="md-block md-block-when">
-        <div class="md-block-title">When</div>
-        <div class="mfield">
-          <div class="mfield-lbl" id="mdRecurLbl">Repeat</div>
-          <button type="button" id="mdRecurTrigger" class="dropdown-trigger" data-action="openRecurDropdown" aria-haspopup="listbox" aria-labelledby="mdRecurLbl mdRecurLabel">
-            <span class="dropdown-trigger-label" id="mdRecurLabel">No repeat</span>
-            <span class="dropdown-trigger-caret" aria-hidden="true">▾</span>
-          </button>
-          <!-- mdRecur preserved as a hidden state element. JS keeps it in sync
-               with the dropdown selection so existing data-attribute lookups
-               and any future consumers continue to work. -->
-          <input type="hidden" id="mdRecur" value="none">
-          <p class="md-hint">Calendar schedule (daily, every 2 days…) vs “After Nd” schedules from completion day.</p>
-        </div>
+      <div class="md-tabpane" id="mdTabDetails" role="tabpanel" aria-labelledby="mdTabBtn-details" data-pane="details">
         <div class="mfield-row">
           <div class="mfield">
-            <label class="mfield-lbl" for="mdSnoozeUntil">Snooze (hide until)</label>
-            <input type="date" class="mfield-in" id="mdSnoozeUntil" title="Hide this task from main views until this date. Distinct from due date — snoozing does not move the deadline.">
-            <div class="quick-dates" role="group" aria-label="Quick snooze">
-              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[1]'>+1 day</button>
-              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[3]'>+3 days</button>
-              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[7]'>+1 week</button>
-              <button type="button" class="qd-btn" data-action="setQuickSnooze" data-arg="clear">Clear</button>
+            <div class="mfield-lbl" id="mdStatusLbl">Status</div>
+            <div class="mfield-chips" id="mdStatusChips" role="group" aria-labelledby="mdStatusLbl"></div>
+          </div>
+          <div class="mfield">
+            <div class="mfield-lbl" id="mdPriorityLbl">Priority</div>
+            <div class="mfield-chips" id="mdPriorityChips" role="group" aria-labelledby="mdPriorityLbl"></div>
+          </div>
+        </div>
+
+        <div class="mfield-row mfield-row--modal-grid">
+          <div class="mfield">
+            <label class="mfield-lbl" for="mdDue">Due Date</label>
+            <input type="date" class="mfield-in" id="mdDue">
+            <div class="quick-dates" role="group" aria-label="Quick due date">
+              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[0]'>Today</button>
+              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[1]'>Tomorrow</button>
+              <button type="button" class="qd-btn" data-action="setQuickDate" data-args='[7]'>+1 Week</button>
+              <button type="button" class="qd-btn" data-action="setQuickDate" data-arg="clear">Clear</button>
+            </div>
+          </div>
+          <div class="mfield">
+            <label class="mfield-lbl" for="mdRemindAt">Remind me at</label>
+            <input type="datetime-local" class="mfield-in" id="mdRemindAt">
+            <div class="quick-dates" role="group" aria-label="Quick reminder time">
+              <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,9]'>9am</button>
+              <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[0,17]'>5pm</button>
+              <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='[1,9]'>Tmrw 9am</button>
+              <button type="button" class="qd-btn" data-action="setQuickReminder" data-args='["due",9]'>Due 9am</button>
+              <button type="button" class="qd-btn" data-action="setQuickReminder" data-arg="clear">Clear</button>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="md-block md-block-what">
-        <div class="md-block-title">What</div>
-        <div class="mfield-row">
+        <div class="md-block md-block-what">
+          <div class="md-block-title">What</div>
+          <div class="mfield-row">
+            <div class="mfield">
+              <div class="mfield-lbl" id="mdTypeLbl">Type</div>
+              <div class="mfield-chips" id="mdTypeChips" role="group" aria-labelledby="mdTypeLbl"></div>
+            </div>
+          </div>
           <div class="mfield">
-            <div class="mfield-lbl" id="mdTypeLbl">Type</div>
-            <div class="mfield-chips" id="mdTypeChips" role="group" aria-labelledby="mdTypeLbl"></div>
+            <label class="mfield-lbl" for="mdDesc">Description</label>
+            <textarea class="mfield-textarea" id="mdDesc" placeholder="Acceptance criteria, links, notes…"></textarea>
           </div>
         </div>
-        <div class="mfield">
-          <label class="mfield-lbl" for="mdDesc">Description</label>
-          <textarea class="mfield-textarea" id="mdDesc" placeholder="Acceptance criteria, links, notes…"></textarea>
-        </div>
-      </div>
 
-      <details class="md-section">
-        <summary class="md-section-sum">Tags &amp; list</summary>
-        <div class="md-section-body">
+        <div class="md-block md-block-when">
+          <div class="md-block-title">When</div>
+          <div class="mfield">
+            <div class="mfield-lbl" id="mdRecurLbl">Repeat</div>
+            <button type="button" id="mdRecurTrigger" class="dropdown-trigger" data-action="openRecurDropdown" aria-haspopup="listbox" aria-labelledby="mdRecurLbl mdRecurLabel">
+              <span class="dropdown-trigger-label" id="mdRecurLabel">No repeat</span>
+              <span class="dropdown-trigger-caret" aria-hidden="true">▾</span>
+            </button>
+            <!-- mdRecur preserved as a hidden state element. JS keeps it in sync
+                 with the dropdown selection so existing data-attribute lookups
+                 and any future consumers continue to work. -->
+            <input type="hidden" id="mdRecur" value="none">
+            <p class="md-hint">Calendar schedule (daily, every 2 days…) vs “After Nd” schedules from completion day.</p>
+          </div>
+          <div class="mfield-row">
+            <div class="mfield">
+              <label class="mfield-lbl" for="mdSnoozeUntil">Snooze (hide until)</label>
+              <input type="date" class="mfield-in" id="mdSnoozeUntil" title="Hide this task from main views until this date. Distinct from due date — snoozing does not move the deadline.">
+              <div class="quick-dates" role="group" aria-label="Quick snooze">
+                <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[1]'>+1 day</button>
+                <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[3]'>+3 days</button>
+                <button type="button" class="qd-btn" data-action="setQuickSnooze" data-args='[7]'>+1 week</button>
+                <button type="button" class="qd-btn" data-action="setQuickSnooze" data-arg="clear">Clear</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md-block">
+          <div class="md-block-title">Tags &amp; list</div>
           <div class="mfield">
             <div class="mfield-lbl" id="mdTagsLbl">Tags</div>
             <div class="tags-editor" id="mdTagsEditor" role="group" aria-labelledby="mdTagsLbl"></div>
@@ -1099,39 +1108,36 @@
             </div>
           </div>
         </div>
-      </details>
+      </div>
 
-      <details class="md-section">
-        <summary class="md-section-sum">Tracking</summary>
-        <div class="md-section-body">
-          <div class="mfield-row">
-            <div class="mfield">
-              <label class="mfield-lbl" for="mdEstimate">Time Estimate (min)</label>
-              <input type="number" class="mfield-in" id="mdEstimate" placeholder="0" min="0">
-            </div>
-            <div class="mfield">
-              <div class="mfield-lbl" id="mdTrackedLbl">Time Tracked</div>
-              <div class="mfield-in mfield--readonly" id="mdTracked" aria-labelledby="mdTrackedLbl">—</div>
-            </div>
-          </div>
-          <div class="mfield" id="mdCompletionNoteWrap">
-            <label class="mfield-lbl" for="mdCompletionNote">Completion note</label>
-            <textarea class="mfield-textarea" id="mdCompletionNote" rows="2" placeholder="What actually happened…"></textarea>
-          </div>
-          <div class="mfield" id="mdSessionsWrap">
-            <div class="mfield-lbl" id="mdSessionsLbl">Session history</div>
-            <div id="mdSessions" class="md-sessions" role="group" aria-labelledby="mdSessionsLbl"></div>
+      <div class="md-tabpane" id="mdTabTracking" role="tabpanel" aria-labelledby="mdTabBtn-tracking" data-pane="tracking" hidden>
+        <div class="mfield-row">
+          <div class="mfield">
+            <label class="mfield-lbl" for="mdEstimate">Time Estimate (min)</label>
+            <input type="number" class="mfield-in" id="mdEstimate" placeholder="0" min="0">
           </div>
           <div class="mfield">
-            <div class="mfield-lbl" id="mdHabitLogLbl">Completion history (repeating tasks)</div>
-            <div id="mdHabitLog" class="md-habit-log" role="group" aria-labelledby="mdHabitLogLbl"></div>
+            <div class="mfield-lbl" id="mdTrackedLbl">Time Tracked</div>
+            <div class="mfield-in mfield--readonly" id="mdTracked" aria-labelledby="mdTrackedLbl">—</div>
           </div>
         </div>
-      </details>
+        <div class="mfield" id="mdCompletionNoteWrap">
+          <label class="mfield-lbl" for="mdCompletionNote">Completion note</label>
+          <textarea class="mfield-textarea" id="mdCompletionNote" rows="2" placeholder="What actually happened…"></textarea>
+        </div>
+        <div class="mfield" id="mdSessionsWrap">
+          <div class="mfield-lbl" id="mdSessionsLbl">Session history</div>
+          <div id="mdSessions" class="md-sessions" role="group" aria-labelledby="mdSessionsLbl"></div>
+        </div>
+        <div class="mfield">
+          <div class="mfield-lbl" id="mdHabitLogLbl">Completion history (repeating tasks)</div>
+          <div id="mdHabitLog" class="md-habit-log" role="group" aria-labelledby="mdHabitLogLbl"></div>
+        </div>
+      </div>
 
-      <details class="md-section">
-        <summary class="md-section-sum">Classification</summary>
-        <div class="md-section-body">
+      <div class="md-tabpane" id="mdTabMore" role="tabpanel" aria-labelledby="mdTabBtn-more" data-pane="more" hidden>
+        <div class="md-block">
+          <div class="md-block-title">Classification</div>
           <div class="mfield">
             <div class="mfield-lbl" id="mdCategoryLbl">Life area</div>
             <div class="mfield-chips" id="mdCategoryChips" role="group" aria-labelledby="mdCategoryLbl"></div>
@@ -1148,20 +1154,16 @@
             </div>
           </div>
         </div>
-      </details>
 
-      <details class="md-section" open>
-        <summary class="md-section-sum">Attachments</summary>
-        <div class="md-section-body">
+        <div class="md-block">
+          <div class="md-block-title">Attachments</div>
           <div class="mfield" id="mdAttachmentsWrap">
             <div id="mdAttachments" class="md-attachments" role="group" aria-label="Task attachments"></div>
           </div>
         </div>
-      </details>
 
-      <details class="md-section">
-        <summary class="md-section-sum">Links &amp; more</summary>
-        <div class="md-section-body">
+        <div class="md-block md-block--last">
+          <div class="md-block-title">Links &amp; more</div>
           <div class="mfield">
             <label class="mfield-lbl" for="mdUrl">Reference URL</label>
             <input type="url" class="mfield-in" id="mdUrl" placeholder="https://…">
@@ -1196,7 +1198,7 @@
             <div id="mdNotes" role="group" aria-labelledby="mdNotesLbl"></div>
           </div>
         </div>
-      </details>
+      </div>
 
     </div>
     <div class="modal-foot">
