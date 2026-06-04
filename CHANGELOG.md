@@ -1,5 +1,11 @@
 # Changelog
 
+## v69 — 2026-06-04
+
+- **Fix (sidebar Lists)**: the **Lists** column rendered as a stack of heavy, centered pill-buttons because the shared `.ui-chip` base was retired in a consistency pass but `.list-chip` was never actually folded into it (a comment claimed the consolidation, the selector grouping was missing). With no base, list chips collapsed to bare `<button>`s — centered text, no pill shape, misaligned color dots. `.list-chip` now genuinely shares the `.ui-chip` primitive again.
+- **UI (sidebar)**: Lists & Views now read like the navigation items directly above them — full-width rows, left-aligned labels, transparent until hover/active, item counts parked on the right edge — instead of a wall of filled centered pills. The **+ List** and **Focus** controls become full-width rows so the column reads as a single unit rather than two stray centered buttons.
+- Service worker cache rotated to `odtaulai-v69`.
+
 ## v68 — 2026-06-04
 
 - **Fix (Lists)**: the expanded commonly-used starter Lists (Personal, Work, Home & Errands, Finance, Health, Learning, Shopping, Side Projects) now actually reach existing installs. The first-run seed only ever fired on a brand-new, zero-list install, so anyone who already had Lists — e.g. the old Personal + Work pair — never received the fuller set even after it shipped. A one-time storage migration (`migrateState` step 9) now backfills any **missing** default Lists by name, case-insensitively, so it never duplicates a List you already have. It runs exactly once, so a List you delete afterwards stays deleted, and your existing Lists' names/colors/descriptions are left untouched. `DEFAULT_LISTS` is exported from `js/tasks.js` as the single source of truth for both the seed and the backfill.
