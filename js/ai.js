@@ -2736,6 +2736,7 @@ function renderGenSettings(){
       <p class="gen-settings-lead">
         Adds an <strong>Edit</strong> mode to the command palette (<kbd>Ctrl/⌘ + K</kbd>, then prefix <code>?</code>). A tiny instruct-tuned model runs <em>on this device</em>; nothing you type leaves the browser. Choose review-first or auto-apply below; destructive batches always confirm once.
       </p>
+      ${cfg.enabled ? `
       <div class="gen-settings-row gen-settings-row--apply-mode">
         <span class="gen-settings-lbl">When AI proposes changes</span>
         <div class="gen-apply-mode-seg" role="group" aria-label="Apply mode default">
@@ -2786,6 +2787,7 @@ function renderGenSettings(){
       <p class="gen-settings-hint">
         Weights live in the browser HTTP cache. "Clear LLM cache" removes any caches we control; to force a full purge use the browser's own "Clear site data".
       </p>
+      ` : ''}
     </div>`;
 
   // Keep the task-input promo chip in sync with gen state on every render
