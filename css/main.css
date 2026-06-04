@@ -111,6 +111,10 @@
     --prio-normal:var(--accent);
     --prio-low:var(--text-3);
     --accent-hover:#3d9eff;
+    /* Subtle theme-adaptive hover wash for low-emphasis controls (icon
+       buttons, chip removers, menu cells) — replaces scattered hardcoded
+       rgba(255,255,255,…) overlays so light theme behaves too. */
+    --hover-soft:rgba(255,255,255,.06);
     /* Text/icon on saturated brand/success/warning fills (dark navy reads better
        on the bright blue/cyan/green/amber than white). */
     --text-on-accent:#04121f;
@@ -233,6 +237,7 @@
     --ring-warn-color:#b5781a;
     --ring-done-color:#bf322b;
     --accent-hover:#0860bb;
+    --hover-soft:rgba(14,23,38,.06);
     --prio-low:var(--text-4);
   }
 
@@ -273,7 +278,7 @@
   .card--work-phase{background:var(--work-bg);border:1px solid var(--work-border);margin-top:12px}
   .card--short-phase{background:var(--short-bg);border:1px solid var(--short-border);margin-top:12px}
   .card--long-phase{background:var(--long-bg);border:1px solid var(--long-border);margin-top:12px}
-  .panel--timer-sub{padding:20px}
+  .panel--timer-sub{padding:var(--space-8)}
   /* Modal field utilities */
   .mdName-input{flex:1;font-size:14px;font-weight:700}
   .app-dlg-msg--p{margin:0;font-size:14px;line-height:1.5}
@@ -299,7 +304,7 @@
   .scnt{font-size:10px;color:var(--text-4);margin-left:auto}
   .small-btn{background:transparent;color:var(--text-4);font-size:9px;letter-spacing:1px;border:1px solid var(--border-subtle);border-radius:var(--r-sm);padding:4px 10px;margin-left:6px}
 
-  .stitle{display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;user-select:none}
+  .stitle{display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;user-select:none}
   .stitle.stitle-static{cursor:default}
   .sarrow{margin-left:auto;color:var(--text-4);font-size:12px;transition:transform var(--dur-base) var(--ease-out)}
   .sbody{overflow:hidden;transition:max-height .35s ease}
@@ -540,7 +545,7 @@
 
   /* Priority flag */
   .priority-flag{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;cursor:pointer;transition:.15s;font-size:11px;line-height:1;font-family:inherit;border:none;background:transparent;flex-shrink:0}
-  .priority-flag:hover{background:rgba(255,255,255,.05)}
+  .priority-flag:hover{background:var(--hover-soft)}
   .priority-urgent{color:var(--prio-urgent)}
   .priority-high{color:var(--prio-high)}
   .priority-normal{color:var(--prio-normal)}
@@ -1190,7 +1195,7 @@
     opacity:.7;display:inline-flex;align-items:center;justify-content:center;
     width:14px;height:14px;border-radius:50%;
   }
-  .qpc-rm:hover{opacity:1;background:rgba(255,255,255,.12)}
+  .qpc-rm:hover{opacity:1;background:var(--hover-soft)}
   /* Unified active-filter bar — one row, one source of truth for every
      filter currently narrowing the visible task list. Sits between the
      search row and the view-toggle / Filters button. */
@@ -1220,7 +1225,7 @@
     padding:3px 10px;border-radius:999px;cursor:pointer;margin-left:0;
     transition:color .15s,border-color .15s,background .15s;
   }
-  .active-filters-bar .af-clear-all:hover{color:var(--text-1);border-color:var(--text-3);background:rgba(255,255,255,.04)}
+  .active-filters-bar .af-clear-all:hover{color:var(--text-1);border-color:var(--text-3);background:var(--hover-soft)}
   /* Chip variants per filter source, all using the same dot-pill shape
      so the bar reads consistently regardless of which surface added the
      filter. Hue distinguishes the source at a glance. */
@@ -1253,7 +1258,7 @@
     padding:4px 8px;border-radius:8px;transition:background .15s;
     background:transparent;border:0;color:inherit;font-family:inherit;font-size:inherit;
   }
-  .dm-cell:hover{background:rgba(255,255,255,.05)}
+  .dm-cell:hover{background:var(--hover-soft)}
   .dm-cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .dm-cell-label{color:var(--text-3);font-size:11px;letter-spacing:.4px;text-transform:uppercase;font-weight:600}
   .dm-cell-value{font-size:18px;font-weight:600;color:var(--text-1);line-height:1}
@@ -2901,9 +2906,9 @@
 /* What-Next overlay — same state-driven pattern as .modal-overlay / .cmdk-overlay.
    Stage 3 of the modal-system unification: routes through js/modal.js so all
    overlays share one open/close mechanism. */
-.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
+.what-next-overlay{position:fixed;inset:0;background:rgba(5,10,18,.72);z-index:var(--z-overlay);display:flex;align-items:flex-start;justify-content:center;padding:max(16px, env(safe-area-inset-top)) 12px calc(24px + var(--kb-inset, 0px));overflow:auto;opacity:0;visibility:hidden;pointer-events:none;backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
 .what-next-overlay.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
-.what-next-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);max-width:440px;width:100%;padding:16px 18px;box-shadow:var(--shadow-card);margin-top:8vh}
+.what-next-panel{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);max-width:440px;width:100%;padding:16px 18px;box-shadow:var(--shadow-overlay);margin-top:8vh}
 .what-next-hdr{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px;margin-bottom:6px}
 .what-next-x{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;padding:4px}
 .what-next-sub{font-size:12px;color:var(--text-3);margin:0 0 12px;line-height:1.45}
@@ -3080,7 +3085,7 @@
   appearance:none;background:transparent;border:0;color:var(--text-3);
   font-size:18px;line-height:1;padding:0 4px;cursor:pointer;border-radius:4px;
 }
-.task-syntax-popover-close:hover{color:var(--text-1);background:rgba(255,255,255,.06)}
+.task-syntax-popover-close:hover{color:var(--text-1);background:var(--hover-soft)}
 .task-syntax-popover-tbl{
   display:grid;grid-template-columns:minmax(160px,max-content) 1fr;gap:6px 12px;
 }
@@ -3107,7 +3112,7 @@
 .smart-add-empty{font-size:12px;color:var(--text-3);font-style:italic}
 .sa-chips{display:flex;flex-wrap:wrap;gap:5px}
 .sa-chip{display:inline-flex;align-items:center;padding:3px 9px;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;font-size:11px;font-weight:500;cursor:pointer;transition:border-color .15s,background .15s;user-select:none;white-space:nowrap}
-.sa-chip:hover{border-color:var(--danger);background:rgba(231,76,60,.08)}
+.sa-chip:hover{border-color:var(--danger);background:var(--danger-bg)}
 .sa-chip.sa-p-urgent{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger)}
 .sa-chip.sa-p-high  {background:color-mix(in srgb,var(--warning) 14%,transparent);border-color:var(--warning-border);color:var(--warning)}
 .sa-chip.sa-p-low   {color:var(--text-3)}
@@ -4219,10 +4224,10 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
 .streak-best{margin-left:auto;font-size:11px;color:var(--text-3)}
 .hm-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;width:100%;max-width:260px;margin:0 auto}
 .hm-cell{display:block;aspect-ratio:1;border-radius:2px;background:var(--border)}
-.hm-l1{background:rgba(72,181,224,.25)}
-.hm-l2{background:rgba(72,181,224,.5)}
-.hm-l3{background:rgba(72,181,224,.75)}
-.hm-l4{background:rgba(72,181,224,1)}
+.hm-l1{background:rgba(26,140,255,.25)}
+.hm-l2{background:rgba(26,140,255,.5)}
+.hm-l3{background:rgba(26,140,255,.75)}
+.hm-l4{background:rgba(26,140,255,1)}
 
 /* ───── G-15 session note prompt ───── */
 .session-note-prompt{margin-top:12px;padding:12px;background:var(--card-2,rgba(255,255,255,.03));border:1px solid var(--border);border-radius:var(--r-sm,6px);display:flex;flex-direction:column;gap:8px}
@@ -4288,15 +4293,15 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
 
 /* ───── G-7 visible focus-on-list toggle in the lists bar ───── */
 .list-focus-toggle{background:transparent;color:var(--text-3);border:1px solid var(--border);padding:4px 10px;border-radius:14px;font:11px inherit;cursor:pointer;margin-left:6px}
-.list-focus-toggle.on{background:rgba(72,181,224,.12);color:var(--accent);border-color:rgba(72,181,224,.4)}
+.list-focus-toggle.on{background:rgba(26,140,255,.12);color:var(--accent);border-color:rgba(26,140,255,.4)}
 .list-focus-toggle:hover{background:var(--card-2,rgba(255,255,255,.05))}
 
 /* ───── G-21 share-target: incoming-share confirmation + input flash ───── */
 .quickadd-flash{animation:quickaddFlash 1.4s ease-out;outline:2px solid var(--accent);outline-offset:2px}
 @keyframes quickaddFlash{
-  0%{box-shadow:0 0 0 0 rgba(72,181,224,.7)}
-  70%{box-shadow:0 0 0 12px rgba(72,181,224,0)}
-  100%{box-shadow:0 0 0 0 rgba(72,181,224,0)}
+  0%{box-shadow:0 0 0 0 rgba(26,140,255,.7)}
+  70%{box-shadow:0 0 0 12px rgba(26,140,255,0)}
+  100%{box-shadow:0 0 0 0 rgba(26,140,255,0)}
 }
 @media (prefers-reduced-motion: reduce){
   .quickadd-flash{animation:none}
@@ -4309,7 +4314,7 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
   .dm-ring-fg{transition:none}
   .dm-spark-bar{transition:none}
 }
-.share-in-banner{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:1300;display:flex;align-items:center;gap:10px;padding:8px 14px;background:rgba(72,181,224,.12);color:var(--accent);border:1px solid rgba(72,181,224,.4);border-radius:999px;font-size:12px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.4);max-width:calc(100vw - 32px)}
+.share-in-banner{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:1300;display:flex;align-items:center;gap:10px;padding:8px 14px;background:rgba(26,140,255,.12);color:var(--accent);border:1px solid rgba(26,140,255,.4);border-radius:999px;font-size:12px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.4);max-width:calc(100vw - 32px)}
 .share-in-x{background:transparent;border:none;color:inherit;font-size:14px;cursor:pointer;padding:0 4px;opacity:.7}
 .share-in-x:hover{opacity:1}
 
