@@ -2161,6 +2161,10 @@ const DEFAULT_LISTS=[
   {name:'Shopping',       color:'#ff5247', description:'Shopping and purchases — things to buy, wishlist items, online orders, gift ideas.'},
   {name:'Side Projects',  color:'#ff66b3', description:'Side projects and hobbies — creative builds, personal projects, side hustles, experiments.'},
 ];
+// Exposed so the storage migration runner can backfill these into installs that
+// predate the expanded starter set (their lists were already non-empty, so
+// ensureDefaultList never seeded them). See migrateState step(9) in storage.js.
+window.DEFAULT_LISTS = DEFAULT_LISTS;
 function ensureDefaultList(){
   if(lists.length===0){
     const t=Date.now();

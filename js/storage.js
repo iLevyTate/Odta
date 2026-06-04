@@ -262,6 +262,30 @@ function migrateState(s){
     }
   });
 
+  step(9, () => {
+    // Backfill the expanded commonly-used Lists into existing installs. The
+    // seed in ensureDefaultList only fires on a zero-list install, so anyone
+    // who already had Lists (e.g. the old Personal + Work pair) never received
+    // the fuller starter set. Merge any missing defaults in by name
+    // (case-insensitive) so we never duplicate a List the user already has, and
+    // never resurrect one they renamed. This runs exactly once (s.v gate), so a
+    // List the user deletes afterwards stays deleted. DEFAULT_LISTS is the live
+    // source of truth, exported from tasks.js.
+    const defs = (typeof window !== 'undefined' && Array.isArray(window.DEFAULT_LISTS)) ? window.DEFAULT_LISTS : [];
+    s.lists = _arr(s.lists);
+    let ctr = _int(s.listIdCtr, 0);
+    for(const l of s.lists){ const id = _int(l && l.id, 0); if(id > ctr) ctr = id; }
+    const have = new Set(s.lists.map(l => String(l && l.name || '').trim().toLowerCase()).filter(Boolean));
+    const now = Date.now();
+    for(const d of defs){
+      const key = String(d && d.name || '').trim().toLowerCase();
+      if(!key || have.has(key)) continue;
+      s.lists.push({ id: ++ctr, name: d.name, color: d.color, description: d.description, lastModified: now });
+      have.add(key);
+    }
+    s.listIdCtr = ctr;
+  });
+
   // ── Field-level repair pass — runs on EVERY load regardless of version ──────
   // This is the safety net: even if a migration was skipped or data was
   // partially corrupted, every task comes out with correct types.
