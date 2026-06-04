@@ -313,6 +313,28 @@ function classificationToggleHidden(idx){
   if(typeof saveState === 'function') saveState('user');
 }
 
+// Tracks which life-area cards have their inline editor expanded, keyed by
+// stable category id (ids survive reorders/renames — indexes don't). Lets the
+// editor stay open across the full re-renders triggered by icon/color/reorder
+// changes instead of snapping shut on every tweak.
+const classMgrExpanded = new Set();
+
+function classificationToggleEdit(idx, ev){
+  if(typeof cfg === 'undefined' || !cfg) return;
+  ensureClassificationConfig(cfg);
+  const row = cfg.categories[Number(idx)];
+  if(!row) return;
+  const open = !classMgrExpanded.has(row.id);
+  if(open) classMgrExpanded.add(row.id); else classMgrExpanded.delete(row.id);
+  // Toggle the panel in place — cheaper than a full rebuild and it keeps the
+  // editor's controls (and any focus) intact. Fall back to a re-render if we
+  // can't locate the panel from the event target.
+  const cat = (ev && ev.target && typeof ev.target.closest === 'function') ? ev.target.closest('.class-mgr-cat') : null;
+  const editor = cat ? cat.querySelector('.class-mgr-editor') : null;
+  if(editor){ editor.hidden = !open; }
+  else { renderClassificationSettings(); }
+}
+
 function classificationSetLabel(idx, label){
   if(typeof cfg === 'undefined' || !cfg) return;
   ensureClassificationConfig(cfg);
@@ -472,7 +494,6 @@ function renderClassificationSettings(){
       : (def && Array.isArray(def.examples) ? def.examples : []);
     const exText = ex.map(x => String(x)).filter(Boolean).join('\n');
     const hasBaseDefault = !!DEFAULT_CATEGORY_DEFS.find(d => d.id === obj.id);
-    const isEmpty = !focusVal && !cvText && !exText;
 
     const opt = iconKeys.map(k => '<option value="' + esc(k) + '"' + (k === obj.icon ? ' selected' : '') + '>' + esc(k) + '</option>').join('');
     let colOpts = '';
@@ -507,22 +528,43 @@ function renderClassificationSettings(){
           + 'data-action="classificationResetDetails" data-arg="' + idx + '">Reset to defaults</button></div>'
         : '');
 
-    const summaryLabel = isEmpty ? 'Life area details — set up' : 'Life area details';
+    // Card surface mirrors the Lists manager (renderListsManager in tasks.js):
+    // colour dot · name · description preview · task count · Edit · Hide. The
+    // rich controls live in an inline editor panel revealed by Edit.
+    const catCount = (typeof tasks !== 'undefined' && Array.isArray(tasks))
+      ? tasks.filter(t => t && t.category === obj.id && !t.archived && !t.parentId).length
+      : 0;
+    const countLabel = catCount + (catCount === 1 ? ' task' : ' tasks');
+    const descText = focusVal
+      ? esc(focusVal)
+      : 'No focus set — add one to help Auto-organize route tasks here.';
+    const descCls = 'class-mgr-card-desc' + (focusVal ? '' : ' class-mgr-card-desc--empty');
+    const expanded = classMgrExpanded.has(obj.id);
 
     h += '<div class="class-mgr-cat' + (obj.hidden ? ' class-mgr-cat--hidden' : '') + '">'
-      + '<div class="class-mgr-row">'
-      + '<input type="text" class="class-mgr-in" value="' + esc(obj.label) + '" '
-      + 'data-onchange="classificationSetLabelFromInput" data-idx="' + idx + '" aria-label="Label"/>'
-      + '<select class="class-mgr-sel" data-onchange="classificationSetIconFromSelect" data-idx="' + idx + '" aria-label="Icon">' + opt + '</select>'
-      + '<select class="class-mgr-sel class-mgr-sel-color" data-onchange="classificationSetColorFromSelect" data-idx="' + idx + '" aria-label="Color">' + colOpts + '</select>'
-      + '<button type="button" class="class-mgr-btn" data-action="classificationToggleHidden" data-arg="' + idx + '">' + (obj.hidden ? 'Show' : 'Hide') + '</button>'
-      + '<button type="button" class="class-mgr-btn" data-action="classificationMove" data-args="[' + idx + ',-1]" aria-label="Move up" title="Move up">↑</button>'
-      + '<button type="button" class="class-mgr-btn" data-action="classificationMove" data-args="[' + idx + ',1]" aria-label="Move down" title="Move down">↓</button>'
-      + '<code class="class-mgr-id" title="Stable id stored on tasks">' + esc(obj.id) + '</code>'
+      + '<div class="class-mgr-card">'
+      +   '<span class="class-mgr-card-dot" style="background:' + escAttr(String(obj.color || 'var(--cat-general)')) + '"></span>'
+      +   '<div class="class-mgr-card-meta">'
+      +     '<div class="class-mgr-card-name">' + esc(obj.label) + '</div>'
+      +     '<div class="' + descCls + '">' + descText + '</div>'
+      +   '</div>'
+      +   '<span class="class-mgr-card-count">' + countLabel + '</span>'
+      +   '<button type="button" class="btn-ghost btn-sm" data-action="classificationToggleEdit" data-arg="' + idx + '">Edit</button>'
+      +   '<button type="button" class="btn-ghost btn-sm class-mgr-card-hide" data-action="classificationToggleHidden" data-arg="' + idx + '">' + (obj.hidden ? 'Show' : 'Hide') + '</button>'
       + '</div>'
-      + '<details class="class-mgr-details"' + (isEmpty ? ' data-empty="1"' : '') + '><summary>' + esc(summaryLabel) + '</summary>'
-      + detailsBody
-      + '</details></div>';
+      + '<div class="class-mgr-editor"' + (expanded ? '' : ' hidden') + '>'
+      +   '<div class="class-mgr-row">'
+      +     '<input type="text" class="class-mgr-in" value="' + esc(obj.label) + '" '
+      +       'data-onchange="classificationSetLabelFromInput" data-idx="' + idx + '" aria-label="Label"/>'
+      +     '<select class="class-mgr-sel" data-onchange="classificationSetIconFromSelect" data-idx="' + idx + '" aria-label="Icon">' + opt + '</select>'
+      +     '<select class="class-mgr-sel class-mgr-sel-color" data-onchange="classificationSetColorFromSelect" data-idx="' + idx + '" aria-label="Color">' + colOpts + '</select>'
+      +     '<button type="button" class="class-mgr-btn" data-action="classificationMove" data-args="[' + idx + ',-1]" aria-label="Move up" title="Move up">↑</button>'
+      +     '<button type="button" class="class-mgr-btn" data-action="classificationMove" data-args="[' + idx + ',1]" aria-label="Move down" title="Move down">↓</button>'
+      +     '<code class="class-mgr-id" title="Stable id stored on tasks">' + esc(obj.id) + '</code>'
+      +   '</div>'
+      +   '<div class="class-mgr-editor-fields">' + detailsBody + '</div>'
+      + '</div>'
+      + '</div>';
   });
   h += '<div class="class-mgr-reclass">'
     + '<button type="button" class="btn-ghost btn-sm" data-action="intelReclassifyUncategorized">Re-classify uncategorized tasks</button>'
@@ -1518,6 +1560,7 @@ window.renderClassificationSettings = renderClassificationSettings;
 window.refreshClassificationUi = refreshClassificationUi;
 window.classificationMove = classificationMove;
 window.classificationToggleHidden = classificationToggleHidden;
+window.classificationToggleEdit = classificationToggleEdit;
 window.classificationSetLabel = classificationSetLabel;
 window.classificationSetIcon = classificationSetIcon;
 window.classificationSetColor = classificationSetColor;
