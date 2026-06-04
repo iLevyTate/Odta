@@ -29,7 +29,7 @@
   .task-checkbox:focus-visible{border-radius:50%}
   .toggle:focus-visible{border-radius:10px}
   input,select,textarea{font-family:inherit}
-  ::selection{background:rgba(106,168,255,.25);color:var(--text-1)}
+  ::selection{background:rgba(136,167,102,.25);color:var(--text-1)}
   /* Scrollbar — themed via tokens; light-theme override at body.light-theme below.
      A second hardcoded ::-webkit-scrollbar rule used to live below this and silently
      shadowed it at equal specificity (4px wide, hex color); removed so this wins. */
@@ -63,72 +63,73 @@
     /* Typography */
     --font-sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
     --font-mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
-    /* Surface colors — deep indigo-charcoal canvas for the ClickUp-adjacent
-       brand. --bg-0 matches index.html theme-color + manifest theme/background
-       (#0b0f1c). Tuned to preserve AA text contrast against the new base. */
-    --bg-0:#0b0f1c;
-    --bg-1:#13172a;
-    --bg-2:#1a2038;
-    --bg-3:#232a47;
+    /* Surface colors — warm stone/taupe canvas for a natural, organic feel.
+       --bg-0 matches index.html theme-color + manifest theme/background
+       (#16150f). Tuned to preserve AA text contrast against the warm base. */
+    --bg-0:#16150f;
+    --bg-1:#1e1c15;
+    --bg-2:#27241b;
+    --bg-3:#343026;
     /* --border lifted off --bg-3 so card edges stay visible in active states.
        --border-subtle keeps a near-invisible divider where intended. */
-    --border:#2b3352;
-    --border-subtle:#222a45;
-    --border-strong:#374063;
-    /* Text — kept high-contrast against the new indigo --bg-0. --text-3 holds
-       AA (~4.8:1 on #0b0f1c); --text-4 is non-text use (dividers, dots). */
-    --text-1:#e9ecf6;
-    --text-2:#a9b2c8;
-    --text-3:#8b94ad;
-    --text-4:#6a7390;
-    /* Accents — brand primary is an electric indigo-violet (ClickUp-adjacent,
-       deliberately our own; not ClickUp's #7B68EE). Paired with an orchid
-       secondary to form the brand gradient. */
-    --accent:#7b61ff;
-    --accent-bg:rgba(123,97,255,.14);
-    --accent-border:rgba(123,97,255,.34);
+    --border:#3e3a2d;
+    --border-subtle:#2a2820;
+    --border-strong:#4c4838;
+    /* Text — warm off-white, high-contrast on the stone --bg-0. --text-3 holds
+       AA (~4.7:1 on #16150f); --text-4 is non-text use (dividers, dots). */
+    --text-1:#edeadf;
+    --text-2:#b9b3a1;
+    --text-3:#918b77;
+    --text-4:#6c6757;
+    /* Accents — brand primary is a natural sage green, paired with a warm gold
+       to form an earthy "sunlit meadow" gradient. */
+    --accent:#88a766;
+    --accent-bg:rgba(136,167,102,.14);
+    --accent-border:rgba(136,167,102,.34);
     /* Brand gradient — primary "+ Add", FAB, active nav, header mark. */
-    --brand-2:#e35ada;
-    --brand-grad:linear-gradient(135deg,#7b61ff 0%,#a85ff0 50%,#e35ada 100%);
-    --brand-grad-soft:linear-gradient(135deg,rgba(123,97,255,.18),rgba(227,90,218,.18));
-    --text-on-brand:#fff;
-    --success:#30d158;
-    --success-bg:rgba(48,209,88,.12);
-    --success-border:rgba(48,209,88,.3);
-    --warning:#ff9f0a;
-    --warning-bg:rgba(255,159,10,.12);
-    --warning-border:rgba(255,159,10,.3);
-    --danger:#ff453a;
-    --danger-bg:rgba(255,69,58,.12);
-    --danger-border:rgba(255,69,58,.3);
-    --purple:#bf5af2;
-    --purple-bg:rgba(191,90,242,.12);
-    --purple-border:rgba(191,90,242,.3);
-    --pink:#ff375f;
-    /* Aliases — priority chips, hovers, semantic dots (see DESIGN_SYSTEM.md) */
+    --brand-2:#d8b25a;
+    --brand-grad:linear-gradient(135deg,#88a766 0%,#b3ab5c 50%,#d8b25a 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(136,167,102,.18),rgba(216,178,90,.16));
+    --text-on-brand:#1c1a10;
+    --success:#5fa46b;
+    --success-bg:rgba(95,164,107,.13);
+    --success-border:rgba(95,164,107,.32);
+    --warning:#d6a23f;
+    --warning-bg:rgba(214,162,63,.14);
+    --warning-border:rgba(214,162,63,.32);
+    --danger:#c75c4a;
+    --danger-bg:rgba(199,92,74,.14);
+    --danger-border:rgba(199,92,74,.34);
+    --purple:#a87ba0;
+    --purple-bg:rgba(168,123,160,.14);
+    --purple-border:rgba(168,123,160,.32);
+    --pink:#c97e84;
+    /* Aliases — priority chips, hovers, semantic dots (see DESIGN_SYSTEM.md).
+       Hues stay distinct (brick / ochre / sage / stone) for fast scanning. */
     --prio-urgent:var(--danger);
     --prio-high:var(--warning);
     --prio-normal:var(--accent);
     --prio-low:var(--text-3);
-    --accent-hover:#9079ff;
-    /* Text/icon on saturated accent-colored buttons (readable on accent / success / warning fills) */
-    --text-on-accent:#0f172a;
+    --accent-hover:#99b878;
+    /* Text/icon on saturated brand/success/warning fills (warm near-black reads
+       better on sage/gold than white). */
+    --text-on-accent:#1c1a10;
     --text-on-inverse:#fff;
     --starred:var(--warning);
     --panel-dot-tasks:var(--pink);
     --quick-accent:var(--accent);
-    /* Phase colors (back-compat) */
-    --work:var(--accent);--work-glow:rgba(123,97,255,.4);--work-bg:#161532;--work-border:#2a2658;
-    --short:var(--success);--short-glow:rgba(48,209,88,.4);--short-bg:#0d2818;--short-border:#1a4a2a;
-    --long:var(--warning);--long-glow:rgba(255,159,10,.4);--long-bg:#1a1508;--long-border:#3a2a10;
-    /* Life-area category accents (task chips + settings) */
-    --cat-bodyMindSpirit:#a78bfa;
-    --cat-relationships:#f87171;
-    --cat-community:#fbbf24;
-    --cat-jobLearningFinances:#34d399;
-    --cat-interests:#60a5fa;
-    --cat-personalCare:#f472b6;
-    --cat-general:#94a3b8;
+    /* Phase colors (back-compat) — warm, earthy tints. */
+    --work:var(--accent);--work-glow:rgba(136,167,102,.4);--work-bg:#1b2014;--work-border:#33402a;
+    --short:var(--success);--short-glow:rgba(95,164,107,.4);--short-bg:#13241a;--short-border:#244a30;
+    --long:var(--warning);--long-glow:rgba(214,162,63,.4);--long-bg:#221b0d;--long-border:#473a18;
+    /* Life-area category accents — muted, earthy variants for cohesion. */
+    --cat-bodyMindSpirit:#b6a0d6;
+    --cat-relationships:#d98c7a;
+    --cat-community:#d9b25a;
+    --cat-jobLearningFinances:#84ab6a;
+    --cat-interests:#6fa3a6;
+    --cat-personalCare:#d195ac;
+    --cat-general:#a7a08c;
     /* Radii */
     --r-sm:6px;--r-md:10px;--r-lg:14px;
     /* Spacing — 4-pt baseline. Migrate components incrementally; literals in
@@ -174,10 +175,9 @@
     --z-cmdk:1500;
     --z-skip-link:9999;
     /* Ring-time warn/done — token-driven so light-theme can override them.
-       Dark values match the prior hardcoded #e8a838 / #ff5c4d that already
-       cleared AA against the dark --work-bg. */
-    --ring-warn-color:#e8a838;
-    --ring-done-color:#ff5c4d;
+       Warm gold + brick clear AA against the dark --work-bg. */
+    --ring-warn-color:#e0ad48;
+    --ring-done-color:#d96a55;
     color-scheme:dark;
   }
   /* Life-area chip/stripe tokens via data-cat-id — no inline style= (CSP). */
@@ -190,34 +190,49 @@
   [data-cat-id="general"]{--sv-cat:var(--cat-general);--md-cat:var(--cat-general);--ui-chip-dot:var(--cat-general);--cat-stripe:var(--cat-general)}
   body.light-theme{
     color-scheme:light;
-    /* Faint violet tint in the light canvas ties it to the brand. */
-    --bg-0:#f5f4fb;--bg-1:#fff;--bg-2:#faf9fe;--bg-3:#e9e7f4;
+    /* Warm parchment/cream canvas — natural, low-glare paper feel. */
+    --bg-0:#f3f1e8;--bg-1:#fffdf7;--bg-2:#faf8f0;--bg-3:#e8e4d6;
     /* Light-theme border lifted off --bg-3 to keep card edges visible. */
-    --border:#d9d5ea;--border-subtle:#e9e7f4;--border-strong:#cbc6e0;
-    /* Brand on light: a deeper violet so accent text/fills clear AA on white. */
-    --accent:#6a4dff;
-    --accent-bg:rgba(106,77,255,.10);
-    --accent-border:rgba(106,77,255,.30);
-    --brand-2:#d23fc4;
-    --brand-grad:linear-gradient(135deg,#6a4dff 0%,#9b46ee 50%,#d23fc4 100%);
-    --brand-grad-soft:linear-gradient(135deg,rgba(106,77,255,.10),rgba(210,63,196,.10));
-    /* --text-3 lifted from #64748b (4.3:1) to #475569 to clear AA on --bg-0. */
-    --text-1:#0f172a;--text-2:#475569;--text-3:#475569;--text-4:#64748b;
-    --work-bg:#f0f6fd;--work-border:#d0e3f7;
-    --short-bg:#f0fdf4;--short-border:#d1f0dc;
-    --long-bg:#fff9ed;--long-border:#fde6b8;
-    --cat-bodyMindSpirit:#7c3aed;
-    --cat-relationships:#dc2626;
-    --cat-community:#d97706;
-    --cat-jobLearningFinances:#059669;
-    --cat-interests:#2563eb;
-    --cat-personalCare:#db2777;
-    --cat-general:#64748b;
-    /* Ring-time on light --work-bg (#f0f6fd) needs deeper hues to clear AA at
-       large-text thresholds (3:1). Burnt orange + brick red both pass. */
-    --ring-warn-color:#b45309;
-    --ring-done-color:#b91c1c;
-    --accent-hover:#5a3df0;
+    --border:#d8d3c2;--border-subtle:#e8e4d6;--border-strong:#c9c3af;
+    /* Brand on light: a deeper forest-sage so accent text/fills clear AA on cream. */
+    --accent:#5f7d44;
+    --accent-bg:rgba(95,125,68,.12);
+    --accent-border:rgba(95,125,68,.30);
+    --brand-2:#b08a2f;
+    --brand-grad:linear-gradient(135deg,#5f7d44 0%,#8a8a3a 50%,#b08a2f 100%);
+    --brand-grad-soft:linear-gradient(135deg,rgba(95,125,68,.12),rgba(176,138,47,.12));
+    /* Warm-grey text tuned to clear AA on the cream --bg-0. */
+    --text-1:#2b2a20;--text-2:#5a5648;--text-3:#5a5648;--text-4:#7a7565;
+    --work-bg:#f3f6ec;--work-border:#dde3c8;
+    --short-bg:#eef7ee;--short-border:#cfe6cf;
+    --long-bg:#fbf4e2;--long-border:#f0e0b6;
+    --success:#4f8a59;
+    --success-bg:rgba(79,138,89,.12);
+    --success-border:rgba(79,138,89,.30);
+    --warning:#b9822a;
+    --warning-bg:rgba(185,130,42,.13);
+    --warning-border:rgba(185,130,42,.30);
+    --danger:#b14a3a;
+    --danger-bg:rgba(177,74,58,.12);
+    --danger-border:rgba(177,74,58,.30);
+    --purple:#8a6184;
+    --purple-bg:rgba(138,97,132,.12);
+    --purple-border:rgba(138,97,132,.30);
+    --pink:#b25e66;
+    --text-on-brand:#fff;
+    --text-on-accent:#fff;
+    --cat-bodyMindSpirit:#6f539e;
+    --cat-relationships:#b5503a;
+    --cat-community:#9c6f1e;
+    --cat-jobLearningFinances:#4f8a59;
+    --cat-interests:#3f7e82;
+    --cat-personalCare:#a8527a;
+    --cat-general:#6b6655;
+    /* Ring-time on light --work-bg needs deeper hues to clear AA at large-text
+       thresholds (3:1). Burnt amber + brick red both pass. */
+    --ring-warn-color:#9c6f1e;
+    --ring-done-color:#a83f2f;
+    --accent-hover:#4f6c38;
     --prio-low:var(--text-4);
   }
 
@@ -725,7 +740,7 @@
     z-index:var(--z-fab,1100);display:none;align-items:center;justify-content:center;
     width:56px;height:56px;border-radius:50%;border:0;cursor:pointer;
     background:var(--brand-grad);color:var(--text-on-brand);
-    box-shadow:0 8px 24px rgba(123,97,255,.40),0 2px 6px rgba(0,0,0,.25);
+    box-shadow:0 8px 24px rgba(136,167,102,.40),0 2px 6px rgba(0,0,0,.25);
     font-family:inherit;font-size:0;line-height:1;
     transition:transform .15s ease,box-shadow .15s ease,background .15s ease;
   }
@@ -1061,14 +1076,14 @@
     background:var(--brand-grad);color:var(--text-on-brand);
     font-weight:700;font-size:var(--fs-13);letter-spacing:.01em;text-transform:none;
     border:0;border-radius:999px;
-    box-shadow:0 2px 8px rgba(123,97,255,.30);
+    box-shadow:0 2px 8px rgba(136,167,102,.30);
     transition:filter var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out);
   }
-  .task-add:hover{box-shadow:0 4px 16px rgba(123,97,255,.42);filter:brightness(1.06)}
+  .task-add:hover{box-shadow:0 4px 16px rgba(136,167,102,.42);filter:brightness(1.06)}
   .task-add:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(123,97,255,.20);filter:none}
-  body.light-theme .task-add{box-shadow:0 2px 8px rgba(106,77,255,.24)}
-  body.light-theme .task-add:hover{box-shadow:0 4px 16px rgba(106,77,255,.34)}
+  .task-add:active{transform:scale(.97);box-shadow:0 1px 4px rgba(136,167,102,.20);filter:none}
+  body.light-theme .task-add{box-shadow:0 2px 8px rgba(95,125,68,.24)}
+  body.light-theme .task-add:hover{box-shadow:0 4px 16px rgba(95,125,68,.34)}
 
   /* Quick-add hint — example tokens reuse the live-parse-preview chip styles
      (.qpc--*) so users learn by recognition: the chip color they see while
@@ -3848,9 +3863,9 @@ body:has(.cmdk-overlay.open)  #exportToast{
   }
   .nav-tab.active .nav-tab-icon{filter:none;color:var(--accent)}
   body.light-theme .nav-tab.active{
-    background:rgba(37,99,235,.10);
+    background:rgba(95,125,68,.10);
     color:var(--accent);
-    border-color:rgba(37,99,235,.28)
+    border-color:rgba(95,125,68,.28)
   }
 
   /* === UNIFIED EASING LANGUAGE === */
@@ -4757,7 +4772,7 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .view-tab-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:8px;border:0;background:transparent;color:var(--text-3);font-family:inherit;font-size:var(--fs-13);font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
 .view-tab-btn .mv-ic{display:inline-flex;width:15px;height:15px}
 .view-tab-btn:hover{color:var(--text-1);background:var(--bg-2)}
-.view-tab-btn.active{background:var(--brand-grad);color:var(--text-on-brand);box-shadow:0 2px 8px rgba(123,97,255,.30)}
+.view-tab-btn.active{background:var(--brand-grad);color:var(--text-on-brand);box-shadow:0 2px 8px rgba(136,167,102,.30)}
 
 .bottom-nav{display:none}
 .sidebar-backdrop{display:none}

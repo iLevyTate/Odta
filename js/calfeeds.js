@@ -579,7 +579,7 @@ function addCalFeed({label, url, proxy, content, color}){
   const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   const feed = {
     id, label: label || 'Calendar',
-    color: color || '#6aa8ff',
+    color: color || '#88a766',
     url: url || null,
     proxy: proxy || null,
     content: content || null,
@@ -901,7 +901,7 @@ function renderCalFeedsPanel(){
         <input type="text" id="cfLabel" class="calfeed-in" placeholder="e.g. Work, Personal">
 
         <label class="calfeed-lbl">Color</label>
-        <input type="color" id="cfColor" class="calfeed-color" value="#6aa8ff">
+        <input type="color" id="cfColor" class="calfeed-color" value="#88a766">
 
         <div class="calfeed-mode-tabs">
           <button class="calfeed-mode active" data-mode="paste" data-action="calFeedModeFromButton">Paste .ics</button>
@@ -1025,7 +1025,7 @@ function _cfActionToast(msg, label, fn){
 // Form submission handler
 async function submitAddCalFeed(){
   const label = document.getElementById('cfLabel').value.trim() || 'Calendar';
-  const color = document.getElementById('cfColor').value || '#6aa8ff';
+  const color = document.getElementById('cfColor').value || '#88a766';
   const pasteActive = document.querySelector('.calfeed-mode.active')?.dataset.mode === 'paste';
 
   let feed;
