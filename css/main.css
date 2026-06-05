@@ -4509,6 +4509,9 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
 .timer-dock--min{padding:2px!important;gap:0!important;border-radius:999px!important;border-left-width:1px!important}
 .timer-dock--min > :not(.timer-dock-handle){display:none!important}
 .timer-dock--min .timer-dock-handle{display:flex}
+/* The collapsed puck is draggable (see timer-dock.js) — show the affordance. */
+.timer-dock--min .timer-dock-handle{cursor:grab;touch-action:none}
+.timer-dock--min .timer-dock-handle:active{cursor:grabbing}
 .timer-dock--min.work  .timer-dock-handle{color:var(--work)}
 .timer-dock--min.short .timer-dock-handle{color:var(--success)}
 .timer-dock--min.long  .timer-dock-handle{color:var(--long)}
@@ -4532,9 +4535,10 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 
 /* Task modal layout */
 /* Segmented section tabs — one pane visible at a time so the editor never
-   becomes a 2000px scroll. Sticky bar stays put while a pane scrolls. */
+   becomes a 2000px scroll. The tab bar scrolls with the pane; only the modal
+   header (the task-name field) stays pinned above the scroll region. */
 .md-tabs{
-  display:flex;gap:4px;position:sticky;top:0;z-index:3;
+  display:flex;gap:4px;
   background:var(--bg-2);
   margin:0 0 14px;padding:2px 0 8px;
   border-bottom:1px solid var(--border-subtle);
@@ -4890,7 +4894,10 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .sidebar-collapse:hover{background:var(--bg-2);color:var(--text-1);border-color:var(--border-strong)}
 
 .app-sidebar .nav-tabs{display:flex;flex-direction:column;gap:2px;width:100%;margin:0;background:transparent;border:0;border-radius:0;padding:0;box-shadow:none}
-.app-sidebar .nav-tab{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;width:100%;padding:10px 12px;border-radius:10px;text-align:left;font-size:var(--fs-14);color:var(--text-2)}
+.app-sidebar .nav-tab{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;width:100%;padding:10px 12px;border-radius:12px;text-align:left;font-size:var(--fs-14);color:var(--text-2)}
+/* Keep all four corners equally rounded — the active card carries a border, so
+   pin the radius explicitly so it can never read as a hard right angle. */
+.app-sidebar .nav-tab.active{border-radius:12px}
 .app-sidebar .nav-tab .nav-tab-icon{font-size:16px;width:22px;text-align:center;flex:0 0 auto}
 .app-sidebar .nav-tab:hover{background:var(--bg-2);color:var(--text-1)}
 .app-sidebar .nav-tab.active{background:var(--brand-grad-soft);color:var(--text-1);border:1px solid var(--accent-border)}

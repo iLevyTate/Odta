@@ -54,25 +54,40 @@ function initTimerDock(){
         c2.y = parseInt(dock.style.top, 10) || 0;
         delete c2.corner;
         if(typeof saveState === 'function') saveState('user');
+        // A drag just ended on a handle that also carries a click action
+        // (the minimized restore puck). Swallow the click that the browser
+        // fires after pointerup so dragging the puck doesn't also restore it.
+        dock._dragJustMoved = true;
+        setTimeout(() => { dock._dragJustMoved = false; }, 0);
       }
       drag = null;
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
     };
+    const startDrag = (e, handle) => {
+      if(e.button !== 0) return;
+      const r = dock.getBoundingClientRect();
+      dock.style.left = r.left + 'px';
+      dock.style.top = r.top + 'px';
+      dock.style.right = 'auto';
+      dock.style.bottom = 'auto';
+      drag = { x0: e.clientX, y0: e.clientY, left0: r.left, top0: r.top, moved: false };
+      try{ handle.setPointerCapture(e.pointerId); }catch(_){}
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    };
+    // The grip drags the expanded dock; the restore puck (shown when the dock
+    // is collapsed to a circle) is also draggable so the minimized timer can be
+    // repositioned. A plain click on the puck still restores the dock — only a
+    // real drag is treated as a move (and its trailing click is suppressed).
     const grip = dock.querySelector('.timer-dock-grip');
-    if(grip){
-      grip.addEventListener('pointerdown', e => {
-        if(e.button !== 0) return;
-        const r = dock.getBoundingClientRect();
-        dock.style.left = r.left + 'px';
-        dock.style.top = r.top + 'px';
-        dock.style.right = 'auto';
-        dock.style.bottom = 'auto';
-        drag = { x0: e.clientX, y0: e.clientY, left0: r.left, top0: r.top, moved: false };
-        grip.setPointerCapture(e.pointerId);
-        document.addEventListener('pointermove', onMove);
-        document.addEventListener('pointerup', onUp);
-      });
+    if(grip) grip.addEventListener('pointerdown', e => startDrag(e, grip));
+    const handle = dock.querySelector('.timer-dock-handle');
+    if(handle){
+      handle.addEventListener('pointerdown', e => startDrag(e, handle));
+      handle.addEventListener('click', e => {
+        if(dock._dragJustMoved){ e.preventDefault(); e.stopImmediatePropagation(); }
+      }, true);
     }
   }
 }
