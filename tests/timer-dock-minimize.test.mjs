@@ -1,10 +1,10 @@
 /**
- * Fully-minimizable timer dock (index.html + css/main.css + js).
+ * Minimizable timer dock (index.html + css/main.css + js).
  *
- * The dock's minimize used to only hide the label/time — grip, play and the
- * phase dot stayed on screen. It now collapses fully to a small clock handle
- * (everything else hidden); clicking the handle restores it. State persists via
- * the existing cfg.timerDock.minimized + saveState path.
+ * Minimize shrinks the floating dock to a smaller PILL — the label/time block
+ * collapses away while the phase dot, play and minimize controls stay on screen
+ * so it's still a recognizable, drivable pill (not a round puck). State persists
+ * via cfg.timerDock.minimized + saveState and is re-applied on init.
  */
 import test from 'node:test';
 import assert from 'node:assert';
@@ -16,20 +16,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 const css = readFileSync(join(root, 'css', 'main.css'), 'utf8');
 const dockJs = readFileSync(join(root, 'js', 'timer-dock.js'), 'utf8');
-const ui = readFileSync(join(root, 'js', 'ui.js'), 'utf8');
 
-test('a restore handle exists in the dock and toggles minimize', () => {
-  assert.ok(/id="timerDockHandle"[^>]*data-action="toggleTimerDockMin"/.test(html), 'restore handle → toggleTimerDockMin');
+test('a minimize button exists in the dock and toggles minimize', () => {
+  assert.ok(/class="timer-dock-min"[^>]*data-action="toggleTimerDockMin"/.test(html), 'minimize button → toggleTimerDockMin');
   // It lives inside the dock element.
-  const dock = html.slice(html.indexOf('id="timerDock"'), html.indexOf('</div>', html.indexOf('id="timerDockHandle"')) + 6);
-  assert.ok(/id="timerDockHandle"/.test(dock), 'handle is inside the timer dock');
+  const dock = html.slice(html.indexOf('id="timerDock"'), html.indexOf('</div>', html.indexOf('id="timerDock"')) + 6);
+  assert.ok(/timer-dock-min/.test(dock), 'minimize button is inside the timer dock');
 });
 
-test('minimized state collapses to ONLY the handle', () => {
-  assert.ok(/\.timer-dock--min > :not\(\.timer-dock-handle\)\{display:none!important\}/.test(css),
-    'everything except the handle is hidden when minimized');
-  assert.ok(/\.timer-dock--min \.timer-dock-handle\{display:flex\}/.test(css), 'handle shown when minimized');
-  assert.ok(/\.timer-dock-handle\{[^}]*display:none/.test(css), 'handle hidden by default (expanded)');
+test('minimized state shrinks to a pill (hides only the label/time)', () => {
+  assert.ok(/\.timer-dock--min \.mt-info,\s*\.timer-dock--min \.mt-open\{display:none!important\}/.test(css),
+    'the label/time block and open hint are hidden when minimized');
+  // The dock is NOT collapsed to a round puck.
+  assert.ok(!/\.timer-dock--min\{[^}]*border-radius:999px/.test(css), 'minimized dock is not a round puck');
 });
 
 test('minimize is persisted and applied on init', () => {
@@ -40,9 +39,6 @@ test('minimize is persisted and applied on init', () => {
   assert.ok(/if\(c\.minimized\) dock\.classList\.add\('timer-dock--min'\)/.test(dockJs), 'init re-applies minimized state');
 });
 
-test('the dock carries a running flag so the collapsed handle can pulse', () => {
-  assert.ok(/el\.classList\.toggle\('timer-running', !!running\)/.test(ui), 'updateMiniTimer sets timer-running on the dock');
-  assert.ok(/\.timer-dock--min\.timer-running \.timer-dock-handle\{animation:pulse/.test(css), 'handle pulses while running');
-  assert.ok(/prefers-reduced-motion[^}]*\.timer-dock--min\.timer-running \.timer-dock-handle\{animation:none\}/.test(css.replace(/\s+/g, ' ')),
-    'pulse respects reduced motion');
+test('the phase dot still pulses while a timer runs', () => {
+  assert.ok(/\.mt-phase-dot\.running\{animation:pulse/.test(css), 'running phase dot pulses');
 });

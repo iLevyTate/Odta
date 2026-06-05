@@ -4498,29 +4498,12 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
 .timer-dock-grip:active{cursor:grabbing}
 .timer-dock-min,.timer-dock-qt{background:transparent;border:none;color:var(--text-3);cursor:pointer;font-size:14px;padding:0 6px;font-family:inherit}
 .timer-dock-qt{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--accent)}
-/* Restore handle — only shown when the dock is fully minimized. */
-.timer-dock-handle{
-  display:none;align-items:center;justify-content:center;
-  width:40px;height:40px;border-radius:999px;
-  background:transparent;border:none;cursor:pointer;
-  color:var(--text-2);font-size:18px;line-height:1;
-}
-.timer-dock-handle:hover{color:var(--text-1)}
-/* Fully-minimized dock: collapse to just the handle (a small clock puck). The
-   expanded dock shows phase as a 3px left stripe; on the round puck that stripe
-   would wrap into a lopsided arc, so here we neutralize it and draw the phase as
-   a clean, uniform ring around the whole circle instead. */
-.timer-dock--min{padding:2px!important;gap:0!important;border-radius:999px!important;border-width:1.5px!important;border-color:var(--border)!important}
-.timer-dock--min > :not(.timer-dock-handle){display:none!important}
-.timer-dock--min .timer-dock-handle{display:flex}
-.timer-dock--min.work  {border-color:var(--accent-border)!important}
-.timer-dock--min.short {border-color:var(--success-border)!important}
-.timer-dock--min.long  {border-color:var(--warning-border)!important}
-.timer-dock--min.work  .timer-dock-handle{color:var(--work)}
-.timer-dock--min.short .timer-dock-handle{color:var(--success)}
-.timer-dock--min.long  .timer-dock-handle{color:var(--long)}
-.timer-dock--min.timer-running .timer-dock-handle{animation:pulse 1.6s ease-in-out infinite}
-@media (prefers-reduced-motion:reduce){.timer-dock--min.timer-running .timer-dock-handle{animation:none}}
+/* Minimized dock — shrinks to a smaller pill rather than a puck: the label/time
+   block collapses away, leaving the phase dot, play and minimize controls so the
+   dock stays a recognizable pill you can still drive. Click − again to expand. */
+.timer-dock--min .mt-info,
+.timer-dock--min .mt-open{display:none!important}
+.timer-dock--min .mt-open-btn{gap:0}
 body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}
 
 /* Calendar modes */
