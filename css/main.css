@@ -141,9 +141,12 @@
        hairline top highlight gives depth without heavy borders. */
     --surface-grad:linear-gradient(180deg,#16212f,#0f1825);
     --surface-grad-soft:linear-gradient(180deg,#131e2c,#0d1622);
-    /* Faded vertical divider — fades out top/bottom so edges don't read as a
-       hard box line. Use as `border-image: var(--divider-fade) 1`. */
-    --divider-fade:linear-gradient(180deg,transparent,var(--border-subtle) 10%,var(--border) 50%,var(--border-subtle) 90%,transparent);
+    /* Faded dividers — fade out at both ends and stay translucent through the
+       middle so a panel/sidebar edge reads as a soft seam, not a hard box line.
+       `-h` is the horizontal twin for the top bar's lower edge.
+       Use as `border-image: var(--divider-fade) 1`. */
+    --divider-fade:linear-gradient(180deg,transparent,color-mix(in srgb,var(--border-subtle) 70%,transparent) 14%,color-mix(in srgb,var(--border) 55%,transparent) 50%,color-mix(in srgb,var(--border-subtle) 70%,transparent) 86%,transparent);
+    --divider-fade-h:linear-gradient(90deg,transparent,color-mix(in srgb,var(--border-subtle) 70%,transparent) 8%,color-mix(in srgb,var(--border) 50%,transparent) 50%,color-mix(in srgb,var(--border-subtle) 70%,transparent) 92%,transparent);
     /* Spacing — 4-pt baseline. Migrate components incrementally; literals in
        legacy rules continue to work. */
     --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px;
@@ -842,11 +845,11 @@
   .log-empty{text-align:center;padding:12px 0;color:var(--text-4);font-size:10px}
 
   .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .stat-box{text-align:center;padding:12px 8px;background:var(--bg-1);border-radius:var(--r-md);border:1px solid var(--border-subtle)}
+  .stat-box{text-align:center;padding:12px 8px;background:var(--bg-1);border-radius:var(--r-lg);border:1px solid var(--border-subtle)}
   .stat-val{font-size:24px;font-weight:800;color:var(--text-1)}.stat-lbl{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--text-3);margin-top:4px}
   .stat-val.wc{color:var(--work)}.stat-val.bc{color:var(--short)}.stat-val.tc{color:var(--long)}
   .history{display:flex;gap:3px;flex-wrap:wrap;margin-top:12px;justify-content:center}
-  .hblock{width:14px;height:14px;border-radius:3px}.hw{background:var(--work);opacity:.8}.hs{background:var(--short);opacity:.6}.hl{background:var(--long);opacity:.6}
+  .hblock{width:14px;height:14px;border-radius:4px}.hw{background:var(--work);opacity:.8}.hs{background:var(--short);opacity:.6}.hl{background:var(--long);opacity:.6}
 
 
 
@@ -1558,7 +1561,7 @@
 
   /* Stats */
   .stat-grid{gap:10px;margin-top:8px}
-  .stat-box{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:14px}
+  .stat-box{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px}
   .stat-val{font-size:28px;font-weight:700;letter-spacing:-.02em;font-family:var(--font-sans)}
   .stat-lbl{font-size:11px;color:var(--text-3);letter-spacing:0;text-transform:none;font-weight:500;margin-top:4px}
 
@@ -4922,7 +4925,7 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .app-shell.sidebar-collapsed .sidebar-brand{justify-content:center}
 .app-shell.sidebar-collapsed .sidebar-collapse{transform:rotate(180deg)}
 
-.app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:var(--z-sticky);background:linear-gradient(180deg,var(--bg-0) 72%,transparent)}
+.app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);border-image:var(--divider-fade-h) 1;position:sticky;top:0;z-index:var(--z-sticky);background:linear-gradient(180deg,var(--bg-0) 72%,transparent)}
 .app-topbar .header-mid{flex-direction:row;align-items:center;gap:12px;margin:0;margin-right:auto}
 .app-topbar .header-utils{margin-left:auto}
 .drawer-toggle{display:none;width:40px;height:40px;border-radius:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);font-size:18px;cursor:pointer;align-items:center;justify-content:center}

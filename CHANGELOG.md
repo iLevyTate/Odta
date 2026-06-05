@@ -1,5 +1,9 @@
 # Changelog
 
+## v71 — 2026-06-05
+
+- **Polish (shell edges / soften the box)**: kept the gradient-lit sidebar and panel surfaces but removed the hard seams that still made the shell read as nested boxes. The sidebar's right divider and the top bar's lower border now use the same **faded translucent divider** (vertical and a new horizontal twin) — `color-mix`ed so they taper at both ends and never form a solid hairline. The inner *Today's Stats* cards and the streak-heatmap cells were rounded up (`--r-md → --r-lg`, heatmap `3px → 4px`) so corners do the shaping instead of edges. Service-worker cache rotated to `odtaulai-v71` (version string, `swCache`, the `css/main.css?v=` cache-bust in index.html + SW precache, and the inline-SW fallback in `js/pwa.js`) so installed clients pull the fresh CSS.
+
 ## v70 — 2026-06-05
 
 - **Fix (PWA cache / "fixes don't show up")**: rotated the service-worker cache to `odtaulai-v70`. Several recent UI changes — the fully-minimizable **timer dock**, the visual filter builder, quick-capture pills, the task-detail segmented panel / side-peek drawer, and header property pills — all merged while the cache name stayed pinned at `odtaulai-v69`. Because `activate` only deletes caches whose name differs from the current one, and the fetch handler serves `cached || net`, an installed/returning client kept being served the **old v69 bundle**, so those features (and any fix to them) appeared to "still not work" no matter how many times they shipped. Bumping the version gives the worker a new cache name, evicting the stale bundle and pulling fresh CSS/JS on next load. Version string, `swCache`, the `css/main.css?v=` cache-bust query (index.html + SW precache), and the inline-SW fallback in `js/pwa.js` are all moved to `v70` in lockstep.
