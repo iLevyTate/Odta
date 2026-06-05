@@ -1,5 +1,9 @@
 # Changelog
 
+## v70 — 2026-06-05
+
+- **Fix (PWA cache / "fixes don't show up")**: rotated the service-worker cache to `odtaulai-v70`. Several recent UI changes — the fully-minimizable **timer dock**, the visual filter builder, quick-capture pills, the task-detail segmented panel / side-peek drawer, and header property pills — all merged while the cache name stayed pinned at `odtaulai-v69`. Because `activate` only deletes caches whose name differs from the current one, and the fetch handler serves `cached || net`, an installed/returning client kept being served the **old v69 bundle**, so those features (and any fix to them) appeared to "still not work" no matter how many times they shipped. Bumping the version gives the worker a new cache name, evicting the stale bundle and pulling fresh CSS/JS on next load. Version string, `swCache`, the `css/main.css?v=` cache-bust query (index.html + SW precache), and the inline-SW fallback in `js/pwa.js` are all moved to `v70` in lockstep.
+
 ## v69 — 2026-06-04
 
 - **Fix (sidebar Lists)**: the **Lists** column rendered as a stack of heavy, centered pill-buttons because the shared `.ui-chip` base was retired in a consistency pass but `.list-chip` was never actually folded into it (a comment claimed the consolidation, the selector grouping was missing). With no base, list chips collapsed to bare `<button>`s — centered text, no pill shape, misaligned color dots. `.list-chip` now genuinely shares the `.ui-chip` primitive again.
