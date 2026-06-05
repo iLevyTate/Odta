@@ -4237,6 +4237,8 @@ function updateMiniTimer(){
   el.classList.add('visible');
   // Phase styling
   el.classList.remove('work','short','long');el.classList.add(phase);
+  // Running flag on the dock itself so the fully-minimized handle can pulse.
+  el.classList.toggle('timer-running', !!running);
   const dot=gid('mtDot');dot.classList.remove('work','short','long','running');
   dot.classList.add(phase);if(running)dot.classList.add('running');
   // Label & time

@@ -827,6 +827,9 @@
   <button type="button" class="mt-btn mt-play" id="mtToggle" aria-label="Play or pause focus timer" data-action="miniTimerToggle">▶</button>
   <button type="button" class="timer-dock-min" data-action="toggleTimerDockMin" aria-label="Minimize timer dock" title="Minimize">−</button>
   <button type="button" class="timer-dock-qt" id="timerDockQt" hidden data-action="showTab" data-arg="focus" title="Quick timers"></button>
+  <!-- Fully-minimized handle: when the dock is collapsed everything else hides
+       and only this small clock puck shows. Clicking it restores the dock. -->
+  <button type="button" class="timer-dock-handle" id="timerDockHandle" data-action="toggleTimerDockMin" aria-label="Restore timer dock" title="Restore timer">⏱</button>
 </div>
 
 <!-- Mobile thumb-zone add sheet. Lives outside tab panels so it stays visible
