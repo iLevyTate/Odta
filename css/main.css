@@ -1559,6 +1559,35 @@
   .task-item--ghost{opacity:.35;background:var(--accent-bg)!important;border:1px dashed var(--accent-border)!important}
   .task-item--chosen{box-shadow:0 0 0 2px var(--accent-border) inset}
   .board-col.drop-target{background:var(--accent-bg);border-color:var(--accent-border)}
+  /* Board card drag state — mirrors task-item--* tokens so the Sortable
+     ghost/chosen/dragging classes render consistently across surfaces. */
+  .board-card--dragging{opacity:.85;box-shadow:var(--shadow-overlay);transform:scale(1.02)}
+  .board-card--ghost{opacity:.35;background:var(--accent-bg)!important;border:1px dashed var(--accent-border)!important}
+  .board-card--chosen{box-shadow:0 0 0 2px var(--accent-border) inset}
+  /* Card header is the drag-handle surface; cursor cue distinguishes it from
+     the children container (which only acts as a drop target). */
+  .board-card-header{cursor:grab;display:flex;flex-direction:column;gap:4px}
+  .board-card-header:active{cursor:grabbing}
+  /* Children container is the nested-Sortable drop target for indent-by-drop.
+     Empty/collapsed containers stay invisible until a drag is in flight, then
+     surface a slim dashed strip so the user can clearly aim at "nest here". */
+  .board-card-children{display:flex;flex-direction:column;gap:5px;margin-top:6px;min-height:0}
+  .board-card-children:not(.is-empty):not(.is-collapsed){padding-left:8px;border-left:2px solid var(--border)}
+  .board-card-children.is-empty,
+  .board-card-children.is-collapsed{min-height:0}
+  body.board--dragging .board-card-children.is-empty,
+  body.board--dragging .board-card-children.is-collapsed{
+    min-height:24px;margin-top:6px;border:1px dashed var(--border-strong);border-radius:var(--r-sm);
+    background:var(--bg-2);opacity:.75;
+  }
+  body.board--dragging .board-card-children.is-empty::before,
+  body.board--dragging .board-card-children.is-collapsed::before{
+    content:'Nest here';display:block;font-size:10px;color:var(--text-3);text-align:center;padding:4px;
+  }
+  /* Generic column swatch for non-status group modes (list / priority / due)
+     where the header has no STATUSES.cls badge to lean on. */
+  .board-col-swatch{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--text-3);flex-shrink:0}
+  .board-col-title{font-size:var(--fs-12);font-weight:600;color:var(--text-1)}
   .drag-handle{cursor:grab;color:var(--text-4);font-size:14px;padding:0 2px;flex-shrink:0;user-select:none;width:12px;display:flex;align-items:center;justify-content:center}
   .drag-handle:hover{color:var(--text-2)}
   .drag-handle:active{cursor:grabbing}

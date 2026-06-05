@@ -2318,168 +2318,385 @@ function _boardMiniCard(k){
   return mc;
 }
 
+// Board grouping: which axis to slice into columns. Honours the existing
+// taskGroupBy selector (list view & board view share the dropdown), falling
+// back to status when group is 'none' so the default board still works.
+function _boardGroupMode(){
+  return (typeof taskGroupBy === 'string' && ['status','priority','list','due'].includes(taskGroupBy))
+    ? taskGroupBy : 'status';
+}
+// Column definitions per mode: ordered list of {key,label,colorVar?,badgeCls?}.
+// keys map 1:1 to the value a task carries on the grouping axis, so a drop
+// into a column body can be reversed into a single field update.
+function _boardColumnsForMode(mode){
+  if(mode === 'status'){
+    return STATUS_ORDER.map(k => ({key:k, label:STATUSES[k].label, badgeCls:STATUSES[k].cls, dataStatus:k}));
+  }
+  if(mode === 'priority'){
+    return ['urgent','high','normal','low','none'].map(k => ({
+      key:k,
+      label:(PRIORITIES[k]||{label:k}).label,
+      badgeCls:'status-badge priority-'+k+'-badge',
+      colorVar:({urgent:'var(--danger)',high:'var(--warning)',normal:'var(--accent)',low:'var(--text-3)',none:'var(--text-4)'})[k],
+    }));
+  }
+  if(mode === 'list'){
+    const cols = (Array.isArray(lists)?lists:[]).map(l => ({
+      key:String(l.id), label:l.name, colorVar:l.color
+    }));
+    cols.push({key:'none', label:'No list', colorVar:'var(--text-4)'});
+    return cols;
+  }
+  if(mode === 'due'){
+    const order = ['overdue','today','tomorrow','thisweek','later','zzzunscheduled'];
+    const labels = {overdue:'Overdue',today:'Today',tomorrow:'Tomorrow',thisweek:'This Week',later:'Later',zzzunscheduled:'Unscheduled'};
+    const colors = {overdue:'var(--danger)',today:'var(--warning)',tomorrow:'var(--accent)',thisweek:'var(--accent)',later:'var(--text-3)',zzzunscheduled:'var(--text-4)'};
+    return order.map(k => ({key:k, label:labels[k], colorVar:colors[k]}));
+  }
+  return [];
+}
+// Inverse of column key: which column does this task belong in?
+function _boardKeyOf(t, mode){
+  if(mode === 'status') return t.status || 'open';
+  if(mode === 'priority') return t.priority || 'none';
+  if(mode === 'list') return String(t.listId || 'none');
+  if(mode === 'due'){
+    const today = todayISO();
+    if(!t.dueDate) return 'zzzunscheduled';
+    if(t.dueDate < today) return 'overdue';
+    if(t.dueDate === today) return 'today';
+    const tmr=new Date();tmr.setDate(tmr.getDate()+1);
+    const tmrISO=tmr.getFullYear()+'-'+String(tmr.getMonth()+1).padStart(2,'0')+'-'+String(tmr.getDate()).padStart(2,'0');
+    if(t.dueDate === tmrISO) return 'tomorrow';
+    const wk=new Date();wk.setDate(wk.getDate()+7);
+    const wkISO=wk.getFullYear()+'-'+String(wk.getMonth()+1).padStart(2,'0')+'-'+String(wk.getDate()).padStart(2,'0');
+    if(t.dueDate <= wkISO) return 'thisweek';
+    return 'later';
+  }
+  return 'all';
+}
+// Apply a column drop: write the single field the column represents. Mirrors
+// the keying in _boardKeyOf so curKey===colKey is the no-op test.
+function _applyBoardKeyChange(t, mode, key){
+  if(mode === 'status'){
+    t.status = key;
+    if(key === 'done'){
+      if(t.recur && typeof completeHabitCycle === 'function') completeHabitCycle(t);
+      else t.completedAt = stampCompletion();
+    } else {
+      t.completedAt = null;
+    }
+  } else if(mode === 'priority'){
+    t.priority = (key === 'none') ? null : key;
+  } else if(mode === 'list'){
+    if(key === 'none') t.listId = null;
+    else { const lid = parseInt(key,10); if(Number.isFinite(lid)) t.listId = lid; }
+  } else if(mode === 'due'){
+    if(key === 'zzzunscheduled'){ t.dueDate = null; t.reminderFired = false; return; }
+    const d = new Date();
+    if(key === 'tomorrow') d.setDate(d.getDate()+1);
+    else if(key === 'thisweek') d.setDate(d.getDate()+3);
+    else if(key === 'later') d.setDate(d.getDate()+14);
+    else if(key === 'overdue') d.setDate(d.getDate()-1);
+    // 'today' leaves d as today
+    t.dueDate = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    t.reminderFired = false;
+  }
+}
+
+// Card builder for the board. Returns a .board-card with:
+//   .board-card-header  — the drag handle + click-to-open surface
+//   .board-card-children — a nested Sortable target for indent-by-drop
+// Always renders the children container (even when empty) so it can accept
+// drops; CSS hides it visually when empty and not actively a drop target.
+function _renderBoardCard(t){
+  const card = document.createElement('div');
+  card.className = 'board-card priority-'+(t.priority||'none')+'-card';
+  card.dataset.taskId = String(t.id);
+
+  const hdr = document.createElement('div');
+  hdr.className = 'board-card-header';
+  // The header is the click + drag surface. Excluding the children container
+  // from this means clicks on nested cards open their own detail, not the
+  // parent's, and Sortable's `handle: .board-card-header` lets users grab the
+  // card without hijacking taps on subtask cards underneath.
+  hdr.onclick = function(e){
+    if(e.target.closest('[data-action]') || e.target.closest('.board-mini-card')) return;
+    openTaskDetail(t.id);
+  };
+  const path = getTaskPath(t.id);
+  const breadcrumb = path.length>1 ? '<div class="board-breadcrumb">'+esc(path.slice(0,-1).join(' › '))+'</div>' : '';
+  const dueIc = (typeof window.icon==='function') ? window.icon('calendar',{size:12}) : '';
+  const ddc = t.dueDate && typeof describeDue==='function' ? describeDue(t.dueDate) : {cls:getDueClass(t.dueDate),label:fmtDue(t.dueDate)};
+  const dueMod = ddc && ddc.cls ? ' date-chip--'+ddc.cls : '';
+  const due = t.dueDate ? '<span class="date-chip'+dueMod+'">'+dueIc+' '+esc(String(ddc.label||fmtDue(t.dueDate)||''))+'</span>' : '';
+  const tags = (t.tags||[]).slice(0,2).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
+  const time = getRolledUpTime(t.id)>0 ? '<span class="task-elapsed">'+fmtHMS(getRolledUpTime(t.id))+'</span>' : '';
+  hdr.innerHTML = breadcrumb
+    + '<div class="board-card-name">'+esc(t.name)+'</div>'
+    + '<div class="board-card-meta">'+due+tags+time+'</div>';
+
+  const children = document.createElement('div');
+  children.className = 'board-card-children';
+
+  const kids = getTaskChildren(t.id).filter(k=>!k.archived);
+  if(kids.length){
+    const prog = (typeof getSubtaskProgress==='function') ? getSubtaskProgress(t.id) : null;
+    const expanded = !!t.boardExpanded;
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'board-subs-toggle'+(expanded?' expanded':'');
+    pill.dataset.action='toggleBoardExpand';
+    pill.dataset.args='['+t.id+']';
+    pill.setAttribute('aria-expanded', expanded?'true':'false');
+    pill.draggable = false;
+    pill.innerHTML = '<span class="bst-caret" aria-hidden="true">▸</span>'
+      + kids.length + ' subtask' + (kids.length>1?'s':'')
+      + (prog ? ' · '+prog.done+'/'+prog.total+' done' : '');
+    hdr.appendChild(pill);
+    if(expanded){
+      sortTasks(kids).forEach(k => children.appendChild(_renderBoardCard(k)));
+    } else {
+      children.classList.add('is-collapsed');
+    }
+  } else {
+    children.classList.add('is-empty');
+  }
+
+  card.appendChild(hdr);
+  card.appendChild(children);
+  return card;
+}
+
+// Tracks live Sortable instances on the board so each renderBoard rebuild can
+// tear down the previous set before re-wiring. Without this, switching
+// taskGroupBy or returning to the board view leaves orphaned listeners on
+// detached DOM, and Sortable's fallback occasionally races on stale parents.
+const _boardSortables = [];
+function _destroyBoardSortables(){
+  while(_boardSortables.length){
+    const s = _boardSortables.pop();
+    try{ s.destroy(); }catch(e){ /* already gone */ }
+  }
+}
+function _initBoardSortables(){
+  if(typeof window === 'undefined' || typeof window.Sortable !== 'function') return;
+  _destroyBoardSortables();
+  const mode = _boardGroupMode();
+  // Cycle guard for indent-by-drop: a card can't be nested under itself or
+  // any of its descendants. Walks up from the proposed parent — bounded by
+  // the tree depth, which is shallow in practice.
+  function _isCycle(srcId, parentId){
+    if(!Number.isFinite(srcId) || !Number.isFinite(parentId)) return false;
+    if(srcId === parentId) return true;
+    let p = (typeof findTask==='function') ? findTask(parentId) : null;
+    let guard = 0;
+    while(p && guard++ < 1000){
+      if(p.id === srcId) return true;
+      p = p.parentId ? findTask(p.parentId) : null;
+    }
+    return false;
+  }
+  const opts = {
+    group: 'board',
+    animation: 150,
+    // Handle = card header only. The children container is a separate drop
+    // target (nested Sortable) and must not itself initiate a drag on the
+    // parent card — otherwise grabbing a subtask would drag its parent.
+    handle: '.board-card-header',
+    filter: 'button,a,input,select,textarea,[data-action],.board-subs-toggle',
+    preventOnFilter: false,
+    // Force fallback so mouse + touch share one synthetic-drag code path —
+    // identical to the list view's Sortable (js/tasks.js:_initTaskListSortable).
+    forceFallback: true,
+    fallbackOnBody: true,
+    fallbackTolerance: 4,
+    // Tap-vs-drag discriminator on touch: ~200ms hold matches the list view
+    // and keeps tap-to-open responsive.
+    delay: 200,
+    delayOnTouchOnly: true,
+    // Nested-sortables guidance from SortableJS docs: drop center-of-card to
+    // nest, off-center to reorder.
+    swapThreshold: 0.65,
+    invertSwap: true,
+    scroll: true,
+    scrollSensitivity: 80,
+    scrollSpeed: 14,
+    bubbleScroll: true,
+    ghostClass: 'board-card--ghost',
+    chosenClass: 'board-card--chosen',
+    dragClass: 'board-card--dragging',
+    // Reuse the list view's drag-active gate so background re-renders queue
+    // until the drop completes instead of detaching the dragged element.
+    onChoose: function(){ if(typeof _taskDragActive !== 'undefined') _taskDragActive = true; },
+    onUnchoose: function(){
+      if(typeof _taskDragActive !== 'undefined') _taskDragActive = false;
+      if(typeof _taskRenderQueuedDuringDrag !== 'undefined' && _taskRenderQueuedDuringDrag){
+        _taskRenderQueuedDuringDrag = false;
+        if(typeof renderTaskList === 'function') renderTaskList();
+      }
+    },
+    onStart: function(){ document.body.classList.add('board--dragging'); },
+    onMove: function(evt){
+      // Block cycles before the drop commits.
+      const itemId = parseInt((evt.dragged && evt.dragged.dataset && evt.dragged.dataset.taskId) || '', 10);
+      const to = evt.to;
+      if(to && to.classList && to.classList.contains('board-card-children')){
+        const parentCard = to.closest('.board-card[data-task-id]');
+        if(parentCard){
+          const pid = parseInt(parentCard.dataset.taskId, 10);
+          if(_isCycle(itemId, pid)) return false;
+        }
+      }
+      return true;
+    },
+    onEnd: function(evt){
+      document.body.classList.remove('board--dragging');
+      if(typeof _taskDragActive !== 'undefined') _taskDragActive = false;
+      const item = evt.item;
+      const id = parseInt((item && item.dataset && item.dataset.taskId) || '', 10);
+      const src = Number.isFinite(id) && typeof findTask === 'function' ? findTask(id) : null;
+      const to = evt.to;
+      let dirty = false;
+      let movedMsg = null;
+      if(src && to){
+        if(to.classList.contains('board-card-children')){
+          // Indent: nest src under the closest card.
+          const parentCard = to.closest('.board-card[data-task-id]');
+          const pid = parentCard ? parseInt(parentCard.dataset.taskId,10) : NaN;
+          if(Number.isFinite(pid) && !_isCycle(src.id, pid) && src.parentId !== pid){
+            src.parentId = pid;
+            const parent = findTask(pid);
+            if(parent) parent.boardExpanded = true; // reveal the new child
+            dirty = true;
+            movedMsg = 'Nested under ' + (parent ? parent.name : 'task');
+          }
+        } else if(to.classList.contains('board-col-body')){
+          // Column drop: clear parent if it had one, set the grouping field.
+          const col = to.closest('.board-col');
+          const colKey = col ? col.dataset.groupKey : null;
+          if(src.parentId){ src.parentId = null; dirty = true; }
+          if(colKey != null){
+            const curKey = _boardKeyOf(src, mode);
+            if(curKey !== colKey){
+              _applyBoardKeyChange(src, mode, colKey);
+              dirty = true;
+              const colLabel = col && col.dataset.groupLabel ? col.dataset.groupLabel : colKey;
+              movedMsg = 'Moved to ' + colLabel;
+            }
+          }
+        }
+      }
+      // Persist sibling order in the destination container — direct .board-card
+      // children only (not descendants, since each .board-card-children is its
+      // own ordered list).
+      if(to){
+        const sibs = to.querySelectorAll(':scope > .board-card');
+        let orderDirty = false;
+        sibs.forEach((el, i) => {
+          const sid = parseInt(el.dataset.taskId || '', 10);
+          if(!Number.isFinite(sid)) return;
+          const tk = findTask(sid); if(!tk) return;
+          const newOrder = i * 10;
+          if(tk.order !== newOrder){ tk.order = newOrder; orderDirty = true; }
+        });
+        if(orderDirty){
+          if(typeof taskSortBy !== 'undefined' && taskSortBy !== 'manual'){
+            taskSortBy = 'manual';
+            const sel = document.getElementById('taskSortSel');
+            if(sel) sel.value = 'manual';
+          }
+          dirty = true;
+        }
+      }
+      if(dirty){
+        if(typeof saveState === 'function') saveState('user');
+        if(typeof renderTaskList === 'function') renderTaskList();
+        if(movedMsg && typeof showActionToast === 'function'){
+          showActionToast(movedMsg, '', null, 1800);
+        }
+      } else if(typeof _taskRenderQueuedDuringDrag !== 'undefined' && _taskRenderQueuedDuringDrag){
+        _taskRenderQueuedDuringDrag = false;
+        if(typeof renderTaskList === 'function') renderTaskList();
+      }
+    },
+  };
+  document.querySelectorAll('#boardView .board-col-body').forEach(body => {
+    _boardSortables.push(new window.Sortable(body, opts));
+  });
+  document.querySelectorAll('#boardView .board-card-children').forEach(ch => {
+    _boardSortables.push(new window.Sortable(ch, opts));
+  });
+}
+
 // Kanban Board View
 function renderBoard(visibleTasks){
   const board=gid('boardView');board.textContent='';
   const isMobile=window.matchMedia('(max-width:640px)').matches;
   const visibleSet=new Set(visibleTasks.map(t=>t.id));
-  STATUS_ORDER.forEach(st=>{
-    const status=STATUSES[st];
-    // Only top-level cards per column: roots, plus any visible subtask whose
-    // parent is filtered out (so it doesn't silently vanish). Subtasks of a
-    // visible parent are nested under that parent's card instead.
-    const colTasks=sortTasks(visibleTasks.filter(t=>(t.status||'open')===st && (!t.parentId || !visibleSet.has(t.parentId))));
-    // On mobile, hide empty columns unless it's "open" (default drop target) or "done" (completed)
-    if(isMobile&&colTasks.length===0&&st!=='open'&&st!=='done')return;
-    const col=document.createElement('div');col.className='board-col';
-    col.dataset.status=st;
-    col.ondragover=function(e){e.preventDefault();e.dataTransfer.dropEffect='move';col.classList.add('drop-target')};
-    col.ondragleave=function(){col.classList.remove('drop-target')};
-    col.ondrop=function(e){
-      e.preventDefault();col.classList.remove('drop-target');
-      const srcId=parseInt(e.dataTransfer.getData('text/plain'),10);
-      if(!Number.isFinite(srcId)||srcId<=0)return;
-      const src=findTask(srcId);if(!src)return;
-      if(src.status===st)return;
-      const backup=JSON.parse(JSON.stringify(src));
-      src.status=st;
-      if(st==='done'){
-        if(src.recur && typeof completeHabitCycle==='function'){completeHabitCycle(src)}
-        else{src.completedAt=stampCompletion()}
-      }
-      else src.completedAt=null;
-      renderTaskList();saveState('user');
-      if(typeof showActionToast==='function'){
-        showActionToast('Moved to '+STATUSES[st].label, 'Undo', ()=>{
-          const u=findTask(srcId);
-          if(u){Object.assign(u,backup);renderTaskList();saveState('user')}
-        }, 4000);
-      }
-    };
-    col.innerHTML='<div class="board-col-hdr"><span class="status-badge '+status.cls+'">'+status.label+'</span><span class="cc-count">'+colTasks.length+'</span></div><div class="board-col-body"></div>';
-    const body=col.querySelector('.board-col-body');
-    colTasks.forEach(t=>{
-      const card=document.createElement('div');
-      card.className='board-card priority-'+(t.priority||'none')+'-card';
-      card.setAttribute('draggable','true');
-      card.ondragstart=function(e){e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',t.id);card.style.opacity='.4'};
-      card.ondragend=function(){card.style.opacity='1'};
-      // Ignore taps on the subtask expander or a nested mini-card — those have
-      // their own handlers; only a tap on the parent body opens its detail.
-      card.onclick=function(e){
-        if(e.target.closest('[data-action]')||e.target.closest('.board-mini-card'))return;
-        openTaskDetail(t.id);
-      };
-      const path=getTaskPath(t.id);
-      const breadcrumb=path.length>1?'<div class="board-breadcrumb">'+esc(path.slice(0,-1).join(' › '))+'</div>':'';
-      const dueIc=(typeof window.icon==='function')?window.icon('calendar',{size:12}):'';
-      const ddc=t.dueDate&&typeof describeDue==='function'?describeDue(t.dueDate):{cls:getDueClass(t.dueDate),label:fmtDue(t.dueDate)};
-      const dueMod=ddc&&ddc.cls?' date-chip--'+ddc.cls:'';
-      const due=t.dueDate?'<span class="date-chip'+dueMod+'">'+dueIc+' '+esc(String(ddc.label||fmtDue(t.dueDate)||''))+'</span>':'';
-      const tags=(t.tags||[]).slice(0,2).map(tg=>'<span class="tag-chip">'+esc(tg)+'</span>').join('');
-      const time=getRolledUpTime(t.id)>0?'<span class="task-elapsed">'+fmtHMS(getRolledUpTime(t.id))+'</span>':'';
-      card.innerHTML=breadcrumb
-        +'<div class="board-card-name">'+esc(t.name)+'</div>'
-        +'<div class="board-card-meta">'+due+tags+time+'</div>';
-
-      // Nested subtasks: collapsed by default behind a count pill; expanding
-      // reveals tap-to-open mini-cards. Tapping a mini-card opens its detail so
-      // it can be edited or moved — exactly the "click takes you back" ask.
-      const kids=getTaskChildren(t.id).filter(k=>!k.archived);
-      if(kids.length){
-        const prog=(typeof getSubtaskProgress==='function')?getSubtaskProgress(t.id):null;
-        const expanded=!!t.boardExpanded;
-        const pill=document.createElement('button');
-        pill.type='button';
-        pill.className='board-subs-toggle'+(expanded?' expanded':'');
-        pill.dataset.action='toggleBoardExpand';
-        pill.dataset.args='['+t.id+']';
-        pill.setAttribute('aria-expanded',expanded?'true':'false');
-        pill.draggable=false;
-        pill.innerHTML='<span class="bst-caret" aria-hidden="true">▸</span>'
-          +kids.length+' subtask'+(kids.length>1?'s':'')
-          +(prog?' · '+prog.done+'/'+prog.total+' done':'');
-        card.appendChild(pill);
-        if(expanded){
-          const wrap=document.createElement('div');wrap.className='board-card-subs';
-          sortTasks(kids).forEach(k=>wrap.appendChild(_boardMiniCard(k)));
-          card.appendChild(wrap);
-        }
-      }
-
-      // ── Touch drag-and-drop (mobile Kanban) ─────────────────────────────
-      // Ghost-element pattern: clone the card at a fixed position that follows
-      // the finger. elementFromPoint() (with ghost temporarily display:none)
-      // resolves which board column is under the touch. Mirrors the mouse
-      // ondragstart/ondrop path so status changes are committed identically.
-      let _ghost=null,_srcCol=col,_overCol=null;
-      function _applyDrop(dropSt){
-        if(!dropSt||dropSt===(t.status||'open'))return;
-        const src=findTask(t.id);if(!src)return;
-        const backup=JSON.parse(JSON.stringify(src));
-        src.status=dropSt;
-        if(dropSt==='done'){
-          if(src.recur&&typeof completeHabitCycle==='function')completeHabitCycle(src);
-          else src.completedAt=stampCompletion();
-        } else {
-          src.completedAt=null;
-        }
-        if(typeof haptic==='function')haptic(30);
-        renderTaskList();saveState('user');
-        if(typeof showActionToast==='function'){
-          showActionToast('Moved to '+STATUSES[dropSt].label, 'Undo', ()=>{
-            const u=findTask(t.id);
-            if(u){Object.assign(u,backup);renderTaskList();saveState('user')}
-          }, 4000);
-        }
-      }
-      card.addEventListener('touchstart',function(e){
-        if(e.target.closest('button'))return;
-        const r=card.getBoundingClientRect();
-        _ghost=card.cloneNode(true);
-        _ghost.style.cssText='position:fixed;top:'+r.top+'px;left:'+r.left+'px;width:'+r.width+'px;z-index:9999;pointer-events:none;opacity:.88;box-shadow:0 10px 32px rgba(0,0,0,.55);border-radius:var(--r-md,10px);transform:scale(1.04);transition:none';
-        document.body.appendChild(_ghost);
-        card.style.opacity='.28';
-        e.preventDefault();
-      },{passive:false});
-      card.addEventListener('touchmove',function(e){
-        if(!_ghost)return;
-        const touch=e.touches[0];
-        const gh=_ghost.getBoundingClientRect();
-        _ghost.style.top=(touch.clientY-gh.height/2)+'px';
-        _ghost.style.left=(touch.clientX-gh.width/2)+'px';
-        _ghost.style.display='none';
-        const el=document.elementFromPoint(touch.clientX,touch.clientY);
-        _ghost.style.display='';
-        const targetCol=el&&el.closest('.board-col');
-        if(targetCol!==_overCol){
-          if(_overCol)_overCol.classList.remove('drop-target');
-          _overCol=targetCol||null;
-          if(_overCol&&_overCol!==_srcCol)_overCol.classList.add('drop-target');
-        }
-        if(e.cancelable)e.preventDefault();
-      },{passive:false});
-      function _touchEnd(){
-        if(!_ghost)return;
-        _ghost.remove();_ghost=null;
-        card.style.opacity='1';
-        if(_overCol)_overCol.classList.remove('drop-target');
-        const dropSt=_overCol?_overCol.dataset.status:null;
-        _overCol=null;
-        _applyDrop(dropSt);
-      }
-      card.addEventListener('touchend',_touchEnd,{passive:true});
-      card.addEventListener('touchcancel',_touchEnd,{passive:true});
-      // ── end touch DnD ────────────────────────────────────────────────────
-
-      body.appendChild(card)
-    });
-    if(!colTasks.length){
-      const empty=document.createElement('div');empty.className='board-col-empty';
-      empty.textContent=isMobile ? 'No tasks' : 'Drop tasks here';body.appendChild(empty);
+  const mode = _boardGroupMode();
+  const cols = _boardColumnsForMode(mode);
+  // Bucket all visible top-level tasks by column key in one pass. Top-level
+  // means: roots, plus any visible subtask whose parent is filtered out (so it
+  // doesn't silently vanish). Subtasks of a visible parent are rendered nested
+  // inside that parent's card via _renderBoardCard.
+  const buckets = new Map();
+  cols.forEach(c => buckets.set(c.key, []));
+  visibleTasks.forEach(t => {
+    // Top-level predicate (pinned by board-nesting.test.mjs): roots, or any
+    // visible subtask whose parent isn't itself visible.
+    if(!(!t.parentId || !visibleSet.has(t.parentId))) return;
+    const k = _boardKeyOf(t, mode);
+    if(!buckets.has(k)) buckets.set(k, []); // fallback for orphan keys
+    buckets.get(k).push(t);
+  });
+  // Status mode always shows "Open" and "Done" on mobile even if empty since
+  // they're the canonical drop targets; for other modes, hide empty columns
+  // on mobile to save horizontal space.
+  cols.forEach(c => {
+    const colTasks = sortTasks(buckets.get(c.key) || []);
+    if(isMobile && colTasks.length === 0){
+      if(mode === 'status' && (c.key === 'open' || c.key === 'done')){ /* keep */ }
+      else return;
     }
-    board.appendChild(col)
-  })
+    const col=document.createElement('div');
+    col.className='board-col';
+    col.dataset.groupBy = mode;
+    col.dataset.groupKey = c.key;
+    col.dataset.groupLabel = c.label;
+    if(c.dataStatus) col.dataset.status = c.dataStatus; // preserves existing per-status border CSS
+    const hdr=document.createElement('div');
+    hdr.className='board-col-hdr';
+    if(c.badgeCls){
+      hdr.innerHTML='<span class="status-badge '+c.badgeCls+'">'+esc(c.label)+'</span>'
+        +'<span class="cc-count">'+colTasks.length+'</span>';
+    } else {
+      const swatch = c.colorVar ? '<span class="board-col-swatch" aria-hidden="true"></span>' : '';
+      hdr.innerHTML=swatch+'<span class="board-col-title">'+esc(c.label)+'</span>'
+        +'<span class="cc-count">'+colTasks.length+'</span>';
+    }
+    col.appendChild(hdr);
+    if(c.colorVar){
+      const sw = hdr.querySelector('.board-col-swatch');
+      if(sw) sw.style.background = c.colorVar;
+      col.style.borderTopColor = c.colorVar;
+    }
+    const body=document.createElement('div');
+    body.className='board-col-body';
+    colTasks.forEach(t => body.appendChild(_renderBoardCard(t)));
+    if(!colTasks.length){
+      const empty=document.createElement('div');
+      empty.className='board-col-empty';
+      empty.textContent = isMobile ? 'No tasks' : 'Drop tasks here';
+      body.appendChild(empty);
+    }
+    col.appendChild(body);
+    board.appendChild(col);
+  });
+  // Wire SortableJS after the DOM is committed so the column-body and
+  // card-children targets exist. Replaces the old HTML5 ondragstart/ondrop +
+  // bespoke touch ghost-element code — one unified mouse+touch path.
+  _initBoardSortables();
 }
 
 // Task Detail Modal — chips commit immediately to the live task and persist
