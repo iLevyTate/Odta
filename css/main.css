@@ -4502,10 +4502,16 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
   color:var(--text-2);font-size:18px;line-height:1;
 }
 .timer-dock-handle:hover{color:var(--text-1)}
-/* Fully-minimized dock: collapse to just the handle (a small clock puck). */
-.timer-dock--min{padding:2px!important;gap:0!important;border-radius:999px!important;border-left-width:1px!important}
+/* Fully-minimized dock: collapse to just the handle (a small clock puck). The
+   expanded dock shows phase as a 3px left stripe; on the round puck that stripe
+   would wrap into a lopsided arc, so here we neutralize it and draw the phase as
+   a clean, uniform ring around the whole circle instead. */
+.timer-dock--min{padding:2px!important;gap:0!important;border-radius:999px!important;border-width:1.5px!important;border-color:var(--border)!important}
 .timer-dock--min > :not(.timer-dock-handle){display:none!important}
 .timer-dock--min .timer-dock-handle{display:flex}
+.timer-dock--min.work  {border-color:var(--accent-border)!important}
+.timer-dock--min.short {border-color:var(--success-border)!important}
+.timer-dock--min.long  {border-color:var(--warning-border)!important}
 .timer-dock--min.work  .timer-dock-handle{color:var(--work)}
 .timer-dock--min.short .timer-dock-handle{color:var(--success)}
 .timer-dock--min.long  .timer-dock-handle{color:var(--long)}
