@@ -1,32 +1,11 @@
 // ========== GOALS ==========
-// The goals UI was removed; goals state still flows through storage/sync
-// so existing user data is preserved, but no UI surface adds new goals.
-function toggleGoal(id){const g=goals.find(x=>x.id===id);if(g){g.done=!g.done;g.doneAt=g.done?timeNow():null;g.lastModified=Date.now()}renderGoalList();saveState('user')}
-function removeGoal(id){
-  if(typeof syncGoalDels==='object'&&syncGoalDels)syncGoalDels[id]=Date.now();
-  goals=goals.filter(g=>g.id!==id);
-  renderGoalList();
-  saveState('user');
-}
-function renderGoalList(){
-  const list=gid('goalList');if(!list)return; // panel removed — skip everything
-  const cnt=gid('goalCount');if(cnt)cnt.textContent=goals.filter(g=>g.done).length+' / '+goals.length;
-  list.querySelectorAll('.goal-item').forEach(e=>e.remove());
-  const empty=gid('goalEmpty'),prog=gid('goalProgress');
-  if(!goals.length){if(empty)empty.hidden = false;if(prog)prog.hidden = true;return}
-  if(empty)empty.hidden = true;if(prog)prog.hidden = false;
-  const pct=goals.length?Math.round((goals.filter(g=>g.done).length/goals.length)*100):0;
-  const bar=gid('goalBar'),pctEl=gid('goalPct');
-  if(bar)bar.style.width=pct+'%';if(pctEl)pctEl.textContent=pct+'%';
-  [...goals.filter(g=>!g.done),...goals.filter(g=>g.done)].forEach(g=>{
-    const d=document.createElement('div');d.className='goal-item'+(g.done?' checked':'');
-    const chk=document.createElement('button');chk.className='goal-check'+(g.done?' on':'');chk.textContent=g.done?'✓':'';chk.onclick=function(){toggleGoal(g.id)};d.appendChild(chk);
-    const txt=document.createElement('span');txt.className='goal-text';txt.textContent=g.text;d.appendChild(txt);
-    if(g.doneAt){const gt=document.createElement('span');gt.className='goal-time';gt.textContent=g.doneAt;d.appendChild(gt)}
-    const rm=document.createElement('button');rm.className='goal-rm';rm.textContent='×';rm.onclick=function(){removeGoal(g.id)};d.appendChild(rm);
-    list.appendChild(d)
-  })
-}
+// The goals UI was removed; goals state still flows through storage/sync so
+// existing user data is preserved, but no UI surface adds, edits, or renders
+// goals. renderGoalList() is kept as a no-op stub because several callers
+// (storage rehydrate, day rollover, applyState) still invoke it after a
+// state change — keeping the symbol means we don't have to chase every
+// caller.
+function renderGoalList(){}
 
 // ========== CLICKUP-STYLE TASKS ==========
 // Safe stopPropagation helper. Functions like removeTask/toggleStar are
@@ -1685,27 +1664,13 @@ function setSmartView(v){
 }
 
 /**
- * Apply or remove the collapsed-state class to the smart-views bar and sync
- * the toggle button's aria-expanded attribute. Pure DOM — does not persist.
+ * Apply or remove the collapsed-state class to the smart-views bar.
+ * Pure DOM — does not persist.
  */
 function _applySmartViewsCollapsed(collapsed){
   const root = gid('smartViews');
   if(root) root.classList.toggle('smart-views--collapsed', !!collapsed);
-  const toggle = gid('svToggle');
-  if(toggle){
-    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    toggle.title = collapsed ? 'Show all views' : 'Hide other views';
-    const arrow = toggle.querySelector('.sv-toggle-arrow');
-    if(arrow) arrow.textContent = collapsed ? '▾' : '▴';
-  }
 }
-
-function toggleSmartViews(){
-  smartViewsExpanded = !smartViewsExpanded;
-  _applySmartViewsCollapsed(!smartViewsExpanded);
-  if(typeof saveState === 'function') saveState('user');
-}
-window.toggleSmartViews = toggleSmartViews;
 
 // Star toggle
 function toggleStar(id, ev){
@@ -4079,16 +4044,13 @@ function restoreTaskToolbarPrefs(){
   if(sc){
     try{ sc.checked = localStorage.getItem((window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.SHOW_DONE_ALL) || 'stupind_show_done_all') === '1'; }catch(e){}
   }
-  // Reflect persisted density on the new segmented control (and legacy
-  // checkbox if still present).
+  // Reflect persisted density on the segmented control.
   const _d = getCardDensity();
   document.querySelectorAll('.density-seg-btn').forEach(b=>{
     const on = b.dataset.density === _d;
     b.setAttribute('aria-checked', on ? 'true' : 'false');
     b.classList.toggle('on', on);
   });
-  const cd = gid('cardDensityDetailed');
-  if(cd){ cd.checked = (_d === 'comfortable'); }
   const hh = gid('hideHabitsInMain');
   if(hh && typeof cfg === 'object' && cfg && typeof cfg.hideHabitsInMainViews === 'boolean'){
     hh.checked = cfg.hideHabitsInMainViews;

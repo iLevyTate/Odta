@@ -1014,17 +1014,6 @@ function _renderAskStatus(state,msg){
     _cmdkAskUpdate(target, { status: 'need-model', needModel: info });
   }
 }
-function _updateAskLabel(totalChars){
-  const lbl=gid('cmdkAskLabel');if(!lbl)return;
-  // Try to extract "count so far" by scanning for completed op entries
-  // without doing a full parse — just count top-level `{"name"` occurrences.
-  const stream=gid('cmdkAskStream');
-  const txt=stream?stream.textContent:'';
-  const matches=txt.match(/\{\s*"name"/g);
-  const n=matches?matches.length:0;
-  if(n>0)lbl.textContent=`Planning ${n} change${n!==1?'s':''}…`;
-  else lbl.textContent='Thinking on-device…';
-}
 // Map an askRun failure reason to user-facing copy. Internal codes
 // (SCHEMA_UNAVAILABLE, ASK_HELPERS_MISSING, unknown) must never reach the
 // user verbatim. GEN_NOT_READY is handled separately by the caller because it
@@ -4231,7 +4220,7 @@ window.toggleBreakdownAccordion = function(){
 };
 
 function updateMiniTimer(){
-  const el=gid('timerDock')||gid('miniTimer');if(!el)return;
+  const el=gid('timerDock');if(!el)return;
   // Hide on the Timer tab (the full timer is already visible there)
   if(activeTab==='focus'){el.classList.remove('visible');return}
   el.classList.add('visible');

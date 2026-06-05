@@ -87,7 +87,6 @@
     --accent-bg:rgba(26,140,255,.14);
     --accent-border:rgba(26,140,255,.34);
     /* Brand gradient — primary "+ Add", FAB, active nav, header mark. */
-    --brand-2:#18d4e6;
     --brand-grad:linear-gradient(135deg,#1a8cff 0%,#14b4e0 50%,#18d4e6 100%);
     --brand-grad-soft:linear-gradient(135deg,rgba(26,140,255,.18),rgba(24,212,230,.16));
     --text-on-brand:#04121f;
@@ -140,7 +139,6 @@
        lightly-lit cards rather than hard boxes. A faint top→bottom wash plus a
        hairline top highlight gives depth without heavy borders. */
     --surface-grad:linear-gradient(180deg,#16212f,#0f1825);
-    --surface-grad-soft:linear-gradient(180deg,#131e2c,#0d1622);
     /* Faded dividers — fade out at both ends and stay translucent through the
        middle so a panel/sidebar edge reads as a soft seam, not a hard box line.
        `-h` is the horizontal twin for the top bar's lower edge.
@@ -151,7 +149,7 @@
        legacy rules continue to work. */
     --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px;
     --space-5:10px;--space-6:12px;--space-7:14px;--space-8:16px;
-    --space-9:24px;--space-10:32px;
+    --space-9:24px;
     /* Fluid type ramp — clamp() so phones see the floor, big screens scale up,
        no value drops below 11px (the smallest accessible body text). */
     --fs-12:clamp(11px,0.4vw + 10px,12px);
@@ -159,11 +157,9 @@
     --fs-14:clamp(13px,0.6vw + 12px,15px);
     --fs-16:clamp(14px,0.8vw + 12px,16px);
     --fs-20:clamp(18px,1.5vw + 14px,22px);
-    --fs-32:clamp(26px,3vw + 16px,34px);
     --fs-48:clamp(36px,6vw + 12px,52px);
     /* Animation easing language — unified across all transitions */
     --ease-out:cubic-bezier(0.16,1,0.3,1);
-    --ease-spring:cubic-bezier(0.175,0.885,0.32,1.275);
     --ease-in-out:cubic-bezier(0.45,0,0.55,1);
     --dur-fast:120ms;
     --dur-base:200ms;
@@ -211,12 +207,10 @@
     --border:#cdd8e6;--border-subtle:#dde5f0;--border-strong:#bcc9da;
     /* Light surface gradients — keep panels bright, just a whisper of cool wash. */
     --surface-grad:linear-gradient(180deg,#ffffff,#f7faff);
-    --surface-grad-soft:linear-gradient(180deg,#fbfdff,#f3f7fc);
     /* Brand on light: a deeper Intel blue so accent text/fills clear AA on white. */
     --accent:#0a6fd6;
     --accent-bg:rgba(10,111,214,.10);
     --accent-border:rgba(10,111,214,.30);
-    --brand-2:#0aa6c4;
     --brand-grad:linear-gradient(135deg,#0a6fd6 0%,#0a9bcf 50%,#0aa6c4 100%);
     --brand-grad-soft:linear-gradient(135deg,rgba(10,111,214,.10),rgba(10,166,196,.10));
     /* Cool-grey text tuned to clear AA on the silver --bg-0. */
@@ -716,17 +710,6 @@
      are shared with `.sv-chip` in the design-system block further down so
      sheets and scroll strips render the same chip language. */
   .smart-views--collapsed .sv-chip:not(.active):not(.sv-chip-pinned){display:none}
-  .sv-toggle{
-    display:inline-flex;align-items:center;gap:4px;
-    padding:7px 10px;border-radius:7px;border:1px dashed var(--border-strong);
-    background:transparent;color:var(--text-3);
-    font-size:11px;font-weight:600;letter-spacing:.4px;
-    cursor:pointer;font-family:inherit;flex-shrink:0;order:99;
-    transition:border-color var(--dur-base) var(--ease-out),background var(--dur-base) var(--ease-out),color var(--dur-base) var(--ease-out);
-  }
-  .sv-toggle:hover{background:var(--bg-3);color:var(--text-1);border-style:solid}
-  .sv-toggle-arrow{font-size:10px;line-height:1}
-  .smart-views:not(.smart-views--collapsed) .sv-toggle{order:99}
 
   /* Star button */
   .task-star{width:20px;height:20px;background:transparent;border:none;color:var(--text-4);font-size:14px;line-height:1;cursor:pointer;transition:color var(--dur-base) var(--ease-out);flex-shrink:0;padding:0;display:flex;align-items:center;justify-content:center}
@@ -812,29 +795,6 @@
   .mt-pause{background:var(--accent)}
   .mt-btn:hover{filter:brightness(1.15);transform:scale(1.05)}
   .mt-open{font-size:9px;color:var(--text-3);letter-spacing:1px;padding-left:4px;border-left:1px solid var(--border)}
-
-  .goal-form{display:flex;gap:8px;margin-bottom:12px}
-  .goal-input{flex:1;padding:9px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-1);font-size:12px;font-family:inherit;outline:0}
-  .goal-input:focus{border-color:var(--accent-border);box-shadow:0 0 0 2px var(--accent-bg)}
-  .goal-input::placeholder{color:var(--text-4)}
-  .goal-add{padding:9px 16px;background:var(--success);border:none;border-radius:var(--r-sm);color:var(--text-on-accent);font-size:11px;font-weight:700;letter-spacing:1px;white-space:nowrap}
-  .goal-add:hover{filter:brightness(1.08)}
-  .goal-list{display:flex;flex-direction:column;gap:4px;max-height:320px;overflow-y:auto}
-  .goal-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-sm);background:var(--bg-1);border:1px solid var(--border-subtle);transition:background var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out);animation:slideIn var(--dur-base) var(--ease-out)}
-  .goal-item.checked{background:color-mix(in srgb,var(--success) 8%,var(--bg-1));border-color:var(--success-border)}
-  .goal-check{width:22px;height:22px;border-radius:var(--r-sm);border:2px solid var(--border-strong);background:transparent;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;cursor:pointer;transition:border-color var(--dur-base) var(--ease-out),background var(--dur-base) var(--ease-out);color:transparent}
-  .goal-check:hover{border-color:var(--accent)}
-  .goal-check.on{border-color:var(--success);background:var(--success-bg);color:var(--success);animation:checkPop .25s}
-  .goal-text{flex:1;font-size:12px;color:var(--text-2);transition:color var(--dur-base) var(--ease-out);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .goal-item.checked .goal-text{text-decoration:line-through;color:var(--text-4)}
-  .goal-time{font-size:9px;color:var(--text-4);flex-shrink:0}
-  .goal-rm{width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border-subtle);border-radius:var(--r-sm);color:var(--text-4);font-size:10px;flex-shrink:0;cursor:pointer;transition:color var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out)}
-  .goal-rm:hover{color:var(--danger);border-color:var(--danger-border)}
-  .goal-empty{text-align:center;padding:16px 0;color:var(--text-4);font-size:11px;letter-spacing:1px}
-  .goal-progress{margin-top:10px;display:flex;align-items:center;gap:10px}
-  .goal-bar-wrap{flex:1;height:6px;background:var(--bg-0);border-radius:3px;overflow:hidden;border:1px solid var(--border-subtle)}
-  .goal-bar{height:100%;background:linear-gradient(90deg,var(--success),color-mix(in srgb,var(--success) 70%,var(--bg-0)));border-radius:3px;transition:width var(--dur-slow) var(--ease-out)}
-  .goal-pct{font-size:11px;font-weight:700;color:var(--success);min-width:36px;text-align:right}
 
   .log-list{display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto}
   .log-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r-sm);background:var(--bg-1);font-size:10px;border:1px solid var(--border-subtle)}
@@ -1576,13 +1536,6 @@
   .qt-preset{background:var(--bg-2);border-color:var(--border);color:var(--text-2);font-size:12px;font-weight:500;letter-spacing:0;padding:6px 14px;border-radius:999px}
   .qt-preset:hover{background:var(--bg-3);color:var(--text-1)}
 
-  /* Goals */
-  .goal-item{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px}
-  .goal-text{font-size:14px;color:var(--text-1)}
-  .goal-empty{color:var(--text-4);font-size:13px;padding:20px;text-align:center}
-  .goal-input{background:var(--bg-2);border-color:var(--border);color:var(--text-1);font-size:13px;padding:9px 12px;border-radius:var(--r-sm)}
-  .goal-add{background:var(--accent);color:var(--text-on-accent);font-weight:600;font-size:12px;letter-spacing:0;text-transform:none;padding:9px 14px;border-radius:var(--r-sm)}
-
   /* Task desc preview */
   .task-desc-preview{font-size:12px;color:var(--text-3);font-style:normal;letter-spacing:0}
   .task-link-badge{background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent-border);font-size:10px;font-weight:600;letter-spacing:0;text-transform:none;padding:1px 7px;border-radius:999px}
@@ -1771,24 +1724,6 @@
   /* Modal Stats row */
   .modal-stat{background:var(--bg-2);color:var(--text-2);font-size:12px;padding:10px 14px;border-radius:var(--r-sm);letter-spacing:0;text-transform:none;line-height:1.5}
   .modal-stat b{color:var(--text-1)}
-
-  /* Goal progress */
-  .goal-progress{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;margin-top:10px;display:flex;align-items:center;gap:10px}
-  .goal-pct{font-size:13px;font-weight:600;color:var(--text-1);font-family:var(--font-mono);min-width:40px;text-align:right}
-  .goal-bar-wrap{flex:1;height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden}
-  .goal-bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--success));transition:width .3s}
-
-  /* Goal/task button radii */
-  .goal-check{width:22px;height:22px;border-radius:7px;border:2px solid var(--border-strong);background:transparent;color:transparent;font-size:12px;font-weight:700;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer}
-  .goal-check:hover{border-color:var(--success)}
-  .goal-check.on{background:var(--success);border-color:var(--success);color:var(--text-on-accent)}
-
-  /* Goal remove */
-  .goal-rm{width:22px;height:22px;background:transparent;border:none;color:var(--text-4);font-size:14px;cursor:pointer;border-radius:var(--r-sm);margin-left:auto}
-  .goal-rm:hover{color:var(--danger);background:var(--danger-bg)}
-
-  /* Goal time */
-  .goal-time{font-size:11px;color:var(--text-4);margin-right:6px}
 
   /* Log dot + dur */
   .log-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
@@ -2339,11 +2274,11 @@
 
     /* Quick Timers presets - smaller pills */
     .qt-preset{padding:7px 12px;font-size:13px;min-height:38px}
-    .qt-form,.goal-form{flex-wrap:wrap;gap:6px}
+    .qt-form{flex-wrap:wrap;gap:6px}
     .iform{flex-wrap:wrap;gap:6px}
-    .qt-item,.iitem,.goal-item{padding:10px 12px;flex-wrap:wrap}
+    .qt-item,.iitem{padding:10px 12px;flex-wrap:wrap}
     .qt-time{font-size:18px}
-    .iadd,.goal-add,.qt-add{min-height:40px;padding:9px 14px}
+    .iadd,.qt-add{min-height:40px;padding:9px 14px}
 
     /* Mini-timer - respect safe-area, smaller on mobile */
     .mini-timer{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;padding:6px 10px!important;gap:8px!important}
@@ -2524,12 +2459,12 @@
 
     /* === TOOLS: Stopwatch display smaller === */
     #swDisplay{font-size:36px!important;letter-spacing:2px!important;margin-bottom:14px!important}
-    [data-tab="tools"] button[onclick="swToggle()"],[data-tab="tools"] button[onclick="swLap()"],[data-tab="tools"] button[onclick="swReset()"]{min-height:44px;padding:10px 18px!important;font-size:13px!important;flex:1}
+    [data-tab="tools"] button[data-action="swToggle"],[data-tab="tools"] button[data-action="swLap"],[data-tab="tools"] button[data-action="swReset"]{min-height:44px;padding:10px 18px!important;font-size:13px!important;flex:1}
 
     /* === DATA tab: destructive buttons clearly styled === */
-    button[onclick="clearLog()"],
-    button[onclick="resetStats()"],
-    button[onclick="clearArchive()"]{color:var(--danger)!important;border:1px solid var(--danger-border)!important;background:var(--danger-bg)!important}
+    button[data-action="clearLog"],
+    button[data-action="resetStats"],
+    button[data-action="clearArchive"]{color:var(--danger)!important;border:1px solid var(--danger-border)!important;background:var(--danger-bg)!important}
 
     /* === SETTINGS: tighter rows, clearer sections === */
     .sbody{padding:10px 0 14px}
@@ -4011,7 +3946,6 @@ body:has(.cmdk-overlay.open)  #exportToast{
   .qt-act{border-radius:var(--r-sm)}
   .mfield-chip-btn{border-radius:var(--r-sm)}
   .board-col{border-radius:var(--r-lg)}
-  .goal-item{border-radius:var(--r-md)}
   .tab{border-radius:calc(var(--r-sm) + 2px)}
   .modal-close{border-radius:var(--r-sm)}
 
@@ -4587,12 +4521,12 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .md-attach-card img{max-width:120px;max-height:120px;display:block}
 .md-attach-thumb{cursor:zoom-in}
 .md-attach-card audio{max-width:min(100%,280px);min-width:200px}
-.md-attach-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;z-index:1}
+.md-attach-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:var(--text-on-inverse);cursor:pointer;z-index:1}
 .attach-lightbox{position:fixed;inset:0;z-index:calc(var(--z-modal) + 3);background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:24px 16px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
 .attach-lightbox.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
 .attach-lightbox-body{display:flex;align-items:center;justify-content:center;max-width:100%;max-height:100%}
 .attach-lightbox-body img{max-width:min(96vw,1400px);max-height:min(90vh,1200px);width:auto;height:auto;object-fit:contain;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,.45)}
-.attach-lightbox-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border:none;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font-size:24px;line-height:1;cursor:pointer;z-index:1}
+.attach-lightbox-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border:none;border-radius:50%;background:rgba(255,255,255,.12);color:var(--text-on-inverse);font-size:24px;line-height:1;cursor:pointer;z-index:1}
 .attach-lightbox-close:hover{background:rgba(255,255,255,.22)}
 @media (min-width:720px){
   #taskModal .modal-body .mfield-row--modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -4677,7 +4611,7 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .md-breakdown-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .md-breakdown-btn{padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;color:var(--text-1);cursor:pointer;margin-top:8px}
 .md-breakdown-btn:hover{border-color:var(--accent)}
-.md-breakdown-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.md-breakdown-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--text-on-inverse)}
 .md-breakdown-btn--primary:hover{filter:brightness(1.1)}
 
 .cmdk-ask-toggle{
@@ -4773,7 +4707,7 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .cmdk-ask-turn--q{justify-content:flex-end}
 .cmdk-ask-turn--a{justify-content:flex-start}
 .cmdk-ask-bubble{max-width:88%;padding:10px 12px;border-radius:14px;line-height:1.5;font-size:13px;word-break:break-word;white-space:pre-wrap}
-.cmdk-ask-bubble--q{background:var(--accent,#3d8bcc);color:#fff;border-bottom-right-radius:4px;font-weight:500}
+.cmdk-ask-bubble--q{background:var(--accent);color:var(--text-on-inverse);border-bottom-right-radius:4px;font-weight:500}
 .cmdk-ask-bubble--a{background:var(--bg-1);color:var(--text-1);border:1px solid var(--border-subtle);border-bottom-left-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
 .cmdk-ask-bubble--a .cmdk-ask-rejected{margin-top:4px}
 
