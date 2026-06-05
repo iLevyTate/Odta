@@ -1,5 +1,12 @@
 # Changelog
 
+## v71 — 2026-06-05
+
+- **UI (surfaces)**: softened the boxy look of the app shell. The sidebar's hard full-height divider is now a faded gradient that tapers off top and bottom, and panels render as rounder, softly-lit cards — a subtle top→bottom gradient fill, a larger corner radius (`--r-xl`), and a hairline top highlight in place of a flat box with a crisp border. New `--surface-grad` / `--surface-grad-soft` / `--divider-fade` tokens, with light-theme overrides so panels stay bright in light mode.
+- **Timer dock**: minimizing now shrinks the floating dock to a smaller **pill** (hiding the label/time while keeping the phase dot and play/minimize controls) instead of collapsing to a round puck — the puck's lopsided phase arc and its restore handle are gone.
+- **Timer dock**: added a **"Show floating timer on other tabs"** toggle on the Focus Timer panel so you can keep the floating dock fully off other pages. Backed by a new `cfg.showTimerDock` preference (default on) that persists and restores like the other timer toggles.
+- Service worker cache rotated to `odtaulai-v71`.
+
 ## v70 — 2026-06-05
 
 - **Fix (PWA cache / "fixes don't show up")**: rotated the service-worker cache to `odtaulai-v70`. Several recent UI changes — the fully-minimizable **timer dock**, the visual filter builder, quick-capture pills, the task-detail segmented panel / side-peek drawer, and header property pills — all merged while the cache name stayed pinned at `odtaulai-v69`. Because `activate` only deletes caches whose name differs from the current one, and the fetch handler serves `cached || net`, an installed/returning client kept being served the **old v69 bundle**, so those features (and any fix to them) appeared to "still not work" no matter how many times they shipped. Bumping the version gives the worker a new cache name, evicting the stale bundle and pulling fresh CSS/JS on next load. Version string, `swCache`, the `css/main.css?v=` cache-bust query (index.html + SW precache), and the inline-SW fallback in `js/pwa.js` are all moved to `v70` in lockstep.
