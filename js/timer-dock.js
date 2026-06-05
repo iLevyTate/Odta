@@ -8,7 +8,7 @@ function _timerDockCfg(){
 }
 
 function initTimerDock(){
-  const dock = gid('timerDock') || gid('miniTimer');
+  const dock = gid('timerDock');
   if(!dock) return;
   dock.classList.add('timer-dock');
 
@@ -103,7 +103,7 @@ function toggleTimerDockMin(){
 }
 
 function updateTimerDock(){
-  const dock = gid('timerDock') || gid('miniTimer');
+  const dock = gid('timerDock');
   if(!dock) return;
 
   const qtEl = gid('timerDockQt');
