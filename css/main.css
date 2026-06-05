@@ -663,6 +663,13 @@
 
   /* Kanban Board View */
   .board-view{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;min-height:300px;width:100%}
+  /* Edge-to-edge board view. The board's horizontal track behaves like a
+     scroll viewport and needs the full screen width; the comfortable body +
+     panel gutter (~30px each side) that the list/calendar views want is
+     wasted space here. Scoped to `task-view-board` (set in setTaskView) so
+     the other views keep their padding. */
+  body.task-view-board{padding-left:0;padding-right:0}
+  body.task-view-board .panel--tasks{padding-left:0;padding-right:0}
 
   /* Subtask disclosure on a board card */
   .board-subs-toggle{
@@ -1406,7 +1413,7 @@
   .board-col{
     flex:0 0 300px;min-width:280px;display:flex;flex-direction:column;gap:var(--space-3);
     background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);
-    padding:var(--space-5);max-height:600px;
+    padding:var(--space-5);max-height:calc(100vh - 220px);
   }
   .board-col-hdr{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-2) var(--space-4);border-bottom:1px solid var(--border);margin-bottom:var(--space-2)}
   .board-col-hdr .cc-count{margin-left:auto;font-size:var(--fs-12);color:var(--text-3);background:var(--bg-2);padding:var(--space-1) var(--space-4);border-radius:var(--r-sm)}
@@ -1580,7 +1587,7 @@
      drag-state cue is now outline + absolute caption: neither affects layout. */
   .board-card-children{position:relative}
   .board-card-children.is-empty,
-  .board-card-children.is-collapsed{min-height:6px;border-radius:var(--r-sm)}
+  .board-card-children.is-collapsed{min-height:10px;border-radius:var(--r-sm)}
   body.board--dragging .board-card-children.is-empty,
   body.board--dragging .board-card-children.is-collapsed{
     outline:1px dashed var(--border-strong);outline-offset:0;background:var(--bg-2);opacity:.75;
@@ -2290,9 +2297,11 @@
     /* Board view — fluid columns, no scroll snap. Snap was repositioning the
        viewport mid-drag and fighting Sortable's fallback ghost (cards "stuck
        between columns"). Width is now flex-based so the user can pan freely
-       and see the next column's edge — matches Google Tasks' track feel. */
+       and see the next column's edge — matches Google Tasks' track feel.
+       100dvh (dynamic viewport height) avoids the iOS-Safari address-bar
+       100vh bug so the column actually fills the visible area. */
     .board-view{gap:8px;padding:0}
-    .board-col{flex:0 0 86vw!important;min-width:280px;max-width:420px;width:auto!important;flex-shrink:0}
+    .board-col{flex:0 0 86vw!important;min-width:280px;max-width:420px;width:auto!important;flex-shrink:0;max-height:calc(100dvh - 200px)}
     .board-col-hdr{padding:10px 12px}
     .board-card{padding:10px 12px}
     .board-card-name{font-size:13px;-webkit-line-clamp:3}

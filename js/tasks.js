@@ -2888,6 +2888,12 @@ function setTaskView(v){
   gid('boardView').hidden = v !== 'board';
   if(gid('calendarView'))gid('calendarView').hidden = !(v==='calendar');
   document.body.classList.toggle('cal-active-mobile',v==='calendar');
+  // Body classes so CSS can scope per-view rules (notably: edge-to-edge
+  // suppression of body+panel horizontal padding when the board is showing
+  // its horizontal track). No equivalent existed in the codebase prior.
+  document.body.classList.toggle('task-view-board', v==='board');
+  document.body.classList.toggle('task-view-calendar', v==='calendar');
+  document.body.classList.toggle('task-view-list', v!=='board' && v!=='calendar');
   if(v==='calendar' && !_calFocusDate && typeof todayISO==='function') _calFocusDate=todayISO();
   renderTaskList();
   saveState('user')
