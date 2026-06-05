@@ -523,6 +523,13 @@
       <div class="ctrls" id="ctrls"><button class="btn btn-primary" data-action="startTimer">Start</button></div>
     </div>
     <div class="phase-nav-hint">Tap a phase to switch · Tap a pip to jump in cycle</div>
+    <!-- Dock preference — lets the user keep the floating timer off other pages.
+         Lives here (not buried in Settings) so it's easy to find right where the
+         timer is, but styled subtly so it doesn't compete with the controls. -->
+    <div class="dock-pref-row">
+      <span class="dock-pref-lbl" id="lbl-togDock">Show floating timer on other tabs</span>
+      <button type="button" class="toggle on" id="togDock" role="switch" aria-checked="true" aria-labelledby="lbl-togDock" data-action="toggleOpt" data-arg="togDock"><span class="tknob" aria-hidden="true"></span></button>
+    </div>
   </div>
 
   <!-- Quick Timers -->

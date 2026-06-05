@@ -667,6 +667,7 @@ function _applyState(s){
       if(!cfg.timerSub) cfg.timerSub='pomo';
       if(!cfg.calMode) cfg.calMode='month';
       if(!cfg.timerDock || typeof cfg.timerDock!=='object') cfg.timerDock={};
+      if(typeof cfg.showTimerDock!=='boolean') cfg.showTimerDock=true;
       if(typeof cfg.hideHabitsInMainViews!=='boolean') cfg.hideHabitsInMainViews=true;
       if(typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
       const hh=gid('hideHabitsInMain'); if(hh) hh.checked=!!cfg.hideHabitsInMainViews;
@@ -683,6 +684,7 @@ function _applyState(s){
       // when iOS/denied state is the actual blocker, not their toggle setting.
       if(typeof renderNotifStatus === 'function') renderNotifStatus();
       setToggle('togSnpNote', cfg.askSessionNote!==false);
+      setToggle('togDock', cfg.showTimerDock!==false);
       // G-16: restore phase-preset dropdown selection
       const cp=gid('cfgPreset'); if(cp && typeof cfg.phasePreset==='string') cp.value=cfg.phasePreset;
       // G-7: restore focus-list-mode body class so the saved layout matches

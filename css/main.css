@@ -908,6 +908,10 @@
 
   /* Phase nav hint */
   .phase-nav-hint{text-align:center;font-size:9px;color:var(--text-4);letter-spacing:2px;margin-top:10px;text-transform:uppercase}
+  /* Floating-dock preference row — sits under the timer, centered and muted so
+     it's findable without shouting over the controls. */
+  .dock-pref-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-subtle)}
+  .dock-pref-lbl{font-size:var(--fs-12);color:var(--text-3);font-weight:500}
 
   /* =================================================================== */
   /* =========== DESIGN SYSTEM OVERLAY (polish pass) =================== */

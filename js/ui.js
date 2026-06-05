@@ -4234,6 +4234,9 @@ function updateMiniTimer(){
   const el=gid('timerDock')||gid('miniTimer');if(!el)return;
   // Hide on the Timer tab (the full timer is already visible there)
   if(activeTab==='focus'){el.classList.remove('visible');return}
+  // User preference (toggle on the Timer tab): when off, the floating dock
+  // stays fully off the page on every other tab.
+  if(typeof cfg==='object'&&cfg&&cfg.showTimerDock===false){el.classList.remove('visible');return}
   el.classList.add('visible');
   // Phase styling
   el.classList.remove('work','short','long');el.classList.add(phase);
