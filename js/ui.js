@@ -2511,14 +2511,21 @@ function _initBoardSortables(){
     forceFallback: true,
     fallbackOnBody: true,
     fallbackTolerance: 4,
-    // Tap-vs-drag discriminator on touch: ~200ms hold matches the list view
-    // and keeps tap-to-open responsive.
+    // Tap-vs-drag discriminator on touch only: ~200ms hold so tap-to-open
+    // stays responsive on phones. delay:0 on mouse keeps desktop drag snappy
+    // — without this, the cursor had to hover a beat before the ghost would
+    // catch up, which read as "stuck" when crossing column boundaries.
     delay: 200,
     delayOnTouchOnly: true,
-    // Nested-sortables guidance from SortableJS docs: drop center-of-card to
-    // nest, off-center to reorder.
+    touchStartThreshold: 6,
+    // swapThreshold:0.65 keeps the center-of-card area as the "nest" zone and
+    // the edges as reorder slots. invertSwap was previously on, but combined
+    // with the shared 'board' group across column-body + every per-card
+    // children container it multiplied false-positive swap zones — the ghost
+    // flickered between "nest" and "between cards" as the pointer crossed a
+    // column. The list view's Sortable does not use it; dropped here for the
+    // same reason.
     swapThreshold: 0.65,
-    invertSwap: true,
     scroll: true,
     scrollSensitivity: 80,
     scrollSpeed: 14,

@@ -662,7 +662,7 @@
   .mfoot-cancel{background:var(--bg-2);color:var(--text-3);border:1px solid var(--border)}
 
   /* Kanban Board View */
-  .board-view{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;min-height:300px}
+  .board-view{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;min-height:300px;width:100%}
 
   /* Subtask disclosure on a board card */
   .board-subs-toggle{
@@ -1404,7 +1404,7 @@
 
   /* Board view */
   .board-col{
-    flex:0 0 240px;display:flex;flex-direction:column;gap:var(--space-3);
+    flex:0 0 300px;min-width:280px;display:flex;flex-direction:column;gap:var(--space-3);
     background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r-lg);
     padding:var(--space-5);max-height:600px;
   }
@@ -1573,16 +1573,22 @@
      surface a slim dashed strip so the user can clearly aim at "nest here". */
   .board-card-children{display:flex;flex-direction:column;gap:5px;margin-top:6px;min-height:0}
   .board-card-children:not(.is-empty):not(.is-collapsed){padding-left:8px;border-left:2px solid var(--border)}
+  /* Empty / collapsed nested-Sortable targets keep a permanent slim strip so
+     they're always a valid drop zone *without* growing when a drag starts —
+     the previous "grow on drag-start" rule reflowed every card on the board
+     and pulled the drop target out from under the pointer mid-drag. The
+     drag-state cue is now outline + absolute caption: neither affects layout. */
+  .board-card-children{position:relative}
   .board-card-children.is-empty,
-  .board-card-children.is-collapsed{min-height:0}
+  .board-card-children.is-collapsed{min-height:6px;border-radius:var(--r-sm)}
   body.board--dragging .board-card-children.is-empty,
   body.board--dragging .board-card-children.is-collapsed{
-    min-height:24px;margin-top:6px;border:1px dashed var(--border-strong);border-radius:var(--r-sm);
-    background:var(--bg-2);opacity:.75;
+    outline:1px dashed var(--border-strong);outline-offset:0;background:var(--bg-2);opacity:.75;
   }
   body.board--dragging .board-card-children.is-empty::before,
   body.board--dragging .board-card-children.is-collapsed::before{
-    content:'Nest here';display:block;font-size:10px;color:var(--text-3);text-align:center;padding:4px;
+    content:'Nest here';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:var(--text-3);pointer-events:none;
   }
   /* Generic column swatch for non-status group modes (list / priority / due)
      where the header has no STATUSES.cls badge to lean on. */
@@ -2281,9 +2287,12 @@
     .cal-task{font-size:9px;padding:1px 4px;border-radius:2px}
     .cal-task-more{font-size:9px;padding:1px}
 
-    /* Board view — narrower columns, horizontal scroll snap */
-    .board-view{gap:8px;padding:0;scroll-snap-type:x mandatory}
-    .board-col{min-width:78vw!important;width:78vw!important;max-width:78vw!important;scroll-snap-align:start;flex-shrink:0}
+    /* Board view — fluid columns, no scroll snap. Snap was repositioning the
+       viewport mid-drag and fighting Sortable's fallback ghost (cards "stuck
+       between columns"). Width is now flex-based so the user can pan freely
+       and see the next column's edge — matches Google Tasks' track feel. */
+    .board-view{gap:8px;padding:0}
+    .board-col{flex:0 0 86vw!important;min-width:280px;max-width:420px;width:auto!important;flex-shrink:0}
     .board-col-hdr{padding:10px 12px}
     .board-card{padding:10px 12px}
     .board-card-name{font-size:13px;-webkit-line-clamp:3}
@@ -2528,8 +2537,8 @@
     /* === TODAY BANNER: prevent flex overflow causing wrap === */
     .today-banner{padding:10px 6px}
 
-    /* === BOARD: column width tweaks === */
-    .board-col{min-width:82vw!important;width:82vw!important;max-width:82vw!important}
+    /* === BOARD: column width tweaks (fluid; no snap) === */
+    .board-col{flex:0 0 86vw!important;min-width:280px;max-width:420px;width:auto!important}
     .board-col-hdr{padding:8px 10px;font-size:12px}
     .board-card{padding:8px 10px}
 
@@ -2555,7 +2564,7 @@
     .ring-time{font-size:38px}
     .tb-num{font-size:18px!important}
     .today-banner{padding:8px 4px}
-    .board-col{min-width:85vw!important;width:85vw!important}
+    .board-col{flex:0 0 88vw!important;min-width:260px;width:auto!important}
     .qt-preset{flex-basis:calc(25% - 5px);font-size:11px;padding:6px 6px}
     /* Calendar day cells stay comfortably tappable on small phones */
     .cal-day{min-height:60px;padding:3px}
@@ -2564,7 +2573,7 @@
 
   /* === Smallest phones (≤320px iPhone SE / older Android): widen board to near-full-bleed === */
   @media (max-width:320px){
-    .board-col{min-width:88vw!important;width:88vw!important;max-width:88vw!important}
+    .board-col{flex:0 0 92vw!important;min-width:240px;max-width:none;width:auto!important}
     .header h1{font-size:15px}
   }
 
