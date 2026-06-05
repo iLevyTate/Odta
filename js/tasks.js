@@ -2927,7 +2927,12 @@ function setTaskView(v){
   renderTaskList();
   saveState('user')
 }
-function matchesFilters(t){
+// includeDone: when true, the done-status exclusions baked into each smart view
+// are skipped so completed tasks remain visible. The Kanban board passes this so
+// its "Done" column can actually display cards dragged into it — every other
+// (non-status) filter (list / search / priority / due / smart-view criteria)
+// still applies, so the board stays correctly scoped.
+function matchesFilters(t, includeDone){
   // List filter — only apply on 'all' view, not on focused smart views
   const listSensitiveViews=['all','inbox','waiting','stuck'];
   if(!showAllLists&&listSensitiveViews.includes(smartView)&&t.listId&&activeListId&&t.listId!==activeListId)return false;
@@ -2942,22 +2947,26 @@ function matchesFilters(t){
   const opIsList = (taskFilters && taskFilters.ops && Array.isArray(taskFilters.ops.is)) ? taskFilters.ops.is : [];
   const _snoozedOverride = opIsList.includes('snoozed') || opIsList.includes('hidden');
   if(t.hiddenUntil && t.hiddenUntil>today && smartView!=='snoozed' && smartView!=='completed' && !_snoozedOverride) return false;
-  if(smartView==='today'){if(t.dueDate!==today||t.status==='done')return false}
+  // Strict `=== true`: matchesFilters is also passed straight to Array.filter
+  // in places (which would hand us the array index as the 2nd arg), so only an
+  // explicit boolean true relaxes the done-status exclusions.
+  const _doneHidden = t.status==='done' && includeDone!==true;
+  if(smartView==='today'){if(t.dueDate!==today||_doneHidden)return false}
   else if(smartView==='week'){
-    if(!t.dueDate||t.status==='done')return false;
+    if(!t.dueDate||_doneHidden)return false;
     const d=new Date();const w=new Date();w.setDate(d.getDate()+7);
     const weekEnd=w.getFullYear()+'-'+String(w.getMonth()+1).padStart(2,'0')+'-'+String(w.getDate()).padStart(2,'0');
     if(t.dueDate>weekEnd)return false;
   }
-  else if(smartView==='overdue'){if(!t.dueDate||t.dueDate>=today||t.status==='done')return false}
-  else if(smartView==='unscheduled'){if(t.dueDate||t.status==='done')return false}
-  else if(smartView==='starred'){if(!t.starred||t.status==='done')return false}
-  else if(smartView==='impact'){if(t.status==='done'||!_paretoTopSet.has(t.id))return false}
+  else if(smartView==='overdue'){if(!t.dueDate||t.dueDate>=today||_doneHidden)return false}
+  else if(smartView==='unscheduled'){if(t.dueDate||_doneHidden)return false}
+  else if(smartView==='starred'){if(!t.starred||_doneHidden)return false}
+  else if(smartView==='impact'){if(_doneHidden||!_paretoTopSet.has(t.id))return false}
   else if(smartView==='completed'){if(t.status!=='done')return false}
-  else if(smartView==='habits'){if(!t.recur||t.archived||t.status==='done')return false}
+  else if(smartView==='habits'){if(!t.recur||t.archived||_doneHidden)return false}
   // Inbox: untriaged — no list, no category, no due, no tags, not done.
   else if(smartView==='inbox'){
-    if(t.status==='done')return false;
+    if(_doneHidden)return false;
     if(t.listId)return false;
     if(t.category)return false;
     if(t.dueDate)return false;
@@ -2965,11 +2974,11 @@ function matchesFilters(t){
   }
   // Waiting: tasks the user has flagged as blocked-on-someone-else.
   else if(smartView==='waiting'){
-    if(t.type!=='waiting'||t.status==='done')return false;
+    if(t.type!=='waiting'||_doneHidden)return false;
   }
   // Stuck: untouched for 14+ days, still open.
   else if(smartView==='stuck'){
-    if(t.status==='done')return false;
+    if(_doneHidden)return false;
     const lm=typeof t.lastModified==='number'?t.lastModified:0;
     const cutoff=Date.now()-(14*86400000);
     if(!lm||lm>=cutoff)return false;
@@ -2977,11 +2986,11 @@ function matchesFilters(t){
   // Snoozed: hidden-until > today.
   else if(smartView==='snoozed'){
     if(!t.hiddenUntil||t.hiddenUntil<=today)return false;
-    if(t.status==='done')return false;
+    if(_doneHidden)return false;
   }
   if(smartView==='all'){
     const sd=gid('showCompletedAll');
-    if((!sd||!sd.checked)&&t.status==='done'&&!_pinVisibleTaskIds.has(t.id))return false;
+    if((!sd||!sd.checked)&&_doneHidden&&!_pinVisibleTaskIds.has(t.id))return false;
   }
   // Search — semantic (cosine) or substring
   if(taskFilters.search){
@@ -3477,7 +3486,13 @@ function renderTaskList(){
   const visibleTasks=tasks.filter(matchesFilters);
   const activeCount=visibleTasks.filter(t=>t.status!=='done'&&!t.parentId).length;
   const badge=gid('taskCountBadge');if(badge)badge.textContent=activeCount+' active';
-  if(taskView==='board'){renderBoard(visibleTasks);return}
+  if(taskView==='board'){
+    // The board groups by status, so its Done column must be able to show
+    // completed cards even when the active view hides them in the list. Re-run
+    // the filter with done included (other filters still scope the set).
+    const boardTasks=tasks.filter(t=>matchesFilters(t,true));
+    renderBoard(boardTasks);return;
+  }
   if(taskView==='calendar'){renderCalendar(visibleTasks);return}
   list.querySelectorAll('.task-item, .task-subtask-form, .task-section').forEach(e=>e.remove());
   if(!visibleTasks.length){
