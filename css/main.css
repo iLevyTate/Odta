@@ -87,7 +87,6 @@
     --accent-bg:rgba(26,140,255,.14);
     --accent-border:rgba(26,140,255,.34);
     /* Brand gradient — primary "+ Add", FAB, active nav, header mark. */
-    --brand-2:#18d4e6;
     --brand-grad:linear-gradient(135deg,#1a8cff 0%,#14b4e0 50%,#18d4e6 100%);
     --brand-grad-soft:linear-gradient(135deg,rgba(26,140,255,.18),rgba(24,212,230,.16));
     --text-on-brand:#04121f;
@@ -140,7 +139,6 @@
        lightly-lit cards rather than hard boxes. A faint top→bottom wash plus a
        hairline top highlight gives depth without heavy borders. */
     --surface-grad:linear-gradient(180deg,#16212f,#0f1825);
-    --surface-grad-soft:linear-gradient(180deg,#131e2c,#0d1622);
     /* Faded dividers — fade out at both ends and stay translucent through the
        middle so a panel/sidebar edge reads as a soft seam, not a hard box line.
        `-h` is the horizontal twin for the top bar's lower edge.
@@ -151,7 +149,7 @@
        legacy rules continue to work. */
     --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px;
     --space-5:10px;--space-6:12px;--space-7:14px;--space-8:16px;
-    --space-9:24px;--space-10:32px;
+    --space-9:24px;
     /* Fluid type ramp — clamp() so phones see the floor, big screens scale up,
        no value drops below 11px (the smallest accessible body text). */
     --fs-12:clamp(11px,0.4vw + 10px,12px);
@@ -159,11 +157,9 @@
     --fs-14:clamp(13px,0.6vw + 12px,15px);
     --fs-16:clamp(14px,0.8vw + 12px,16px);
     --fs-20:clamp(18px,1.5vw + 14px,22px);
-    --fs-32:clamp(26px,3vw + 16px,34px);
     --fs-48:clamp(36px,6vw + 12px,52px);
     /* Animation easing language — unified across all transitions */
     --ease-out:cubic-bezier(0.16,1,0.3,1);
-    --ease-spring:cubic-bezier(0.175,0.885,0.32,1.275);
     --ease-in-out:cubic-bezier(0.45,0,0.55,1);
     --dur-fast:120ms;
     --dur-base:200ms;
@@ -211,12 +207,10 @@
     --border:#cdd8e6;--border-subtle:#dde5f0;--border-strong:#bcc9da;
     /* Light surface gradients — keep panels bright, just a whisper of cool wash. */
     --surface-grad:linear-gradient(180deg,#ffffff,#f7faff);
-    --surface-grad-soft:linear-gradient(180deg,#fbfdff,#f3f7fc);
     /* Brand on light: a deeper Intel blue so accent text/fills clear AA on white. */
     --accent:#0a6fd6;
     --accent-bg:rgba(10,111,214,.10);
     --accent-border:rgba(10,111,214,.30);
-    --brand-2:#0aa6c4;
     --brand-grad:linear-gradient(135deg,#0a6fd6 0%,#0a9bcf 50%,#0aa6c4 100%);
     --brand-grad-soft:linear-gradient(135deg,rgba(10,111,214,.10),rgba(10,166,196,.10));
     /* Cool-grey text tuned to clear AA on the silver --bg-0. */
@@ -2524,12 +2518,12 @@
 
     /* === TOOLS: Stopwatch display smaller === */
     #swDisplay{font-size:36px!important;letter-spacing:2px!important;margin-bottom:14px!important}
-    [data-tab="tools"] button[onclick="swToggle()"],[data-tab="tools"] button[onclick="swLap()"],[data-tab="tools"] button[onclick="swReset()"]{min-height:44px;padding:10px 18px!important;font-size:13px!important;flex:1}
+    [data-tab="tools"] button[data-action="swToggle"],[data-tab="tools"] button[data-action="swLap"],[data-tab="tools"] button[data-action="swReset"]{min-height:44px;padding:10px 18px!important;font-size:13px!important;flex:1}
 
     /* === DATA tab: destructive buttons clearly styled === */
-    button[onclick="clearLog()"],
-    button[onclick="resetStats()"],
-    button[onclick="clearArchive()"]{color:var(--danger)!important;border:1px solid var(--danger-border)!important;background:var(--danger-bg)!important}
+    button[data-action="clearLog"],
+    button[data-action="resetStats"],
+    button[data-action="clearArchive"]{color:var(--danger)!important;border:1px solid var(--danger-border)!important;background:var(--danger-bg)!important}
 
     /* === SETTINGS: tighter rows, clearer sections === */
     .sbody{padding:10px 0 14px}
@@ -4587,12 +4581,12 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .md-attach-card img{max-width:120px;max-height:120px;display:block}
 .md-attach-thumb{cursor:zoom-in}
 .md-attach-card audio{max-width:min(100%,280px);min-width:200px}
-.md-attach-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:#fff;cursor:pointer;z-index:1}
+.md-attach-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,.55);color:var(--text-on-inverse);cursor:pointer;z-index:1}
 .attach-lightbox{position:fixed;inset:0;z-index:calc(var(--z-modal) + 3);background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;padding:24px 16px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear var(--dur-fast)}
 .attach-lightbox.open{opacity:1;visibility:visible;pointer-events:auto;transition:opacity var(--dur-fast) var(--ease-out),visibility 0s linear 0s}
 .attach-lightbox-body{display:flex;align-items:center;justify-content:center;max-width:100%;max-height:100%}
 .attach-lightbox-body img{max-width:min(96vw,1400px);max-height:min(90vh,1200px);width:auto;height:auto;object-fit:contain;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,.45)}
-.attach-lightbox-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border:none;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;font-size:24px;line-height:1;cursor:pointer;z-index:1}
+.attach-lightbox-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:40px;height:40px;border:none;border-radius:50%;background:rgba(255,255,255,.12);color:var(--text-on-inverse);font-size:24px;line-height:1;cursor:pointer;z-index:1}
 .attach-lightbox-close:hover{background:rgba(255,255,255,.22)}
 @media (min-width:720px){
   #taskModal .modal-body .mfield-row--modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -4677,7 +4671,7 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .md-breakdown-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .md-breakdown-btn{padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;color:var(--text-1);cursor:pointer;margin-top:8px}
 .md-breakdown-btn:hover{border-color:var(--accent)}
-.md-breakdown-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.md-breakdown-btn--primary{background:var(--accent);border-color:var(--accent);color:var(--text-on-inverse)}
 .md-breakdown-btn--primary:hover{filter:brightness(1.1)}
 
 .cmdk-ask-toggle{
@@ -4773,7 +4767,7 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .cmdk-ask-turn--q{justify-content:flex-end}
 .cmdk-ask-turn--a{justify-content:flex-start}
 .cmdk-ask-bubble{max-width:88%;padding:10px 12px;border-radius:14px;line-height:1.5;font-size:13px;word-break:break-word;white-space:pre-wrap}
-.cmdk-ask-bubble--q{background:var(--accent,#3d8bcc);color:#fff;border-bottom-right-radius:4px;font-weight:500}
+.cmdk-ask-bubble--q{background:var(--accent);color:var(--text-on-inverse);border-bottom-right-radius:4px;font-weight:500}
 .cmdk-ask-bubble--a{background:var(--bg-1);color:var(--text-1);border:1px solid var(--border-subtle);border-bottom-left-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
 .cmdk-ask-bubble--a .cmdk-ask-rejected{margin-top:4px}
 
