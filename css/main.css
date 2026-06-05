@@ -135,7 +135,15 @@
     --cat-personalCare:#ff66b3;
     --cat-general:#8a9bb5;
     /* Radii */
-    --r-sm:6px;--r-md:10px;--r-lg:14px;
+    --r-sm:6px;--r-md:10px;--r-lg:14px;--r-xl:20px;
+    /* Surface gradients — soften flat fills so panels/sidebar read as rounded,
+       lightly-lit cards rather than hard boxes. A faint top→bottom wash plus a
+       hairline top highlight gives depth without heavy borders. */
+    --surface-grad:linear-gradient(180deg,#16212f,#0f1825);
+    --surface-grad-soft:linear-gradient(180deg,#131e2c,#0d1622);
+    /* Faded vertical divider — fades out top/bottom so edges don't read as a
+       hard box line. Use as `border-image: var(--divider-fade) 1`. */
+    --divider-fade:linear-gradient(180deg,transparent,var(--border-subtle) 10%,var(--border) 50%,var(--border-subtle) 90%,transparent);
     /* Spacing — 4-pt baseline. Migrate components incrementally; literals in
        legacy rules continue to work. */
     --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px;
@@ -198,6 +206,9 @@
     --bg-0:#eef2f8;--bg-1:#ffffff;--bg-2:#f5f8fc;--bg-3:#dde5f0;
     /* Light-theme border lifted off --bg-3 to keep card edges visible. */
     --border:#cdd8e6;--border-subtle:#dde5f0;--border-strong:#bcc9da;
+    /* Light surface gradients — keep panels bright, just a whisper of cool wash. */
+    --surface-grad:linear-gradient(180deg,#ffffff,#f7faff);
+    --surface-grad-soft:linear-gradient(180deg,#fbfdff,#f3f7fc);
     /* Brand on light: a deeper Intel blue so accent text/fills clear AA on white. */
     --accent:#0a6fd6;
     --accent-bg:rgba(10,111,214,.10);
@@ -974,9 +985,11 @@
   .pips{display:flex;gap:10px;margin-top:4px}
   .ctrls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
 
-  /* Panel surfaces */
-  .panel{background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-lg);padding:16px;margin-bottom:14px;box-shadow:var(--shadow-card)}
-  .task-search-bar{margin-bottom:10px;padding:8px 10px;background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
+  /* Panel surfaces — rounded, softly-lit cards. A faint top→bottom gradient plus
+     an inset top highlight reads as depth instead of a flat box; the border is
+     kept near-invisible so corners do the shaping, not a hard outline. */
+  .panel{background:var(--surface-grad);border:1px solid var(--border-subtle);border-radius:var(--r-xl);padding:16px;margin-bottom:14px;box-shadow:var(--shadow-card),inset 0 1px 0 rgba(255,255,255,.03)}
+  .task-search-bar{margin-bottom:10px;padding:8px 10px;background:var(--surface-grad);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
 
   /* Section labels — stop yelling */
   .slbl{font-size:12px;font-weight:600;letter-spacing:.01em;text-transform:none;color:var(--text-1);font-family:var(--font-sans)}
@@ -2179,8 +2192,8 @@
        shows there. */
     #quickAddAnchor{display:none}
 
-    /* Panel - tighter padding */
-    .panel{padding:12px;margin-bottom:10px;border-radius:var(--r-md)}
+    /* Panel - tighter padding, still softly rounded */
+    .panel{padding:12px;margin-bottom:10px;border-radius:var(--r-lg)}
 
     /* Today banner - row layout, no 2x2 */
     .today-banner{padding:12px 8px;margin-bottom:10px;gap:4px!important;flex-wrap:nowrap!important}
@@ -4855,8 +4868,11 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
   grid-area:sidebar;position:sticky;top:0;align-self:start;
   height:100dvh;display:flex;flex-direction:column;gap:14px;
   padding:16px 12px;
-  background:linear-gradient(180deg,var(--bg-1),var(--bg-0));
-  border-right:1px solid var(--border);
+  background:linear-gradient(180deg,var(--bg-1),var(--bg-0) 78%);
+  /* Faded divider instead of a hard full-height line so the sidebar edge
+     doesn't read as a box wall. The gradient border fades out top & bottom. */
+  border-right:1px solid var(--border-subtle);
+  border-image:var(--divider-fade) 1;
   /* No `scrollbar-width:thin` here: setting the standard property makes Chromium
      ignore the global `*::-webkit-scrollbar` theming (lines ~36-39) and fall back
      to the native OS scrollbar, which doesn't match the rest of the app. Leaving
