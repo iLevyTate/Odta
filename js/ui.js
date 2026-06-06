@@ -2528,15 +2528,25 @@ function _initBoardSortables(){
     dragClass: 'board-card--dragging',
     // Reuse the list view's drag-active gate so background re-renders queue
     // until the drop completes instead of detaching the dragged element.
-    onChoose: function(){ if(typeof _taskDragActive !== 'undefined') _taskDragActive = true; },
+    // _taskDragStarted distinguishes a real drag (onStart fired) from a tap
+    // on the handle (chosen → unchosen with no movement). onEnd owns the
+    // unfreeze+flush for real drags; onUnchoose covers only the tap case.
+    onChoose: function(){
+      if(typeof _taskDragActive !== 'undefined') _taskDragActive = true;
+      if(typeof _taskDragStarted !== 'undefined') _taskDragStarted = false;
+    },
     onUnchoose: function(){
+      if(typeof _taskDragStarted !== 'undefined' && _taskDragStarted) return;
       if(typeof _taskDragActive !== 'undefined') _taskDragActive = false;
       if(typeof _taskRenderQueuedDuringDrag !== 'undefined' && _taskRenderQueuedDuringDrag){
         _taskRenderQueuedDuringDrag = false;
         if(typeof renderTaskList === 'function') renderTaskList();
       }
     },
-    onStart: function(){ document.body.classList.add('board--dragging'); },
+    onStart: function(){
+      if(typeof _taskDragStarted !== 'undefined') _taskDragStarted = true;
+      document.body.classList.add('board--dragging');
+    },
     onMove: function(evt){
       // Block cycles before the drop commits.
       const itemId = parseInt((evt.dragged && evt.dragged.dataset && evt.dragged.dataset.taskId) || '', 10);
@@ -2609,14 +2619,18 @@ function _initBoardSortables(){
           dirty = true;
         }
       }
+      // Clear the mid-drag render-queue flag unconditionally — the upcoming
+      // render IS the flush, and leaving it set leaks a spurious render into
+      // the next drag's onEnd (which checks the same flag).
+      const flushedHere = (typeof _taskRenderQueuedDuringDrag !== 'undefined') && _taskRenderQueuedDuringDrag;
+      if(typeof _taskRenderQueuedDuringDrag !== 'undefined') _taskRenderQueuedDuringDrag = false;
       if(dirty){
         if(typeof saveState === 'function') saveState('user');
         if(typeof renderTaskList === 'function') renderTaskList();
         if(movedMsg && typeof showActionToast === 'function'){
           showActionToast(movedMsg, '', null, 1800);
         }
-      } else if(typeof _taskRenderQueuedDuringDrag !== 'undefined' && _taskRenderQueuedDuringDrag){
-        _taskRenderQueuedDuringDrag = false;
+      } else if(flushedHere){
         if(typeof renderTaskList === 'function') renderTaskList();
       }
     },
