@@ -1,5 +1,9 @@
 # Changelog
 
+## v73 — 2026-06-06
+
+- **Fix (kanban DnD / SortableJS)**: aligned the board's Sortable callbacks with the list view's working state-machine. Two bugs: (1) `onUnchoose` had no "did a real drag start?" gate, so after every successful drop it ran a second pass that re-cleared `_taskDragActive` and re-flushed `_taskRenderQueuedDuringDrag` — yielding a duplicate `renderTaskList()` and a needless board rebuild on every drop; and (2) on the dirty `onEnd` path the queued-render flag was never cleared, so it leaked `true` into the next drag's `onEnd`, triggering a spurious render the next time you released a card. Fix mirrors `js/tasks.js`: `onChoose` resets `_taskDragStarted = false`, `onStart` sets it `true`, `onUnchoose` early-returns when a real drag is in flight, and `onEnd` always clears the queued-render flag before running its single flush. Service-worker cache rotated to `odtaulai-v73` so installed PWA clients pull the fixed `js/ui.js`.
+
 ## v71 — 2026-06-05
 
 - **Polish (shell edges / soften the box)**: kept the gradient-lit sidebar and panel surfaces but removed the hard seams that still made the shell read as nested boxes. The sidebar's right divider and the top bar's lower border now use the same **faded translucent divider** (vertical and a new horizontal twin) — `color-mix`ed so they taper at both ends and never form a solid hairline. The inner *Today's Stats* cards and the streak-heatmap cells were rounded up (`--r-md → --r-lg`, heatmap `3px → 4px`) so corners do the shaping instead of edges. Service-worker cache rotated to `odtaulai-v71` (version string, `swCache`, the `css/main.css?v=` cache-bust in index.html + SW precache, and the inline-SW fallback in `js/pwa.js`) so installed clients pull the fresh CSS.
