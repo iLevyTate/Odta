@@ -1572,8 +1572,14 @@
   .board-card--ghost{opacity:.35;background:var(--accent-bg)!important;border:1px dashed var(--accent-border)!important}
   .board-card--chosen{box-shadow:0 0 0 2px var(--accent-border) inset}
   /* Card header is the drag-handle surface; cursor cue distinguishes it from
-     the children container (which only acts as a drop target). */
-  .board-card-header{cursor:grab;display:flex;flex-direction:column;gap:4px}
+     the children container (which only acts as a drop target). touch-action
+     pan-y lets the column body still scroll vertically by touching a card,
+     but prevents the browser from interpreting the touch as a horizontal pan
+     gesture mid-drag (which fought Sortable's fallback and made the card
+     feel "stuck" on touch). user-select stops accidental text selection
+     during a drag-hold. Matches the list view drag-handle (css/main.css
+     mobile rule at ~2230). */
+  .board-card-header{cursor:grab;display:flex;flex-direction:column;gap:4px;touch-action:pan-y;user-select:none;-webkit-user-select:none}
   .board-card-header:active{cursor:grabbing}
   /* Children container is the nested-Sortable drop target for indent-by-drop.
      Empty/collapsed containers stay invisible until a drag is in flight, then
@@ -1597,6 +1603,17 @@
     content:'Nest here';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     font-size:10px;color:var(--text-3);pointer-events:none;
   }
+  /* The card the user is holding (chosen + ghost placeholder + drag clone)
+     must NOT advertise itself as a "Nest here" target — you can't nest a
+     card under itself. Without this, the source card's own empty children
+     container kept the dashed outline and caption mid-drag, which read as
+     a valid drop target right where the user's finger was. */
+  .board-card--chosen .board-card-children,
+  .board-card--ghost .board-card-children,
+  .board-card--dragging .board-card-children{outline:none!important;background:transparent!important}
+  .board-card--chosen .board-card-children::before,
+  .board-card--ghost .board-card-children::before,
+  .board-card--dragging .board-card-children::before{content:none!important}
   /* Generic column swatch for non-status group modes (list / priority / due)
      where the header has no STATUSES.cls badge to lean on. */
   .board-col-swatch{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--text-3);flex-shrink:0}
