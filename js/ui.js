@@ -2511,20 +2511,19 @@ function _initBoardSortables(){
     forceFallback: true,
     fallbackOnBody: true,
     fallbackTolerance: 4,
-    // Tap-vs-drag discriminator on touch only: ~200ms hold so tap-to-open
-    // stays responsive on phones. delay:0 on mouse keeps desktop drag snappy
-    // — without this, the cursor had to hover a beat before the ghost would
-    // catch up, which read as "stuck" when crossing column boundaries.
-    delay: 200,
+    // Tap-vs-drag discriminator on touch only: ~120ms hold so tap-to-open
+    // stays responsive on phones. delay:0 on mouse (via delayOnTouchOnly:true)
+    // keeps desktop drag instant. Round-3 had this at 200ms; combined with
+    // the per-card Sortable hit-test cost it read as "stuck on lift". With
+    // hit-tests now scoped to ~5 column bodies, 120ms is the comfortable floor.
+    delay: 120,
     delayOnTouchOnly: true,
     touchStartThreshold: 6,
-    // swapThreshold:0.65 keeps the center-of-card area as the "nest" zone and
-    // the edges as reorder slots. invertSwap was previously on, but combined
-    // with the shared 'board' group across column-body + every per-card
-    // children container it multiplied false-positive swap zones — the ghost
-    // flickered between "nest" and "between cards" as the pointer crossed a
-    // column. The list view's Sortable does not use it; dropped here for the
-    // same reason.
+    // swapThreshold:0.65 keeps the center-of-card area as the reorder swap
+    // zone. Nesting is now detected SPATIALLY in onMove instead of via a
+    // shared-group nested Sortable on every card's children container — the
+    // old design created ~321 instances on a 316-card board and made the
+    // pickup-zone reject every drop via the cycle guard.
     swapThreshold: 0.65,
     scroll: true,
     scrollSensitivity: 80,
@@ -2543,17 +2542,40 @@ function _initBoardSortables(){
         if(typeof renderTaskList === 'function') renderTaskList();
       }
     },
-    onStart: function(){ document.body.classList.add('board--dragging'); },
-    onMove: function(evt){
-      // Block cycles before the drop commits.
-      const itemId = parseInt((evt.dragged && evt.dragged.dataset && evt.dragged.dataset.taskId) || '', 10);
-      const to = evt.to;
-      if(to && to.classList && to.classList.contains('board-card-children')){
-        const parentCard = to.closest('.board-card[data-task-id]');
-        if(parentCard){
-          const pid = parseInt(parentCard.dataset.taskId, 10);
-          if(_isCycle(itemId, pid)) return false;
-        }
+    onStart: function(){
+      document.body.classList.add('board--dragging');
+      // Clear any leftover nest highlight from a cancelled prior drag.
+      const stale = document.querySelector('#boardView .board-card.is-nest-target');
+      if(stale) stale.classList.remove('is-nest-target');
+    },
+    onMove: function(evt, originalEvent){
+      // Spatial nest-target detection: when the ghost hovers over the
+      // vertical center band of another card, mark that card as the active
+      // nest target. onEnd reads the class and applies parentId. We don't
+      // reject the move (returning true) — the cycle case just doesn't get
+      // marked, so Sortable's normal reorder still happens. This replaces
+      // the old per-card nested Sortable + onMove:false dance that made the
+      // pickup area refuse every drop and read as "stuck".
+      const prev = document.querySelector('#boardView .board-card.is-nest-target');
+      if(prev) prev.classList.remove('is-nest-target');
+      const related = evt.related;
+      if(!related || !related.classList || !related.classList.contains('board-card')) return true;
+      const draggedId = parseInt((evt.dragged && evt.dragged.dataset && evt.dragged.dataset.taskId) || '', 10);
+      const relId = parseInt(related.dataset.taskId || '', 10);
+      if(!Number.isFinite(draggedId) || !Number.isFinite(relId)) return true;
+      if(relId === draggedId) return true;
+      // Implicit cycle guard: a descendant of the dragged card can't be a
+      // valid nest target. Walk up; bail before marking.
+      if(_isCycle(draggedId, relId)) return true;
+      const rect = related.getBoundingClientRect();
+      const cy = originalEvent
+        ? (originalEvent.clientY != null ? originalEvent.clientY
+          : (originalEvent.touches && originalEvent.touches[0] && originalEvent.touches[0].clientY))
+        : null;
+      if(cy == null) return true;
+      const yFrac = (cy - rect.top) / Math.max(1, rect.height);
+      if(yFrac > 0.25 && yFrac < 0.75){
+        related.classList.add('is-nest-target');
       }
       return true;
     },
@@ -2564,11 +2586,27 @@ function _initBoardSortables(){
       const id = parseInt((item && item.dataset && item.dataset.taskId) || '', 10);
       const src = Number.isFinite(id) && typeof findTask === 'function' ? findTask(id) : null;
       const to = evt.to;
+      // Snapshot the active spatial nest target (set by onMove). Read first
+      // and clear immediately so a re-render won't leave a stuck highlight.
+      const nestEl = document.querySelector('#boardView .board-card.is-nest-target');
+      if(nestEl) nestEl.classList.remove('is-nest-target');
       let dirty = false;
       let movedMsg = null;
-      if(src && to){
+      if(src && nestEl && nestEl !== item){
+        // Spatial nest takes priority: user dropped on the center of a card.
+        const pid = parseInt(nestEl.dataset.taskId, 10);
+        if(Number.isFinite(pid) && !_isCycle(src.id, pid) && src.parentId !== pid){
+          src.parentId = pid;
+          const parent = findTask(pid);
+          if(parent) parent.boardExpanded = true;
+          dirty = true;
+          movedMsg = 'Nested under ' + (parent ? parent.name : 'task');
+        }
+      } else if(src && to){
         if(to.classList.contains('board-card-children')){
-          // Indent: nest src under the closest card.
+          // Expanded-parent children container drop (still a real Sortable
+          // target for cards inside an expanded subtree). Same parentId
+          // logic as the old path; just no longer the only nest mechanism.
           const parentCard = to.closest('.board-card[data-task-id]');
           const pid = parentCard ? parseInt(parentCard.dataset.taskId,10) : NaN;
           if(Number.isFinite(pid) && !_isCycle(src.id, pid) && src.parentId !== pid){
@@ -2628,10 +2666,19 @@ function _initBoardSortables(){
       }
     },
   };
+  // Column bodies always get a Sortable — the primary cross-column drop
+  // target. Per-card .board-card-children containers used to ALL be
+  // Sortable too, which produced ~321 instances on a 316-card board and
+  // turned every touchmove into a hit-test storm on mobile (plus the
+  // cycle guard then rejected drops in the source pickup zone, reading
+  // as "stuck"). Now only EXPANDED parents' children remain Sortable —
+  // those are the only nested containers with cards inside that need to
+  // be reorderable. Collapsed/empty cards are still nestable INTO via
+  // spatial detection in onMove (the .is-nest-target class).
   document.querySelectorAll('#boardView .board-col-body').forEach(body => {
     _boardSortables.push(new window.Sortable(body, opts));
   });
-  document.querySelectorAll('#boardView .board-card-children').forEach(ch => {
+  document.querySelectorAll('#boardView .board-card-children:not(.is-empty):not(.is-collapsed)').forEach(ch => {
     _boardSortables.push(new window.Sortable(ch, opts));
   });
 }
