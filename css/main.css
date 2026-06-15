@@ -2309,8 +2309,11 @@
     .qt-time{font-size:18px}
     .iadd,.qt-add{min-height:40px;padding:9px 14px}
 
-    /* Mini-timer - respect safe-area, smaller on mobile */
-    .mini-timer{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;padding:6px 10px!important;gap:8px!important}
+    /* Mini-timer - respect safe-area, smaller on mobile.
+       Pin to the bottom-right corner: clear any inline left/top written by a
+       previous free-drag so the dock can't be constrained by both left+right
+       (or top+bottom) at once, which squeezes it into a tall clipped sliver. */
+    .mini-timer{bottom:calc(12px + env(safe-area-inset-bottom,0px))!important;right:12px!important;left:auto!important;top:auto!important;padding:6px 10px!important;gap:8px!important;max-width:calc(100vw - 24px)}
     .mt-time{font-size:12px}
     .mt-label{font-size:9px}
     .mt-btn{width:28px;height:28px;min-width:28px;font-size:11px}
