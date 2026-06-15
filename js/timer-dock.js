@@ -7,6 +7,47 @@ function _timerDockCfg(){
   return cfg.timerDock;
 }
 
+// Free-dragging only makes sense on roomy (desktop) viewports. On narrow /
+// mobile viewports the dock is pinned to a safe-area corner by CSS, so a saved
+// free-drag position must NOT be applied — otherwise it fights the mobile
+// `right`/`bottom` rules and the dock gets squeezed into a clipped sliver.
+function _timerDockIsMobile(){
+  try{ return window.matchMedia('(max-width:640px)').matches; }
+  catch(_){ return window.innerWidth <= 640; }
+}
+
+// Drop any inline free-drag coords so the CSS corner positioning takes over.
+function _timerDockClearInlinePos(dock){
+  dock.style.left = '';
+  dock.style.top = '';
+  dock.style.right = '';
+  dock.style.bottom = '';
+}
+
+function _timerDockApplyPos(dock){
+  const c = _timerDockCfg();
+  if(_timerDockIsMobile()){
+    _timerDockClearInlinePos(dock);
+    return;
+  }
+  if(typeof c.x === 'number' && typeof c.y === 'number'){
+    // Clamp the saved position into the current viewport so a position saved on
+    // a larger window can't drop the dock off-screen.
+    const pad = 8;
+    const w = dock.offsetWidth || 0;
+    const h = dock.offsetHeight || 0;
+    const left = Math.max(pad, Math.min(c.x, window.innerWidth - w - pad));
+    const top = Math.max(pad, Math.min(c.y, window.innerHeight - h - pad));
+    dock.style.left = left + 'px';
+    dock.style.top = top + 'px';
+    dock.style.right = 'auto';
+    dock.style.bottom = 'auto';
+  } else {
+    _timerDockClearInlinePos(dock);
+    if(c.corner) dock.dataset.corner = c.corner;
+  }
+}
+
 function initTimerDock(){
   const dock = gid('timerDock');
   if(!dock) return;
@@ -14,13 +55,17 @@ function initTimerDock(){
 
   const c = _timerDockCfg();
   if(c.minimized) dock.classList.add('timer-dock--min');
-  if(typeof c.x === 'number' && typeof c.y === 'number'){
-    dock.style.left = c.x + 'px';
-    dock.style.top = c.y + 'px';
-    dock.style.right = 'auto';
-    dock.style.bottom = 'auto';
-  } else if(c.corner){
-    dock.dataset.corner = c.corner;
+  _timerDockApplyPos(dock);
+
+  // Re-pin when the viewport changes (rotation, resize, crossing the mobile
+  // breakpoint) so the dock never ends up off-screen or squeezed.
+  if(!dock._dockResizeBound){
+    dock._dockResizeBound = true;
+    let raf = 0;
+    window.addEventListener('resize', () => {
+      if(raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; _timerDockApplyPos(dock); });
+    });
   }
 
   if(!dock._dockDragBound){
@@ -66,6 +111,9 @@ function initTimerDock(){
     };
     const startDrag = (e, handle) => {
       if(e.button !== 0) return;
+      // On mobile the dock is corner-pinned by CSS; free-dragging would only
+      // write a position that fights those rules, so ignore drags there.
+      if(_timerDockIsMobile()) return;
       const r = dock.getBoundingClientRect();
       dock.style.left = r.left + 'px';
       dock.style.top = r.top + 'px';
