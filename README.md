@@ -386,6 +386,12 @@ The AI falls back from **WebGPU → WASM** automatically; no action required fro
 
 ---
 
+## Known issues
+
+- **Background audio can pause or stop when the app isn't in the foreground.** Browsers and mobile operating systems aggressively throttle (or fully suspend) tabs that aren't visible — when you switch apps, lock the phone, or turn the screen off. As a result the timer's chimes and ambient noise may stutter, go quiet, or stop entirely, and a running countdown can drift, until you bring Odta back to the front. The app works hard to mitigate this (a Web Worker tick that isn't throttled, an audio-clock keepalive, and `visibilitychange` resume logic — see [`js/audio.js`](js/audio.js)), but the platforms give web apps no guaranteed way to keep playing while backgrounded. This is a browser/OS limitation, not something the app can fully fix. For a deep-work session, keep Odta in the foreground and the screen awake. *(Native push/audio while the app is fully closed is [out of scope by design](#not-in-scope-deliberately).)*
+
+---
+
 ## FAQ
 
 <details>
