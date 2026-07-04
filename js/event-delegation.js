@@ -71,8 +71,12 @@
       if(!fn) return;
       try { fn.call(el, e); }
       catch(err){ console.error(`[delegation] ${eventName} handler failed:`, el.dataset[toCamel(dataAttr)], err); }
-    }, eventName === 'toggle' ? true : false);
+    }, NON_BUBBLING.has(eventName));
   }
+  // toggle, focus and blur do not bubble — a document-level listener only sees
+  // them in the capture phase, so bubble-phase delegation for these types
+  // would silently never fire.
+  const NON_BUBBLING = new Set(['toggle', 'focus', 'blur']);
 
   function toCamel(kebab){
     return kebab.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -85,7 +89,6 @@
   attachEvent('blur',    'onblur');
   attachEvent('focus',   'onfocus');
   attachEvent('submit',  'onsubmit');
-  // `toggle` does not bubble — needs capture-phase listener (see attachEvent).
   attachEvent('toggle',  'ontoggle');
 
   // Keyboard activation for non-button elements that opt into button semantics

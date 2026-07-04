@@ -1121,8 +1121,25 @@ async function cmdkAskSubmit(){
     turn.rejected = res.rejected || null;
     turn.destructiveLevel = res.destructiveLevel || 'none';
     turn.readRounds = res.readRounds || 0;
+    turn.externalContent = !!res.externalContent;
 
     if(_cmdkAskApplyMode === 'auto'){
+      // Prompt-injection containment: if this turn's read rounds ingested
+      // externally-authored content (calendar-feed text — controlled by
+      // whoever owns the feed), the model's write plan is tainted and must
+      // NOT auto-apply. Present it for explicit review instead; the user
+      // clicking Apply is the confirmation.
+      if(turn.externalContent){
+        _cmdkAskUpdate(turn, {
+          status: 'ops',
+          text: `Proposed ${n} change${n!==1?'s':''}${extra}.${rrd} Planned after reading calendar-feed content, so review is required — check and apply below.`,
+          ops: res.ops,
+          rejected: res.rejected || null,
+          destructiveLevel: res.destructiveLevel,
+          readRounds: res.readRounds || 0,
+        });
+        return;
+      }
       // Don't pop a destructive-confirm modal over the user while this run is
       // backgrounded — they minimized precisely to do something else. Defer
       // destructive batches to review; the finish toast invites them back to

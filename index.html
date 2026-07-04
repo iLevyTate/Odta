@@ -14,15 +14,15 @@
 <meta property="og:site_name" content="Odta">
 <meta property="og:title" content="Odta · Personal Task Manager">
 <meta property="og:description" content="Pomodoro deep-work timer and ClickUp-style task manager that uses on-device local embeddings to intelligently route your tasks, track your time, and ensure value alignment, all without your data ever leaving your machine.">
-<meta property="og:url" content="https://ilevytate.github.io/ODTAULAI/">
-<meta property="og:image" content="https://ilevytate.github.io/ODTAULAI/icons/icon-512.png">
+<meta property="og:url" content="https://odta.app/">
+<meta property="og:image" content="https://odta.app/icons/icon-512.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="512">
 <meta property="og:image:height" content="512">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Odta · Personal Task Manager">
 <meta name="twitter:description" content="Pomodoro deep-work timer and ClickUp-style task manager that uses on-device local embeddings to intelligently route your tasks, track your time, and ensure value alignment, all without your data ever leaving your machine.">
-<meta name="twitter:image" content="https://ilevytate.github.io/ODTAULAI/icons/icon-512.png">
+<meta name="twitter:image" content="https://odta.app/icons/icon-512.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Odta">
@@ -42,7 +42,7 @@
      connect-src uses http:/https: broadly because calfeeds.js allows
      user-configured CORS proxy URLs.
      wss: entries are required for PeerJS WebRTC signalling. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
 
 <!-- Icons -->
 <link rel="manifest" href="manifest.json" id="pwa-manifest">
@@ -63,10 +63,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v73">
-<!-- Preconnect hints — speeds up first-load of the on-device embedding model (jsDelivr for Transformers.js, huggingface.co for model weights) -->
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="preconnect" href="https://huggingface.co" crossorigin>
+<link rel="stylesheet" href="css/main.css?v=v74">
 
 </head>
 <body>

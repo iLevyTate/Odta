@@ -329,6 +329,13 @@ function expandEventToDateRange(event, windowDays = 180){
   let current = new Date(baseDate);
   let iterations = 0;
   const maxIter = 2000;
+  // Occurrence-position counter for COUNT. COUNT is a property of the whole
+  // recurrence, not of the visible window: positions that fall before `past`
+  // still consume COUNT slots (otherwise a COUNT=20 rule from years ago
+  // re-materializes 20 phantom occurrences inside every future window).
+  // Matching the pinned in-window semantics, EXDATE'd positions do NOT
+  // consume COUNT — see tests/calfeeds-exdate-tz.test.mjs.
+  let occSeen = 0;
 
   // Each emitted occurrence is a CONCRETE instance: it must carry its own
   // start/end dates and must NOT keep the rrule (otherwise _alldayRangeCovers
@@ -352,6 +359,50 @@ function expandEventToDateRange(event, windowDays = 180){
     return o;
   };
 
+  // Fast-forward DAILY/WEEKLY rules whose DTSTART lies far before the window:
+  // walking year after year of pre-window dates one step at a time burns the
+  // maxIter budget (a still-active daily rule older than ~5.5y used to
+  // exhaust it before reaching today and silently vanish). Jump arithmetically
+  // to one step short of `past` — the residual loop below counts (without
+  // emitting) any remaining pre-window positions, so DST hour-skew in the ms
+  // division can never misplace the window boundary. MONTHLY/YEARLY need no
+  // fast-forward: 2000 iterations cover 166+ years.
+  if((freq === 'DAILY' || freq === 'WEEKLY') && current < past){
+    const DAY_MS = 86400000;
+    const baseDow = baseDate.getDay();
+    const stepDays = (freq === 'DAILY' ? 1 : 7) * interval;
+    const steps = Math.max(0, Math.floor((past - baseDate) / (stepDays * DAY_MS)) - 1);
+    if(steps > 0){
+      const ff = new Date(baseDate);
+      ff.setDate(ff.getDate() + steps * stepDays); // local-date arithmetic — DST-safe
+      // EXDATE'd positions on the recurrence grid before the jump target were
+      // skipped without consuming COUNT — subtract them from the tally.
+      const exdatedOnGridBefore = (onGrid) => {
+        if(!event.exdateList || !event.exdateList.length || !countActive) return 0;
+        let n = 0;
+        for(const x of event.exdateList){
+          const d = new Date(x + 'T12:00:00');
+          if(Number.isFinite(d.getTime()) && d >= baseDate && d < ff && onGrid(d)) n++;
+        }
+        return n;
+      };
+      if(freq === 'WEEKLY' && byDays && byDays.length){
+        // `steps` are whole week-cycles: week 0 contributes only BYDAY days on
+        // or after DTSTART's weekday; each later skipped cycle contributes all
+        // of them.
+        occSeen = byDays.filter(d => d >= baseDow).length + (steps - 1) * byDays.length;
+        occSeen -= exdatedOnGridBefore(d =>
+          byDays.includes(d.getDay()) &&
+          Math.floor(Math.round((d - baseDate) / DAY_MS + baseDow) / 7) % interval === 0);
+      } else {
+        occSeen = steps; // positions 0..steps-1 (position 0 = DTSTART)
+        occSeen -= exdatedOnGridBefore(d => Math.round((d - baseDate) / DAY_MS) % stepDays === 0);
+      }
+      current = ff;
+      if(countActive && occSeen >= count) return []; // exhausted before the window — no phantoms
+    }
+  }
+
   while(iterations < maxIter && current <= future){
     // For WEEKLY with BYDAY: expand each week cycle to all specified weekdays
     if(freq === 'WEEKLY' && byDays && byDays.length){
@@ -361,29 +412,30 @@ function expandEventToDateRange(event, windowDays = 180){
       for(const dayOfWeek of byDays){
         const occ = new Date(weekStart);
         occ.setDate(weekStart.getDate() + dayOfWeek);
-        if(occ < past || occ > future) continue;
-        if(occ < baseDate) continue; // don't emit before the original DTSTART
+        if(occ < baseDate) continue; // before the original DTSTART — not an occurrence
+        if(occ > future) continue;
         const iso = occ.getFullYear() + '-' +
                     String(occ.getMonth()+1).padStart(2,'0') + '-' +
                     String(occ.getDate()).padStart(2,'0');
         if(until && iso > until.iso) continue;
         if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) continue;
-        results.push(_occ(iso));
-        if(countActive && results.length >= count) break;
+        occSeen++;
+        if(occ >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
+        if(countActive && occSeen >= count) break;
       }
-      if(countActive && results.length >= count) break;
+      if(countActive && occSeen >= count) break;
       current.setDate(current.getDate() + 7 * interval);
     } else {
       // Standard path — one occurrence per interval
-      if(current >= past){
-        const iso = current.getFullYear() + '-' +
-                    String(current.getMonth()+1).padStart(2,'0') + '-' +
-                    String(current.getDate()).padStart(2,'0');
-        if(until && iso > until.iso) break;
-        if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) { /* skip */ }
-        else { results.push(_occ(iso)); }
-        if(countActive && results.length >= count) break;
+      const iso = current.getFullYear() + '-' +
+                  String(current.getMonth()+1).padStart(2,'0') + '-' +
+                  String(current.getDate()).padStart(2,'0');
+      if(until && iso > until.iso) break;
+      if(!(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso))){
+        occSeen++;
+        if(current >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
       }
+      if(countActive && occSeen >= count) break;
       if(freq === 'DAILY')        current.setDate(current.getDate() + interval);
       else if(freq === 'WEEKLY')  current.setDate(current.getDate() + 7 * interval);
       else if(freq === 'MONTHLY') current.setMonth(current.getMonth() + interval);

@@ -268,7 +268,7 @@ function _scheduleSyncAck(){
   if(_syncAckTimer) clearTimeout(_syncAckTimer);
   _syncAckTimer = setTimeout(() => {
     _syncAckTimer = null;
-    if(!_conn || !_conn.open || _syncApplying) return;
+    if(!_conn || !_conn.open || !_conn._syncReady || _syncApplying) return;
     try { _conn.send({ type: 'patch', payload: _packState() }); }
     catch(e){ console.warn('[Sync] ack patch', e); }
   }, 300);
@@ -388,7 +388,13 @@ function _mergeState(remote, opts){
     if (remote.logIdCtr != null) logIdCtr = Math.max(0, parseInt(remote.logIdCtr, 10) || 0);
     if (remote.pomosInCycle != null) pomosInCycle = Math.max(0, parseInt(remote.pomosInCycle, 10) || 0);
     if (remote.phase && ['work', 'short', 'long'].includes(remote.phase)) phase = remote.phase;
-    if (remote.cfg && typeof remote.cfg === 'object') cfg = remote.cfg;
+    if (remote.cfg && typeof remote.cfg === 'object') {
+      cfg = remote.cfg;
+      // Same normalization the backup-import path applies: a peer's cfg is
+      // semi-trusted input, so classification category ids/labels must pass
+      // the allow-list rather than land verbatim (AUDIT H-1 defense in depth).
+      if (typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
+    }
     if (remote.theme && ['dark', 'light'].includes(remote.theme)) theme = remote.theme;
   } else if (re === le && re > 0 && rn === ln) {
     if (Array.isArray(remote.timeLog)) timeLog = _syncMergeTimeLogsById(timeLog, remote.timeLog);
@@ -447,7 +453,7 @@ function syncAcceptInbound(){
   syncHideIncomingBanner();
   if(_conn){ try{ _conn.close(); }catch(e){} _conn = null; }
   _lastConnectCode = _idToCode(conn.peer);
-  _wireConn(conn);
+  _wireConn(conn, { role: 'acceptor' });
 }
 
 function syncRejectInbound(){
@@ -457,23 +463,48 @@ function syncRejectInbound(){
   if(conn){ try{ conn.close(); }catch(e){} }
 }
 
-function _wireConn(conn) {
+function _wireConn(conn, opts) {
+  const role = (opts && opts.role) || 'initiator';
   _conn = conn;
 
-  conn.on('open', () => {
-    _setSyncStatus('connected');
+  const onOpen = () => {
     // Successful connect — clear any pending reconnect timer and reset
     // the attempt counter so a future drop gets the full backoff schedule.
     if(_reconnectTimerId){ clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
     _reconnectAttempt = 0;
-    // Exchange state on connect
-    try { conn.send({ type: 'state', payload: _packState() }); } catch(e) { console.warn('[Sync] send state', e); }
+    if (role === 'acceptor') {
+      // Our user clicked Accept — consent given, exchange state now.
+      conn._syncReady = true;
+      _setSyncStatus('connected');
+      try { conn.send({ type: 'state', payload: _packState() }); } catch(e) { console.warn('[Sync] send state', e); }
+    } else {
+      // Initiator: do NOT ship the vault yet. A mistyped pairing code lands
+      // on a stranger's device — nothing beyond this hello may flow until
+      // their user accepts (signalled by their first substantive message).
+      try { conn.send({ type: 'hello', v: SYNC_VERSION }); } catch(e) { console.warn('[Sync] send hello', e); }
+      _setSyncStatus('connecting', 'Waiting for the other device to accept…');
+    }
     // Persist the room code we connected to
     try { localStorage.setItem(SYNC_ROOM_KEY, _idToCode(conn.peer)); } catch(e) { /* LS fire-and-forget */ }
-  });
+  };
+  conn.on('open', onOpen);
+  // Acceptor: the datachannel usually finished opening while the Accept
+  // banner was up, and PeerJS does not replay 'open' for late listeners —
+  // without this the acceptor never sends its state.
+  if (conn.open) onOpen();
 
   conn.on('data', (msg) => {
     if (!msg || !msg.type) return;
+    // Any substantive message proves the remote side wired this connection —
+    // i.e. its user accepted (new clients send 'state' on accept; pre-v74
+    // clients only ever send after their own accept/connect). 'hello' is
+    // excluded: it's the unauthenticated probe. First acceptance unlocks our
+    // own state send.
+    if (msg.type !== 'hello' && !conn._syncReady) {
+      conn._syncReady = true;
+      _setSyncStatus('connected');
+      try { conn.send({ type: 'state', payload: _packState() }); } catch(e) { console.warn('[Sync] send state', e); }
+    }
     if (msg.type === 'state') {
       _mergeState(msg.payload, { isInitialState: true });
     } else if (msg.type === 'patch') {
@@ -719,7 +750,7 @@ function syncConnect(code) {
     if (_connectTimeoutId) { clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
   });
 
-  _wireConn(conn);
+  _wireConn(conn, { role: 'initiator' });
 }
 
 /** Mint a fresh peer id (escape hatch if pairing is stuck on a bad code). */
@@ -767,7 +798,9 @@ let _broadcastTimer = null;
 let _lastBroadcastAt = 0;
 function syncBroadcast() {
   if(_syncApplying) return;
-  if (!_conn || !_conn.open) return;
+  // _syncReady gates on the accept handshake — local edits must not leak to a
+  // peer whose user hasn't accepted the pairing yet.
+  if (!_conn || !_conn.open || !_conn._syncReady) return;
   // Throttle: max 1 broadcast per 500ms to avoid flooding on rapid saves
   const now = Date.now();
   if (now - _lastBroadcastAt < 500) {

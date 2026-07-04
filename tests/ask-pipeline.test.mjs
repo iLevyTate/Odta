@@ -795,3 +795,67 @@ test('askRun: a direct generation abort surfaces reason ABORTED, not PARSE_FAILE
   assert.equal(res.ok, false);
   assert.equal(res.reason, 'ABORTED');
 });
+
+// ── External-content taint (prompt-injection containment) ──────────────────
+// GET_CALENDAR_EVENTS returns text authored by whoever controls a subscribed
+// ICS feed. Once a read round ingests it, the turn's write ops must carry
+// externalContent:true so the UI refuses to auto-apply them (see ui.js).
+function mkMultiTurnSandbox({ tasks = [], responses = [], upcoming = [] } = {}) {
+  let genCalls = 0;
+  const win = {};
+  const ctx = {
+    window: win,
+    console,
+    tasks,
+    lists: [],
+    isIntelReady: () => true,
+    embedText: async () => new Float32Array(8),
+    semanticSearch: async () => [],
+    isGenReady: () => true,
+    pushAskHistory: () => {},
+    getGenCfg: () => ({ timeoutSec: 30 }),
+    getUpcomingEvents: () => upcoming,
+    getActiveCategories: () => [],
+    genGenerate: async () => responses[Math.min(genCalls++, responses.length - 1)],
+    intelLoad: async () => {},
+    findTask: (id) => tasks.find((t) => t.id === id) || null,
+  };
+  new Function(...Object.keys(ctx), schemaSrc)(...Object.values(ctx));
+  ctx.TOOL_SCHEMA = win.TOOL_SCHEMA;
+  ctx.validateOps = win.validateOps;
+  ctx.parseOpsJson = win.parseOpsJson;
+  ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
+  new Function(...Object.keys(ctx), askSrc)(...Object.values(ctx));
+  return { win, calls: () => genCalls };
+}
+
+test('askRun: a calendar read round taints the turn — externalContent:true on the ops result', async () => {
+  const tasks = [{ id: 1, name: 'Pay rent', status: 'open', priority: 'normal', archived: false, lastModified: 1 }];
+  const { win } = mkMultiTurnSandbox({
+    tasks,
+    upcoming: [{ title: 'Injected event', dateISO: '2026-01-02' }],
+    responses: [
+      '[{"name":"GET_CALENDAR_EVENTS","args":{}}]',
+      '[{"name":"UPDATE_TASK","args":{"id":1,"priority":"urgent"}}]',
+    ],
+  });
+  const res = await win.askRun('what is on my calendar, then mark rent urgent', {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.equal(res.ops.length, 1);
+  assert.equal(res.externalContent, true, 'calendar read must taint the write batch');
+});
+
+test('askRun: a QUERY_TASKS-only read round does NOT taint the turn', async () => {
+  const tasks = [{ id: 1, name: 'Pay rent', status: 'open', priority: 'normal', archived: false, lastModified: 1 }];
+  const { win } = mkMultiTurnSandbox({
+    tasks,
+    responses: [
+      '[{"name":"QUERY_TASKS","args":{"filter":"rent","limit":5}}]',
+      '[{"name":"UPDATE_TASK","args":{"id":1,"priority":"urgent"}}]',
+    ],
+  });
+  const res = await win.askRun('mark rent task urgent', {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.equal(res.ops.length, 1);
+  assert.ok(!res.externalContent, 'vault-only reads stay untainted (auto-apply keeps working)');
+});

@@ -6,6 +6,37 @@
 
 ---
 
+## v74 audit wave (2026-07-04)
+
+A second full audit at v73 (three parallel passes: core app layer, AI/sync/network layer, infrastructure/CI), followed in the same branch by fixes for every confirmed finding. All prior (v48-era) findings below were re-verified as still resolved. Baseline at audit time: 573/573 tests green, all CI checks green.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| W-1 | Sync: outbound connector sent the full task DB on channel open, before the remote user clicked Accept (`js/sync.js` `_wireConn`) — a mistyped pairing code disclosed the vault to a stranger | High | ✅ Fixed — hello/accept handshake; `syncBroadcast`/`_scheduleSyncAck` gated on `conn._syncReady`; ≤v73 interop preserved (their eager `state`/`patch` counts as acceptance); `tests/sync-handshake.test.mjs` |
+| W-2 | Ask auto-apply: prompt injection via subscribed ICS feed content could drive silent task mutations — only DELETE/bulk-move were gated (`js/ai.js:1325`, `js/ui.js` auto branch) | Medium | ✅ Fixed — turns whose read rounds ran `GET_CALENDAR_EVENTS` are tainted (`externalContent`) and always land in review; tests in `ask-pipeline` + `ask-external-taint` |
+| W-3 | RRULE: `COUNT` counted only windowed emissions (exhausted rules re-materialized phantom occurrences) and iteration started at DTSTART with maxIter=2000 (active rules >~5.5y old silently vanished) (`js/calfeeds.js` `expandEventToDateRange`) | Medium | ✅ Fixed — true occurrence-position counter + DAILY/WEEKLY arithmetic fast-forward; `tests/calfeeds-rrule-window.test.mjs` |
+| W-4 | Gen worker: a worker wedged in native ONNX ignored the abort message, leaving `genGenerate` unsettled forever (Ask hang, Stop no-op) (`js/gen.js`) | Medium | ✅ Fixed — 9s abort watchdog rejects with `GEN_ABORTED` and recycles the worker via the shared teardown; fake-timer tests in `gen-worker-protocol` |
+| W-5 | Timer: `resetAll()` didn't cancel pending auto-advance/auto-start, so a cycle reset self-started ~300ms later (`js/timer.js`) | Medium | ✅ Fixed — same cancellation as `resetPhase`; `tests/timer-reset-pending.test.mjs` |
+| W-6 | Cross-tab: `startTimer`/`resumeTimer` didn't mark the tab dirty, so another tab's autosave wholesale-applied over a running timer (`js/timer.js`, `js/storage.js` `_onStorageFromOtherTab`) | Medium | ✅ Fixed — both now `saveState('user')` like `pauseTimer` |
+| W-7 | CSP: dead `cdn.jsdelivr.net` / `unpkg.com` script-src allowances + dead preconnects (everything is vendored) (`index.html`) | Low-Med | ✅ Fixed — removed |
+| W-8 | Sync merge assigned remote `cfg` verbatim, bypassing the H-1 classification-config allow-list applied on import (`js/sync.js`) | Low | ✅ Fixed — `ensureClassificationConfig` after assignment |
+| W-9 | Checker gaps: `check-assets.mjs` attribute-order-fragile regexes + no on-disk existence check; `check-inline-handlers.mjs` regex evaded by quoted handler bodies | Low | ✅ Fixed — hardened all three (model weights exempt from existence check by design) |
+| W-10 | Event delegation: `focus`/`blur` registered bubble-phase — delegated handlers could never fire (latent) (`js/event-delegation.js`) | Low | ✅ Fixed — capture phase, like `toggle`; test added |
+| W-11 | Inline fallback SW was cache-first with no revalidation (`js/pwa.js`) | Low | ✅ Fixed — stale-while-revalidate, matching `sw.js` |
+| W-12 | Dropdown: prefix-only search filter; outside-listener leak on same-frame open→close (`js/dropdown.js`) | Low | ✅ Fixed — substring match; rAF cancelled in `close()` |
+| W-13 | A11y: quick-timer controls and interval remove button lacked `aria-label`; pips were mouse-only (`js/timer.js`) | Low | ✅ Fixed — labels + keyboard operability |
+| W-14 | Stale Open Graph/Twitter URLs (GitHub Pages origin instead of `odta.app`) (`index.html`) | Low | ✅ Fixed |
+| W-15 | Dead code: legacy `settingsOpen`/`toggleSettings()` no-ops (`js/timer.js`) | Low | ✅ Fixed — removed (zero references) |
+
+**Audit findings rejected as false positives** (verified against source before fixing): `STORAGE_KEYS.GEN_CFG`/`GEN_HISTORY` are *not* dead (actively read by `js/gen.js`; the v48 purge in `app.js` is a one-shot legacy migration), and `updateLiveParsePreview` *does* exist (`js/tasks.js:523`) so `app.js`'s fallback branch is live.
+
+**Known residuals (deliberately not fixed in this wave):**
+- `_askCalendarBlock()` injects the next-7-days event digest into every Ask turn's base prompt, even with zero read rounds — a smaller prompt-injection surface than W-2 (no tool-result framing) but not covered by the taint gate. Candidate follow-up: taint when the block is non-empty, or strip it from op-producing turns.
+- New initiator → old (≤v73) acceptor who clicks Accept *after* the channel opened: the old side's `open` handler never fires (pre-existing PeerJS late-listener bug on their end), so state flows only after the old side's next local save. No worse than old↔old today; resolves as peers upgrade.
+- `connect-src` remains broad (`http: https:`) by design — user-configured CORS proxies for calendar feeds need it (documented in the CSP comment).
+
+---
+
 ## Status as of v48 (2026-05-21)
 
 Most findings have been resolved by subsequent feature waves. Each section below is annotated with a ✅ Fixed / 🟡 Open / 🔵 Obsolete banner. The original analysis text is preserved so readers can see what the issue was, why it mattered, and how it was addressed.
