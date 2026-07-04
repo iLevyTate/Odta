@@ -127,3 +127,20 @@ test('event-delegation: ODTAULAI_DELEGATION_READY flag is set', () => {
   const { win } = loadDispatcher();
   assert.strictEqual(win.ODTAULAI_DELEGATION_READY, true);
 });
+
+test('event-delegation: non-bubbling events (toggle/focus/blur) register in capture phase', () => {
+  // focus/blur/toggle never reach document in the bubble phase — a
+  // bubble-phase delegated listener for them would silently never fire.
+  const byType = {};
+  const fakeDoc = {
+    addEventListener(type, fn, opts){ (byType[type] = byType[type] || []).push(!!opts); },
+  };
+  const fakeWin = { ODTAULAI_DELEGATION_READY: false };
+  new Function('document', 'window', src).call(fakeWin, fakeDoc, fakeWin);
+  for (const type of ['toggle', 'focus', 'blur']) {
+    assert.ok(byType[type] && byType[type].some(Boolean), `${type} listener uses capture phase`);
+  }
+  for (const type of ['change', 'input', 'submit']) {
+    assert.ok(byType[type] && byType[type].every(c => !c), `${type} listener stays bubble-phase`);
+  }
+});

@@ -136,10 +136,10 @@ test('Enter selects the highlighted (selected) row with no filter', () => {
 
 test('after filtering, ArrowDown + Enter selects the FIRST VISIBLE row (not a stale source index)', () => {
   const dd = openDropdown({ options: RECUR, selected: 'custom' /* last, source idx 10 */ });
-  // Filter to items starting with "w": weekdays, weekly, weekends, workdays.
+  // Substring filter on "w": weekdays, weekly, biweekly, weekends, workdays.
   dd.type('w');
   const visible = dd.visibleValues();
-  assert.deepEqual(visible, ['weekdays', 'weekly', 'weekends', 'workdays']);
+  assert.deepEqual(visible, ['weekdays', 'weekly', 'biweekly', 'weekends', 'workdays']);
   // 'custom' is filtered out, so highlight reset; ArrowDown -> first visible.
   dd.press('ArrowDown');
   assert.equal(dd.highlightedValue(), 'weekdays', 'highlight must land on the first visible row');
@@ -149,7 +149,7 @@ test('after filtering, ArrowDown + Enter selects the FIRST VISIBLE row (not a st
 
 test('ArrowUp from no highlight wraps to the last visible row', () => {
   const dd = openDropdown({ options: RECUR, selected: 'never' });
-  dd.type('w'); // 4 items, selected 'never' filtered out -> highlight -1
+  dd.type('w'); // 5 items, selected 'never' filtered out -> highlight -1
   dd.press('ArrowUp');
   assert.equal(dd.highlightedValue(), 'workdays', 'ArrowUp from empty highlight selects the last visible row');
 });

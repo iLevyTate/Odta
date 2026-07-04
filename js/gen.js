@@ -56,7 +56,11 @@ let _genWorker;                 // undefined = not yet tried, null = unavailable
 let _genEngine = null;          // in-thread fallback engine (createGenEngine)
 let _genLoadAbortCtl = null;    // fallback-path load cancellation
 let _genReqSeq = 0;
-const _genPending = new Map();  // reqId -> { resolve?, reject?, onToken? }
+const _genPending = new Map();  // reqId -> { resolve?, reject?, onToken?, abortTimer? }
+// How long an abort may go unanswered before the worker is declared wedged
+// (stuck in native ONNX code, unable to process the abort message) and
+// recycled. Cooperative aborts answer in well under a second.
+const GEN_ABORT_WATCHDOG_MS = 9000;
 let _genLoadResolvers = null;   // { resolve, reject, onProgress } for the in-flight worker load
 /** Ref-count concurrent genGenerate calls — only clear "busy" when the last in-flight run finishes. */
 let _genGenInFlight = 0;
@@ -94,6 +98,8 @@ function _ensureGenWorker(){
 
 /** Clear one generation's bookkeeping and update the busy ref-count. */
 function _settleGen(reqId){
+  const p = _genPending.get(reqId);
+  if(p && p.abortTimer){ try{ clearTimeout(p.abortTimer); }catch(_){} p.abortTimer = null; }
   _genPending.delete(reqId);
   _genGenInFlight = Math.max(0, _genGenInFlight - 1);
   _genGenerating = _genGenInFlight > 0;
@@ -145,12 +151,21 @@ function _onGenWorkerMessage(e){
 function _onGenWorkerError(e){
   const raw = (e && e.message) ? e.message : 'The on-device LLM worker crashed (likely out of memory). Try a smaller model preset.';
   console.error('[gen] worker error', e);
+  _genTeardownWorker(raw);
+}
+
+// Shared teardown for a dead OR wedged worker: reject every in-flight call,
+// mark not-ready, terminate, and discard so the next genLoad() respawns.
+function _genTeardownWorker(raw){
   _genReady = false;
   _genLoading = false;
   _genDevice = null;
   _genLastError = _friendlyGenError(raw, _genModelId);
   if(_genLoadResolvers){ const r = _genLoadResolvers; _genLoadResolvers = null; try{ r.reject(new Error(raw)); }catch(_){} }
-  for(const [, p] of _genPending){ if(p && p.reject){ try{ p.reject(new Error(raw)); }catch(_){} } }
+  for(const [, p] of _genPending){
+    if(p && p.abortTimer){ try{ clearTimeout(p.abortTimer); }catch(_){} p.abortTimer = null; }
+    if(p && p.reject){ try{ p.reject(new Error(raw)); }catch(_){} }
+  }
   _genPending.clear();
   _genGenInFlight = 0;
   _genGenerating = false;
@@ -489,7 +504,25 @@ function _genGenerateViaWorker(payload){
     if(sig && sig.aborted){ _settleGen(reqId); reject(new Error('GEN_ABORTED')); return; }
     _genPending.set(reqId, { resolve, reject, onToken: payload.onToken });
     if(sig){
-      sig.addEventListener('abort', () => { try{ w.postMessage({ type: 'abort', reqId }); }catch(_){} }, { once: true });
+      sig.addEventListener('abort', () => {
+        try{ w.postMessage({ type: 'abort', reqId }); }catch(_){}
+        // Watchdog: a worker wedged inside native ONNX code never processes
+        // the abort message, so without this the promise never settles —
+        // _genGenInFlight sticks and Stop looks like a no-op. If the worker
+        // hasn't answered within the grace period, reject the caller with
+        // GEN_ABORTED (so ask.js still reports a clean "Stopped.") and recycle
+        // the worker like a crash.
+        const p = _genPending.get(reqId);
+        if(!p) return; // already settled
+        p.abortTimer = setTimeout(() => {
+          const still = _genPending.get(reqId);
+          if(!still) return; // worker honored the abort in time
+          _settleGen(reqId);
+          if(still.reject){ try{ still.reject(new Error('GEN_ABORTED')); }catch(_){} }
+          console.warn('[gen] abort unanswered after', GEN_ABORT_WATCHDOG_MS, 'ms — terminating wedged worker');
+          _genTeardownWorker('GEN_ABORT_TIMEOUT: worker unresponsive to abort');
+        }, GEN_ABORT_WATCHDOG_MS);
+      }, { once: true });
     }
     try{
       w.postMessage({
@@ -938,7 +971,10 @@ function genDispose(){
   if(_genWorker){ try{ _genWorker.postMessage({ type: 'dispose' }); }catch(_){} }
   if(_genEngine){ try{ _genEngine.dispose(); }catch(_){} _genEngine = null; }
   // Reject anything still awaiting so callers don't hang after disposal.
-  for(const [, p] of _genPending){ if(p && p.reject){ try{ p.reject(new Error('GEN_DISPOSED')); }catch(_){} } }
+  for(const [, p] of _genPending){
+    if(p && p.abortTimer){ try{ clearTimeout(p.abortTimer); }catch(_){} p.abortTimer = null; }
+    if(p && p.reject){ try{ p.reject(new Error('GEN_DISPOSED')); }catch(_){} }
+  }
   _genPending.clear();
   _genReady = false;
   _genGenerating = false;

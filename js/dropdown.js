@@ -79,7 +79,9 @@
         highlightIdx = -1;
         let domIdx = 0;
         options.forEach(function(o){
-          if(norm && String(o.label || '').toLowerCase().indexOf(norm) !== 0) return;
+          // Substring match — users expect "fox" to find "The quick fox",
+          // not only labels that start with the query.
+          if(norm && String(o.label || '').toLowerCase().indexOf(norm) === -1) return;
           const item = document.createElement('button');
           item.type = 'button';
           item.className = 'dropdown-item';
@@ -180,20 +182,25 @@
           close(null);
         }
       }
-      // Defer one frame so the click that opened the dropdown doesn't immediately close it.
-      requestAnimationFrame(function(){
+      // Defer one frame so the click that opened the dropdown doesn't
+      // immediately close it. Track the rAF id: if close() runs before the
+      // frame fires, the pending callback would attach outside-handlers that
+      // nothing ever removes — cancel it instead.
+      const outsideRaf = requestAnimationFrame(function(){
+        if(_open) _open.outsideRaf = null;
         document.addEventListener('mousedown', outsideHandler, true);
         document.addEventListener('touchstart', outsideHandler, { capture: true, passive: true });
       });
 
       _open = { el: root, opts: opts, resolve: resolve, prevFocus: prevFocus,
-                keyHandler: keyHandler, outsideHandler: outsideHandler };
+                keyHandler: keyHandler, outsideHandler: outsideHandler, outsideRaf: outsideRaf };
     });
   }
 
   function close(value){
     if(!_open) return;
     const ctx = _open;
+    if(ctx.outsideRaf != null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(ctx.outsideRaf);
     document.removeEventListener('keydown', ctx.keyHandler, true);
     document.removeEventListener('mousedown', ctx.outsideHandler, true);
     document.removeEventListener('touchstart', ctx.outsideHandler, { capture: true });

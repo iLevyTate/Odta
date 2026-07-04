@@ -553,6 +553,13 @@ async function cognitaskRun(query, opts){
   let lastFinal = null;
   let gotParse = false;
   let cognitaskTerminalInjected = false;
+  // Reads whose results carry content authored OUTSIDE the user's own vault
+  // (e.g. subscribed ICS feeds — anyone who controls the feed controls the
+  // text the model reads). Once such content enters the conversation, the
+  // turn's write ops are tainted: the UI must not auto-apply them, only
+  // present them for review (prompt-injection containment).
+  const ASK_EXTERNAL_READS = ['GET_CALENDAR_EVENTS'];
+  let externalReads = false;
 
   const runOnce = async (temp) => {
     let rawText = '';
@@ -607,6 +614,7 @@ async function cognitaskRun(query, opts){
           break;
         }
         const results = reads.map(r => ({ op: r.name, result: runReadOp(r) }));
+        if(reads.some(r => ASK_EXTERNAL_READS.includes(r.name))) externalReads = true;
         readRounds++;
         if(typeof opts.onReadRound === 'function'){ try{ opts.onReadRound({ results, readRounds }); }catch(e){} }
         messages.push({ role: 'assistant', content: raw });
@@ -735,6 +743,9 @@ async function cognitaskRun(query, opts){
                 rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
                 truncated: !!val.truncated,
                 readRounds,
+                // Turn-scoped taint: the retry runs after external content
+                // already entered this turn's conversation state.
+                externalContent: externalReads,
               };
             }
           }
@@ -792,6 +803,7 @@ async function cognitaskRun(query, opts){
     rawText: allRaw,
     truncated: !!val.truncated,
     readRounds,
+    externalContent: externalReads,
   };
 }
 

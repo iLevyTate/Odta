@@ -222,3 +222,106 @@ test('worker crash: onerror rejects in-flight generations and marks the LLM not-
   assert.equal(win.isGenGenerating(), false);
   assert.ok(w.terminated, 'the dead worker is terminated so a fresh one can be spawned');
 });
+
+// ── Abort watchdog: a WEDGED worker (stuck in native ONNX code, never
+// answering the abort message) must not leave genGenerate unsettled forever —
+// that stuck _genGenInFlight made Stop a permanent no-op. Fake timers capture
+// the watchdog callback so the tests control when it "fires".
+function loadGenFakeTimers() {
+  const storage = {};
+  const fakeLocalStorage = {
+    getItem: (k) => (k in storage) ? storage[k] : null,
+    setItem: (k, v) => { storage[k] = String(v); },
+    removeItem: (k) => { delete storage[k]; },
+  };
+  const win = { addEventListener: () => {}, removeEventListener: () => {} };
+
+  let lastWorker = null;
+  class FakeWorker {
+    constructor(url, opts) {
+      this.url = url; this.opts = opts; this.posted = []; this.terminated = false;
+      this.onmessage = null; this.onerror = null; this.onmessageerror = null;
+      lastWorker = this;
+    }
+    postMessage(msg) { this.posted.push(msg); }
+    terminate() { this.terminated = true; }
+    emit(data) { if (this.onmessage) this.onmessage({ data }); }
+  }
+
+  const timers = { seq: 0, pending: new Map(), cleared: [] };
+  const fakeSetTimeout = (fn, ms) => { const id = ++timers.seq; timers.pending.set(id, { fn, ms }); return id; };
+  const fakeClearTimeout = (id) => { timers.cleared.push(id); timers.pending.delete(id); };
+
+  const ctx = {
+    window: win,
+    localStorage: fakeLocalStorage,
+    console,
+    caches: undefined,
+    Worker: FakeWorker,
+    AbortController,
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
+  };
+  const fn = new Function(...Object.keys(ctx), src);
+  fn(...Object.values(ctx));
+  return { win, getWorker: () => lastWorker, timers };
+}
+
+test('abort watchdog: a wedged worker gets terminated and the caller sees GEN_ABORTED', async () => {
+  const harness = loadGenFakeTimers();
+  const { win, getWorker, timers } = harness;
+  const p = win.genLoad('onnx-community/Qwen2.5-0.5B-Instruct', 'q4');
+  getWorker().emit({ type: 'loaded', device: 'wasm', modelId: 'onnx-community/Qwen2.5-0.5B-Instruct', finalSlug: 'onnx-community/Qwen2.5-0.5B-Instruct' });
+  await p;
+  const w = getWorker();
+
+  const ctl = new AbortController();
+  const genPromise = win.genGenerate({ messages: [{ role: 'user', content: 'long task' }], signal: ctl.signal });
+  const genMsg = w.posted.find(m => m.type === 'generate');
+
+  ctl.abort();
+  assert.ok(w.posted.some(m => m.type === 'abort' && m.reqId === genMsg.reqId), 'abort posted');
+  const watchdog = [...timers.pending.values()].find(t => t.ms >= 5000);
+  assert.ok(watchdog, 'an abort watchdog timer must be armed');
+
+  // The worker never answers (wedged in native code) — the watchdog fires.
+  watchdog.fn();
+
+  await assert.rejects(genPromise, /GEN_ABORTED/, 'caller sees the abort, not a hang');
+  assert.equal(win.isGenGenerating(), false, 'in-flight refcount must unstick');
+  assert.equal(win.isGenReady(), false, 'wedged worker is torn down');
+  assert.ok(w.terminated, 'wedged worker is terminated');
+
+  // A fresh load must spawn a NEW worker (the dead one was discarded).
+  const p2 = win.genLoad('onnx-community/Qwen2.5-0.5B-Instruct', 'q4');
+  const w2 = getWorker();
+  assert.notStrictEqual(w2, w, 'next load spawns a fresh worker');
+  w2.emit({ type: 'loaded', device: 'wasm', modelId: 'onnx-community/Qwen2.5-0.5B-Instruct', finalSlug: 'onnx-community/Qwen2.5-0.5B-Instruct' });
+  await p2;
+  assert.equal(win.isGenReady(), true);
+});
+
+test('abort watchdog: a cooperative abort clears the watchdog and keeps the worker', async () => {
+  const harness = loadGenFakeTimers();
+  const { win, getWorker, timers } = harness;
+  const p = win.genLoad('onnx-community/Qwen2.5-0.5B-Instruct', 'q4');
+  getWorker().emit({ type: 'loaded', device: 'wasm', modelId: 'onnx-community/Qwen2.5-0.5B-Instruct', finalSlug: 'onnx-community/Qwen2.5-0.5B-Instruct' });
+  await p;
+  const w = getWorker();
+
+  const ctl = new AbortController();
+  const genPromise = win.genGenerate({ messages: [{ role: 'user', content: 'long task' }], signal: ctl.signal });
+  const genMsg = w.posted.find(m => m.type === 'generate');
+
+  ctl.abort();
+  const armed = [...timers.pending.keys()];
+  assert.ok(armed.length > 0, 'watchdog armed on abort');
+
+  // Worker honors the interrupt in time.
+  w.emit({ type: 'gen-error', reqId: genMsg.reqId, message: 'GEN_ABORTED' });
+  await assert.rejects(genPromise, /GEN_ABORTED/);
+
+  assert.ok(armed.every(id => timers.cleared.includes(id)), 'watchdog cleared on settle');
+  assert.equal(w.terminated, false, 'healthy worker must NOT be recycled');
+  assert.equal(win.isGenReady(), true, 'LLM stays ready after a cooperative abort');
+});

@@ -127,7 +127,7 @@
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
       const swBase = (typeof window !== 'undefined' && window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.swCache)
         ? window.ODTAULAI_RELEASE.swCache
-        : 'odtaulai-v73';
+        : 'odtaulai-v74';
       const swCode = `
         const CACHE = '${swBase}-inline';
         self.addEventListener('install', e => self.skipWaiting());
@@ -136,16 +136,19 @@
           if (e.request.method !== 'GET') return;
           const u = new URL(e.request.url);
           if (u.origin !== self.location.origin) return;
+          // Stale-while-revalidate, same shape as the real sw.js: serve the
+          // cache immediately but always refresh it in the background —
+          // pure cache-first would pin stale assets for the whole version.
           e.respondWith(
             caches.match(e.request).then(cached => {
-              if (cached) return cached;
-              return fetch(e.request).then(resp => {
+              const net = fetch(e.request).then(resp => {
                 if (resp.ok && resp.type === 'basic') {
                   const clone = resp.clone();
                   caches.open(CACHE).then(c => c.put(e.request, clone)).catch(()=>{});
                 }
                 return resp;
               }).catch(() => cached || new Response('Offline', {status: 503}));
+              return cached || net;
             })
           );
         });

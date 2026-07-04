@@ -1,18 +1,6 @@
 // ========== CONFIG ==========
 function updateConfig(){cfg.work=Math.max(1,parseInt(gid('cfgWork').value)||25);cfg.short=Math.max(1,parseInt(gid('cfgShort').value)||5);cfg.long=Math.max(1,parseInt(gid('cfgLong').value)||15);cfg.cycle=Math.max(2,parseInt(gid('cfgCycle').value)||4);if(getTimerState()==='idle'){setPhaseTime();renderTimerChrome()}saveState('user')}
 function toggleOpt(id){const el=gid(id);el.classList.toggle('on');const on=el.classList.contains('on');el.setAttribute('aria-checked',on?'true':'false');if(id==='togBreak')cfg.autoBreak=on;if(id==='togWork')cfg.autoWork=on;if(id==='togSound'){cfg.sound=on;if(!cfg.sound){cancelScheduledAudio();if(typeof swScheduledIntervalNodes!=='undefined'&&swScheduledIntervalNodes.length&&typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes);if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers))quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)});}else if(running){schedulePhaseAudio()}}if(id==='togLink')cfg.linkTask=on;if(id==='togNotif'){cfg.notif=on;if(cfg.notif){reqNotifPerm().then(()=>{ if(typeof renderNotifStatus==='function') renderNotifStatus(); })}else{ if(typeof renderNotifStatus==='function') renderNotifStatus(); }}if(id==='togSnpNote')cfg.askSessionNote=on;saveState('user')}
-// Settings is now a regular tab page. The legacy `settingsOpen` flag and
-// `toggleSettings()` accordion are kept as no-ops for back-compat with any
-// callers (Cmd+K, deep-links) until those are migrated.
-let settingsOpen=true;
-function toggleSettings(){
-  // Ensure the live sub-managers are fresh whenever something asks to "open"
-  // settings (e.g. from the command palette). The panel is always visible
-  // when the Settings tab is active, so this is just a re-render hook.
-  if(typeof renderClassificationSettings==='function') renderClassificationSettings();
-  if(typeof renderListsManager==='function') renderListsManager();
-}
-
 // ========== STATE ==========
 let cfg={work:25,short:5,long:15,cycle:4,autoBreak:true,autoWork:false,sound:true,linkTask:true,notif:true,timerSub:'pomo',hideHabitsInMainViews:true,askSessionNote:true,focusListMode:false,phasePreset:'classic',qaHintHidden:true,quickAddFields:['entryKind','list','due'],cascadeCompletion:true,dueNotify:true,calMode:'month',timerDock:{}};
 
@@ -123,7 +111,7 @@ function setTimerSub(sub){
   if(typeof saveState==='function') saveState('auto');
 }
 window.setTimerSub=setTimerSub;
-function renderPips(){const c=gid('pips');c.textContent='';for(let i=0;i<cfg.cycle;i++){const d=document.createElement('div');d.className='pip'+(i<pomosInCycle?' done':i===pomosInCycle&&phase==='work'?' current':'');d.title='Jump to pomo '+(i+1);d.onclick=(function(idx){return function(){jumpToPomo(idx)}})(i);c.appendChild(d)}}
+function renderPips(){const c=gid('pips');c.textContent='';for(let i=0;i<cfg.cycle;i++){const d=document.createElement('div');d.className='pip'+(i<pomosInCycle?' done':i===pomosInCycle&&phase==='work'?' current':'');d.title='Jump to pomo '+(i+1);d.setAttribute('role','button');d.tabIndex=0;d.setAttribute('aria-label','Jump to pomo '+(i+1)+' of '+cfg.cycle);const go=(function(idx){return function(){jumpToPomo(idx)}})(i);d.onclick=go;d.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}};c.appendChild(d)}}
 function jumpToPomo(idx){if(running)return;if(idx<0||idx>=cfg.cycle)return;pomosInCycle=idx;renderPips();saveState('user')}
 function _mkBtn(cls,label,handler){const b=document.createElement('button');b.className=cls;b.textContent=label;b.onclick=handler;return b}
 function renderCtrls(){
@@ -143,9 +131,13 @@ function _syncRingState(){
 }
 
 // ========== TIMER ==========
-function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+// startTimer/resumeTimer persist via saveState('user') like pauseTimer does —
+// beyond persistence, that marks this tab dirty (window._stateDirty) so a
+// cross-tab storage event merges (LWW) instead of wholesale _applyState(),
+// which would silently reset the running timer from the other tab's snapshot.
+function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function tick(){
   if(!running)return;
   const el=Math.floor((Date.now()-startedAt)/1000);remaining=Math.max(0,pausedRemaining-el);
@@ -279,6 +271,12 @@ async function resetAll(){
     if(!ok) return;
   }
   running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();phase='work';pomosInCycle=0;fireCounts={};
+  // Cancel queued auto-advance / auto-start from a just-completed phase —
+  // resetPhase() already does this; without it here, the pending 300ms
+  // startTimer() fires right after the reset and the timer starts running
+  // again on its own (the confirm dialog above widens that window).
+  if(_pendingAdvanceTimer){ clearTimeout(_pendingAdvanceTimer); _pendingAdvanceTimer = null; }
+  if(_pendingStartTimer){ clearTimeout(_pendingStartTimer); _pendingStartTimer = null; }
   if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}
   setPhaseTime();renderAll();saveState('user');
 }
@@ -580,14 +578,14 @@ function renderQuickTimers(){
     const btnIcon=qt.finished?'↻':qt.running?'⏸':'▶';
     const timeClass='qt-time'+(qt.finished?' done':qt.running?' running':'')+(rem<=10&&qt.running&&rem>0?' warn':'');
     const barClass='qt-bar'+(qt.finished?' done':'');
-    const togBtn=document.createElement('button');togBtn.className='qt-btn '+btnClass;togBtn.title=qt.finished?'Restart':qt.running?'Pause':'Start';togBtn.textContent=btnIcon;togBtn.onclick=function(){toggleQuickTimer(qt.id)};
+    const togBtn=document.createElement('button');togBtn.className='qt-btn '+btnClass;togBtn.title=qt.finished?'Restart':qt.running?'Pause':'Start';togBtn.setAttribute('aria-label',togBtn.title+' '+qt.label);togBtn.textContent=btnIcon;togBtn.onclick=function(){toggleQuickTimer(qt.id)};
     const info=document.createElement('div');info.className='qt-info';
     const lbl=document.createElement('div');lbl.className='qt-label';lbl.textContent=qt.label;info.appendChild(lbl);
     const tm=document.createElement('div');tm.className=timeClass;tm.textContent=fmtHMS(rem);info.appendChild(tm);
     const prog=document.createElement('div');prog.className='qt-progress';const bar=document.createElement('div');bar.className=barClass;bar.style.width=pct+'%';prog.appendChild(bar);info.appendChild(prog);
     const acts=document.createElement('div');acts.className='qt-actions';
-    const rstBtn=document.createElement('button');rstBtn.className='qt-act';rstBtn.title='Reset';rstBtn.textContent='↺';rstBtn.onclick=function(){resetQuickTimer(qt.id)};acts.appendChild(rstBtn);
-    const rmBtn=document.createElement('button');rmBtn.className='qt-act';rmBtn.title='Remove';rmBtn.textContent='×';rmBtn.onclick=function(){removeQuickTimer(qt.id)};acts.appendChild(rmBtn);
+    const rstBtn=document.createElement('button');rstBtn.className='qt-act';rstBtn.title='Reset';rstBtn.setAttribute('aria-label','Reset '+qt.label);rstBtn.textContent='↺';rstBtn.onclick=function(){resetQuickTimer(qt.id)};acts.appendChild(rstBtn);
+    const rmBtn=document.createElement('button');rmBtn.className='qt-act';rmBtn.title='Remove';rmBtn.setAttribute('aria-label','Remove '+qt.label);rmBtn.textContent='×';rmBtn.onclick=function(){removeQuickTimer(qt.id)};acts.appendChild(rmBtn);
     d.appendChild(togBtn);d.appendChild(info);d.appendChild(acts);
     list.appendChild(d)
   })
@@ -660,7 +658,7 @@ function renderIntList(){
       if(next>0){const nx=document.createElement('div');nx.className='inext';nx.textContent='next '+fmt(next);st.appendChild(nx)}
       d.appendChild(st);
     }
-    const rm=document.createElement('button');rm.className='irm';rm.textContent='×';rm.onclick=function(){removeInterval(iv.id)};d.appendChild(rm);
+    const rm=document.createElement('button');rm.className='irm';rm.textContent='×';rm.title='Remove interval';rm.setAttribute('aria-label','Remove interval '+iv.label);rm.onclick=function(){removeInterval(iv.id)};d.appendChild(rm);
     list.appendChild(d);
   });
 }
