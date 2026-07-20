@@ -1778,7 +1778,12 @@ function _importTasksFromCSV(text){
     const row = rows[i];
     if(!row || (row.length === 1 && row[0] === '')) continue; // blank line
     const obj = {};
-    headers.forEach((h, j) => { obj[h] = row[j] != null ? row[j] : ''; });
+    // Undo the formula-injection guard applied on export (_csvEscape prepends
+    // ' to cells starting with = + - @ tab/CR) so export → import round-trips
+    // to identity instead of accreting a literal leading apostrophe. Only the
+    // exact guard pattern is stripped; a user's own leading ' survives.
+    const unguard = v => (typeof v === 'string' && /^'[=+\-@\t\r]/.test(v)) ? v.slice(1) : v;
+    headers.forEach((h, j) => { obj[h] = row[j] != null ? unguard(row[j]) : ''; });
     if(!obj.name || !obj.name.trim()){
       report.errors.push('Row ' + (i+1) + ': missing name');
       report.skipped++;

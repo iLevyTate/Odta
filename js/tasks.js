@@ -1872,6 +1872,14 @@ function completeHabitCycle(t){
   t.dueDate=advanceRecurringDate(t.dueDate||todayISO(),t.recur);
   // Re-arm the reminder for the new cycle — checkReminders skips any task
   // with reminderFired set, which would make recurring reminders one-shot.
+  // An explicit remindAt must roll forward with the cycle too: checkReminders
+  // prefers remindAt over dueDate, so a stale past timestamp would re-fire
+  // as "Missed:" within 30s of logging the cycle and then block the
+  // due-date branch for every future cycle.
+  if(typeof t.remindAt==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(t.remindAt)){
+    const tPart=t.remindAt.slice(t.remindAt.indexOf('T'));
+    t.remindAt=advanceRecurringDate(t.remindAt.slice(0,10),t.recur)+tPart;
+  }
   t.reminderFired=false;
   t.lastModified=Date.now();
   t._habitCycledInSession = true;
