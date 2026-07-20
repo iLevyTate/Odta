@@ -514,6 +514,17 @@ setTimeout(() => {
 // a launchQueue entry with the file. We support .json (full backup / tasks)
 // and .ics (calendar feed paste).
 (function applyFileHandlers(){
+  // The manifest file-handler action is "./?openfile=1" — the param only
+  // routes the launch and drives nothing at runtime, so scrub it like the
+  // share-target params above; otherwise it lingers in the address bar and
+  // in any bookmark made from an "Open with Odta" session.
+  try{
+    const u = new URL(location.href);
+    if(u.searchParams.has('openfile')){
+      u.searchParams.delete('openfile');
+      history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : '') + u.hash);
+    }
+  }catch(_){}
   if(!('launchQueue' in window) || !window.launchQueue || typeof window.launchQueue.setConsumer !== 'function') return;
   try{
     window.launchQueue.setConsumer(async (params) => {
