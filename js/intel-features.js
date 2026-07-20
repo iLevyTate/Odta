@@ -543,7 +543,7 @@ function renderClassificationSettings(){
 
     h += '<div class="class-mgr-cat' + (obj.hidden ? ' class-mgr-cat--hidden' : '') + '">'
       + '<div class="class-mgr-card">'
-      +   '<span class="class-mgr-card-dot" style="background:' + escAttr(String(obj.color || 'var(--cat-general)')) + '"></span>'
+      +   '<span class="class-mgr-card-dot" data-dot-color="' + escAttr(String(obj.color || 'var(--cat-general)')) + '"></span>'
       +   '<div class="class-mgr-card-meta">'
       +     '<div class="class-mgr-card-name">' + esc(obj.label) + '</div>'
       +     '<div class="' + descCls + '">' + descText + '</div>'
@@ -572,6 +572,12 @@ function renderClassificationSettings(){
     + '<button type="button" class="btn-ghost btn-sm class-mgr-add" data-action="classificationAdd">+ Add life area</button></div>';
 
   root.innerHTML = h;
+  // Dot colors go through the CSSOM (style property), not style="..." markup:
+  // the CSP is style-src 'self' with no unsafe-inline, so an inline style
+  // attribute is silently blocked and the dot renders colorless.
+  root.querySelectorAll('.class-mgr-card-dot[data-dot-color]').forEach(el => {
+    el.style.background = el.getAttribute('data-dot-color');
+  });
 }
 
 function refreshClassificationUi(){
@@ -1091,7 +1097,12 @@ async function findDuplicates(threshold){
 /** Per-task max similarity to any other (for badge) */
 async function computeDuplicateScores(){
   const store = await embedStore.all();
-  const ids = [...store.keys()];
+  // Orphaned embeddings (deleted tasks awaiting cleanOrphans) and archived
+  // tasks must not inflate a live task's badge — mirror findDuplicates.
+  const ids = [...store.keys()].filter(id => {
+    const t = findTask(id);
+    return t && !t.archived;
+  });
   const maxSim = new Map();
   let pairsChecked = 0;
   for(let i = 0; i < ids.length; i++){

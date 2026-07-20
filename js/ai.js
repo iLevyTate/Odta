@@ -383,6 +383,7 @@ function executeIntelOp(op){
         priority: a.priority || 'none',
         category: a.category || null,
         dueDate: a.dueDate || null,
+        remindAt: a.remindAt || null,
         description: a.description || '',
         tags: a.tags == null
           ? []

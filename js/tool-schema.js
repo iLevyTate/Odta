@@ -7,7 +7,7 @@
 const ASK_MAX_OPS = 50;
 
 const TOOL_SCHEMA = {
-  CREATE_TASK:    { required:['name'], optional:['priority','category','dueDate','effort','tags','listId','description','type','parentId'], destructive:false, readOnly:false },
+  CREATE_TASK:    { required:['name'], optional:['priority','category','dueDate','remindAt','effort','tags','listId','description','type','parentId'], destructive:false, readOnly:false },
   UPDATE_TASK:    { required:['id'],   optional:['name','priority','status','dueDate','startDate','hiddenUntil','effort','energyLevel','category','description','url','estimateMin','starred','type','valuesAlignment','valuesNote','tags'], destructive:false, readOnly:false },
   MARK_DONE:      { required:['id'],   optional:['completionNote'], destructive:false, readOnly:false },
   REOPEN:         { required:['id'],   optional:[], destructive:false, readOnly:false },

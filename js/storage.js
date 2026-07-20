@@ -2,7 +2,7 @@
 // Internal keys keep stupind_* prefix so existing installs retain data through rebrands (stupind → OdTauLai → Odta).
 const STORE_KEY     = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.STATE) || 'stupind_state';
 const ARCHIVE_KEY   = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.ARCHIVE) || 'stupind_archive';
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /** P2P sync: permanent task deletion tombstones id → deleted-at (ms). Merged with max(ts). */
 var syncTaskDels = {};
@@ -382,7 +382,8 @@ function saveState(reason){
         'valuesAlignment','parentId','listId','url','estimateMin','recur','remindAt','type','blockedBy',
         'relatedTo','attachments',
         'completions','habitLastRecordedTotalSec',
-        'totalSec','sessions','sessionEntries','checklist','notes','_ext'];
+        'totalSec','sessions','sessionEntries','checklist','checklists','notes',
+        'completionNote','hiddenUntil','valuesNote','_ext'];
       let changed = false;
       for (const f of fieldsToCompare){
         const a = JSON.stringify(t[f]);

@@ -140,6 +140,7 @@ function _askSystemPrompt(){
     '- effort ∈ {xs,s,m,l,xl}. energyLevel ∈ {high,low}. recur ∈ {daily,weekdays,weekly,monthly}.',
     '- Dates use YYYY-MM-DD. Reminders use YYYY-MM-DDTHH:MM.',
     '- Prefer UPDATE_TASK for edits. Use CREATE_TASK only when the user asks to create.',
+    '- Lists are referenced by numeric listId from the Lists in Context (match by name). CREATE_TASK takes listId; to move an existing task use CHANGE_LIST. Never pass a list\'s name as an arg.',
     '- Never output DELETE_TASK unless the user explicitly says "delete forever".',
     '- Keep the array short — only the ops that clearly satisfy the request.',
     '- Read-only ops (QUERY_TASKS, GET_TASK_DETAIL, GET_CALENDAR_EVENTS, LIST_CATEGORIES, LIST_LISTS) are for gathering facts; you will receive tool results and can then output write ops. Do not try to open UI modals.',
@@ -148,9 +149,9 @@ function _askSystemPrompt(){
     'User: make task 12 urgent\n→ [{"name":"UPDATE_TASK","args":{"id":12,"priority":"urgent"}}]',
     'User: create a task "buy milk" due tomorrow tagged shopping\n→ [{"name":"CREATE_TASK","args":{"name":"buy milk","dueDate":"<tomorrow>","tags":["shopping"]}}]',
     'User: remind me to call mom tomorrow at 9am\n→ [{"name":"CREATE_TASK","args":{"name":"Call mom","dueDate":"<tomorrow>","remindAt":"<tomorrow>T09:00"}}]',
-    'User: add "submit expenses" to my Work list, due friday, high priority\n→ [{"name":"CREATE_TASK","args":{"name":"Submit expenses","listName":"Work","dueDate":"<friday>","priority":"high"}}]',
+    'User: add "submit expenses" to my Work list, due friday, high priority\n→ [{"name":"CREATE_TASK","args":{"name":"Submit expenses","listId":<id of "Work" from Context>,"dueDate":"<friday>","priority":"high"}}]',
     'User: schedule the dentist next monday\n→ [{"name":"CREATE_TASK","args":{"name":"Dentist","dueDate":"<next monday>"}}]',
-    'User: move the rent task to Personal\n→ [{"name":"UPDATE_TASK","args":{"id":<id>,"listName":"Personal"}}]',
+    'User: move the rent task to Personal\n→ [{"name":"CHANGE_LIST","args":{"id":<id>,"listId":<id of "Personal" from Context>}}]',
     'User: snooze task 7 for a week\n→ [{"name":"UPDATE_TASK","args":{"id":7,"hiddenUntil":"<+7d>"}}]',
     'User: mark all my #errands as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
     'User: mark everything already completed last week as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
@@ -341,7 +342,8 @@ function runReadOp(op){
     if(n === 'GET_CALENDAR_EVENTS'){
       if(typeof getUpcomingEvents !== 'function') return { events: [] };
       const limV = _coerceReadKey('limit', a.limit);
-      const lim = Math.min(500, Math.max(1, typeof limV === 'number' && Number.isFinite(limV) ? limV : 30));
+      // _coerceReadKey already clamps limit to [1,100]; 100 is the real cap.
+      const lim = Math.max(1, typeof limV === 'number' && Number.isFinite(limV) ? limV : 30);
       const fromD = _coerceReadKey('fromDate', a.fromDate);
       const toD = _coerceReadKey('toDate', a.toDate);
       const windowDays = _calendarFetchWindowDays(fromD, toD);
@@ -559,7 +561,11 @@ async function cognitaskRun(query, opts){
   // turn's write ops are tainted: the UI must not auto-apply them, only
   // present them for review (prompt-injection containment).
   const ASK_EXTERNAL_READS = ['GET_CALENDAR_EVENTS'];
-  let externalReads = false;
+  // The base user prompt itself embeds the next-7-days calendar digest
+  // (_askCalendarBlock) on every turn, so externally-authored feed text can
+  // influence write ops even when the model never calls GET_CALENDAR_EVENTS.
+  // Taint from the start whenever that block is non-empty.
+  let externalReads = !!((typeof _askCalendarBlock === 'function') && _askCalendarBlock());
 
   const runOnce = async (temp) => {
     let rawText = '';
