@@ -46,7 +46,9 @@ for (const t of tabs) {
   await new Promise(r => setTimeout(r, 100));
   let visible = false;
   try {
-    visible = await page.$eval(`[data-tab="${t}"]`, el => el.style.display !== 'none');
+    // showTab toggles panels via the `hidden` attribute, not inline display —
+    // offsetParent doubles as a real is-it-rendered check.
+    visible = await page.$eval(`[data-tab="${t}"]`, el => !el.hidden && el.offsetParent !== null);
   } catch (e) {
     console.log(`  click ${t}: visibility check FAILED (${e.message})`);
   }

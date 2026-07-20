@@ -190,6 +190,11 @@
   // we close directly.
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
+    // An open pill Dropdown over the modal owns this Escape. Both handlers
+    // are capture-phase listeners on document, and stopPropagation() cannot
+    // block another listener on the SAME node — without this guard a single
+    // keypress closed the popover AND tore down the whole modal beneath it.
+    if(window.Dropdown && typeof Dropdown.isOpen === 'function' && Dropdown.isOpen()) return;
     const top = topmost();
     if(!top) return;
     e.preventDefault();

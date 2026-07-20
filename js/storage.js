@@ -2,7 +2,7 @@
 // Internal keys keep stupind_* prefix so existing installs retain data through rebrands (stupind → OdTauLai → Odta).
 const STORE_KEY     = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.STATE) || 'stupind_state';
 const ARCHIVE_KEY   = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.ARCHIVE) || 'stupind_archive';
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 /** P2P sync: permanent task deletion tombstones id → deleted-at (ms). Merged with max(ts). */
 var syncTaskDels = {};
@@ -382,7 +382,8 @@ function saveState(reason){
         'valuesAlignment','parentId','listId','url','estimateMin','recur','remindAt','type','blockedBy',
         'relatedTo','attachments',
         'completions','habitLastRecordedTotalSec',
-        'totalSec','sessions','sessionEntries','checklist','notes','_ext'];
+        'totalSec','sessions','sessionEntries','checklist','checklists','notes',
+        'completionNote','hiddenUntil','valuesNote','_ext'];
       let changed = false;
       for (const f of fieldsToCompare){
         const a = JSON.stringify(t[f]);
@@ -1777,7 +1778,12 @@ function _importTasksFromCSV(text){
     const row = rows[i];
     if(!row || (row.length === 1 && row[0] === '')) continue; // blank line
     const obj = {};
-    headers.forEach((h, j) => { obj[h] = row[j] != null ? row[j] : ''; });
+    // Undo the formula-injection guard applied on export (_csvEscape prepends
+    // ' to cells starting with = + - @ tab/CR) so export → import round-trips
+    // to identity instead of accreting a literal leading apostrophe. Only the
+    // exact guard pattern is stripped; a user's own leading ' survives.
+    const unguard = v => (typeof v === 'string' && /^'[=+\-@\t\r]/.test(v)) ? v.slice(1) : v;
+    headers.forEach((h, j) => { obj[h] = row[j] != null ? unguard(row[j]) : ''; });
     if(!obj.name || !obj.name.trim()){
       report.errors.push('Row ' + (i+1) + ': missing name');
       report.skipped++;

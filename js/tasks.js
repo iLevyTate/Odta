@@ -1845,6 +1845,9 @@ function advanceRecurringDate(dateStr,recurType){
   else if(recurType==='weekly')d.setDate(d.getDate()+7);
   else if(recurType==='monthly'){
     const day=d.getDate();
+    // Move to the 1st before changing month: setMonth on the 29th-31st can
+    // overflow past a shorter target month (Jan 31 → "Feb 31" → Mar 3).
+    d.setDate(1);
     d.setMonth(d.getMonth()+1);
     const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
     d.setDate(Math.min(day,last));
@@ -1867,6 +1870,17 @@ function completeHabitCycle(t){
   t.status='open';
   t.completedAt=null;
   t.dueDate=advanceRecurringDate(t.dueDate||todayISO(),t.recur);
+  // Re-arm the reminder for the new cycle — checkReminders skips any task
+  // with reminderFired set, which would make recurring reminders one-shot.
+  // An explicit remindAt must roll forward with the cycle too: checkReminders
+  // prefers remindAt over dueDate, so a stale past timestamp would re-fire
+  // as "Missed:" within 30s of logging the cycle and then block the
+  // due-date branch for every future cycle.
+  if(typeof t.remindAt==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(t.remindAt)){
+    const tPart=t.remindAt.slice(t.remindAt.indexOf('T'));
+    t.remindAt=advanceRecurringDate(t.remindAt.slice(0,10),t.recur)+tPart;
+  }
+  t.reminderFired=false;
   t.lastModified=Date.now();
   t._habitCycledInSession = true;
   _pinTaskVisibleBriefly(t.id, 5000);

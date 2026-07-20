@@ -383,6 +383,7 @@ function executeIntelOp(op){
         priority: a.priority || 'none',
         category: a.category || null,
         dueDate: a.dueDate || null,
+        remindAt: a.remindAt || null,
         description: a.description || '',
         tags: a.tags == null
           ? []
@@ -409,7 +410,10 @@ function executeIntelOp(op){
     }
     case 'MARK_DONE':{
       const t = findTask(a.id); if(!t) return null;
-      snap = { type: 'updated', id: t.id, before: { ...t } };
+      // Deep snapshot: completeHabitCycle mutates completions[] and checklist
+      // items IN PLACE, so a shallow copy shares those references and the
+      // "before" state gets mutated along with the live task (undo no-op).
+      snap = { type: 'updated', id: t.id, before: JSON.parse(JSON.stringify(t)) };
       if(a.completionNote) t.completionNote = String(a.completionNote);
       if(t.recur && typeof completeHabitCycle === 'function'){
         completeHabitCycle(t);
@@ -432,8 +436,12 @@ function executeIntelOp(op){
     }
     case 'DELETE_TASK':{
       const t = findTask(a.id); if(!t) return null;
-      snap = { type: 'deleted', before: { ...t } };
       const desc = getTaskDescendantIds(t.id);
+      // The cascade removes the whole subtree, so undo must restore the
+      // whole subtree — snapshotting only the root permanently loses every
+      // descendant the moment the user relies on the Undo toast.
+      snap = { type: 'deleted', before: { ...t },
+               subtree: tasks.filter(x => desc.includes(x.id)).map(x => ({ ...x })) };
       for(const rid of [t.id, ...desc]){ if(typeof _taskIndexRemove === 'function') _taskIndexRemove(rid); }
       tasks = tasks.filter(x => x.id !== t.id && !desc.includes(x.id));
       if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
@@ -442,14 +450,24 @@ function executeIntelOp(op){
     case 'DUPLICATE_TASK':{
       const src = findTask(a.id); if(!src) return null;
       const id = ++taskIdCtr;
-      const dup = Object.assign({}, src, {
+      // Deep-clone the source: a shallow copy shares every nested array/object
+      // (valuesAlignment, completions, checklists, _ext, …), so mutating one
+      // task's habit log or checklist corrupts the other. History fields are
+      // reset — a copy starts fresh. Attachments are dropped: blob records
+      // are keyed by the SOURCE task id, so a shared id list means removing
+      // an attachment from either task deletes the other's blob.
+      const dup = Object.assign(JSON.parse(JSON.stringify(src)), {
         id, name: src.name + ' (copy)',
-        totalSec: 0, sessions: 0, created: timeNowFull(),
+        totalSec: 0, sessions: 0, sessionEntries: [], created: timeNowFull(),
         completedAt: null, status: 'open', archived: false,
-        tags: [...(src.tags || [])], blockedBy: [],
-        checklist: (src.checklist || []).map(c => ({ ...c, done: false, doneAt: null })),
-        notes: [],
+        blockedBy: [], notes: [], attachments: [],
+        completions: [], habitLastRecordedTotalSec: null,
+        reminderFired: false,
       });
+      dup.checklist = (dup.checklist || []).map(c => ({ ...c, done: false, doneAt: null }));
+      if(Array.isArray(dup.checklists)){
+        dup.checklists.forEach(g => (g.items || []).forEach(c => { c.done = false; c.doneAt = null; }));
+      }
       tasks.push(dup);
       if(typeof _taskIndexRegister === 'function') _taskIndexRegister(dup);
       snap = { type: 'created', id };
@@ -1096,7 +1114,10 @@ function aiUndo(){
     if(!s || s.type === 'noop' || s.type === 'noop_read') return;
     if(s.type === 'created') tasks = tasks.filter(t => t.id !== s.id);
     else if(s.type === 'updated'){ const t = findTask(s.id); if(t) Object.assign(t, s.before); }
-    else if(s.type === 'deleted') tasks.push(s.before);
+    else if(s.type === 'deleted'){
+      tasks.push(s.before);
+      if(Array.isArray(s.subtree)) tasks.push(...s.subtree);
+    }
   });
   if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
   saveState('user');

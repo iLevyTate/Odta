@@ -312,7 +312,11 @@ function notify(title, body, opts){
   // This fires even when the tab is frozen / the app is backgrounded on
   // mobile, unlike main-thread `new Notification()` which requires an
   // active page context.
-  if('serviceWorker' in navigator){
+  // Gate on an ACTIVE controller, not the mere existence of the API: on
+  // file:// the API object exists but pwa.js never registers a worker, so
+  // navigator.serviceWorker.ready never resolves and the early return below
+  // would strand the main-thread fallback this branch is supposed to defer to.
+  if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.ready.then(reg => {
       if(reg && reg.showNotification){
         reg.showNotification(title, {

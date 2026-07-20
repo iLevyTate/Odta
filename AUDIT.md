@@ -6,6 +6,54 @@
 
 ---
 
+## v75 follow-up wave (2026-07-20)
+
+A third review pass (three parallel deep-reads: data layer, UI/PWA layer, AI/intel layer) targeting what the v74 wave missed. Baseline at review time: 597/597 tests green, all CI checks green. Every confirmed finding below was fixed in the same branch; 644/644 tests green after, browser smoke green (exit 0, zero actionable console errors — it crashed or failed on the pre-fix baseline).
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| X-1 | `saveState` change comparator omitted `checklists`/`completionNote`/`hiddenUntil`/`valuesNote` — edits touching only those fields never bumped `lastModified`, so LWW merge (P2P sync, cross-tab) silently discarded them (`js/storage.js` `fieldsToCompare`; the comment above `_snapshotTask` anticipated exactly this class) | High | ✅ Fixed — fields added; `tests/storage-lww-comparator.test.mjs` |
+| X-2 | Monthly recurrence: `setMonth` ran while day-of-month was 29–31, overflowing past short months (Jan 31 → "Feb 31" → Mar 3 → clamp to Mar 31; February skipped) (`js/tasks.js` `advanceRecurringDate`) | High | ✅ Fixed — `setDate(1)` before `setMonth`, then clamp; functional tests in `tests/recurrence-monthly-clamp.test.mjs` |
+| X-3 | `SCHEMA_VERSION` was still 8 while a `step(9)` migration existed, so the default-Lists backfill (added in the v74 wave) re-ran on every load and resurrected deleted default Lists (`js/storage.js`) | Medium | ✅ Fixed — bumped to 9; gate test asserts `SCHEMA_VERSION` ≥ max step target |
+| X-4 | `completeHabitCycle` never reset `reminderFired`, making recurring reminders one-shot (`js/tasks.js`) | Medium | ✅ Fixed — re-armed on cycle; `tests/habit-cycle-reminder.test.mjs` |
+| X-5 | `controllerchange` reload had no prior-controller guard — `clients.claim()` on first install reloaded every new visitor's freshly painted page (`js/pwa.js`) | Medium | ✅ Fixed — reload only when a controller existed before; `tests/pwa-first-install-reload.test.mjs` |
+| X-6 | Ask few-shot examples taught args the validator silently drops: `listName` (no such arg — list ops never worked via Ask) and `remindAt` on `CREATE_TASK` ("remind me to X" created the task, dropped the reminder) (`js/ask.js`, `js/tool-schema.js`, `js/ai.js`) | Medium | ✅ Fixed — examples use `listId`/`CHANGE_LIST`; `CREATE_TASK` accepts+applies `remindAt`; consistency test pins all example args to the schema (`tests/ask-examples-schema.test.mjs`) |
+| X-7 | The v74 known residual: `_askCalendarBlock()` injected feed-authored text into every Ask turn's base prompt without tainting it, bypassing the W-2 auto-apply gate when the model never called `GET_CALENDAR_EVENTS` (`js/ask.js`) | Medium | ✅ Fixed — `externalReads` seeded true whenever the calendar block is non-empty; test added to `ask-external-taint` |
+| X-8 | Cmd/Ctrl+N meta guard only bailed for `<input>`, hijacking the browser shortcut from textarea/select/contenteditable (`js/ui.js`) | Low | ✅ Fixed — guard uses `inField` |
+| X-9 | Shortcuts cheat-sheet (and palette kbd labels) advertised 1–5 tab switching with no handler (`js/ui.js`) | Low | ✅ Fixed — digit handler added, same field/modifier guards as the other global shortcuts |
+| X-10 | `computeDuplicateScores` scored against archived/deleted tasks' embeddings, inflating the duplicate badge (`js/intel-features.js`) | Low | ✅ Fixed — resolves ids via `findTask`, skips archived (parity with `findDuplicates`) |
+| X-11 | `window.showTab` monkey-patch (panel-entered animation flag) bypassed by all internal bare `showTab()` calls — hoisted declaration vs wrapper (`js/ui.js`) | Low | ✅ Fixed — logic folded into `showTab` itself |
+| X-12 | Dead `Math.min(500, …)` on `GET_CALENDAR_EVENTS` limit — coercer already clamps to 100 (`js/ask.js`) | Low | ✅ Fixed — misleading ceiling removed; 100 documented as the cap |
+| X-13 | Classification-manager color dots emitted `style="background:…"` in innerHTML — blocked by the strict CSP (`style-src 'self'`), so dots rendered colorless and every settings render logged violations (`js/intel-features.js:546`) | Medium | ✅ Fixed — color applied via CSSOM after insert (`data-dot-color`); `tests/no-inline-style-markup.test.mjs` sweeps all of `js/` + `index.html` |
+| X-14 | Smoke tooling: the CSP entry in `SMOKE_KNOWN_CONSOLE_NOISE` never matched Chromium's actual message text (and its premise was wrong — CSSOM writes don't trigger style-src violations), and the per-tab visibility probe read `el.style.display` while `showTab` toggles the `hidden` attribute, so it always printed `true` (`scripts/smoke-console-utils.mjs`, `scripts/smoke-check.mjs`) | Low | ✅ Fixed — dead filter entry removed (CSP violations now actionable, which is what caught X-13); probe checks `hidden` + `offsetParent`. Baseline smoke also crashed reproducibly from X-5's first-install reload mid-run; green after the guard |
+
+### v75 second pass (same branch, 2026-07-20)
+
+A further adversarial pass: regression review of the first v75 commit plus fresh lenses on the undo/executor layer and import/export.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| Y-1 | `DELETE_TASK` cascade removed the whole subtree but snapshotted only the root — clicking Undo restored the parent and permanently lost every descendant (`js/ai.js` executor + `aiUndo`) | High | ✅ Fixed — snapshot carries the removed subtree; `aiUndo` restores it; `tests/ai-undo-integrity.test.mjs` |
+| Y-2 | **Regression in the first v75 commit (X-4):** `completeHabitCycle` re-armed `reminderFired` without advancing an explicit `remindAt`, so a habit with a set reminder time re-fired "Missed:" ~30s after logging a cycle, and the stale past `remindAt` blocked the due-date reminder branch for all future cycles (`js/tasks.js`) | Medium | ✅ Fixed — `remindAt`'s date part rolls forward by the recurrence, keeping the time-of-day; functional test added |
+| Y-3 | `MARK_DONE` on a recurring task took a shallow snapshot while `completeHabitCycle` mutates `completions[]` and checklist items in place — Undo silently failed to remove the logged completion or restore checked items (`js/ai.js`) | Medium | ✅ Fixed — deep (JSON) snapshot, matching `TOGGLE_CHECK`'s existing pattern |
+| Y-4 | `DUPLICATE_TASK` shallow copy shared `valuesAlignment`/`completions`/`checklists`/`_ext` with the source (mutating one corrupted the other) and copied attachment ids whose blob records are keyed by the source task — removing an attachment from either task deleted the other's blob (`js/ai.js`) | Medium | ✅ Fixed — deep clone with history fields reset (`completions`, `sessionEntries`, `habitLastRecordedTotalSec`) and `attachments: []`; named-checklist done state reset |
+| Y-5 | CSV export's formula-injection guard (leading `'` on cells starting `= + - @`) was never stripped on import — export→import round-trips accreted a literal apostrophe onto names like `@home water plants` (`js/storage.js`) | Low-Med | ✅ Fixed — import strips exactly the guard pattern; round-trip identity test in `tests/csv-roundtrip-guard.test.mjs` |
+| Y-6 | Escape over a pill Dropdown inside a Modal-stack modal tore down the whole modal: both modules install capture-phase keydown listeners on `document`, and `stopPropagation()` can't suppress a same-node listener (`js/modal.js` + `js/dropdown.js`) | Medium | ✅ Fixed — Modal's ESC handler yields while `Dropdown.isOpen()`; `tests/modal-dropdown-esc.test.mjs` |
+| Y-7 | `notify()` permanently silent on `file://`: the SW branch triggers on `'serviceWorker' in navigator` (true even where pwa.js deliberately never registers), so `.ready` never resolves and the early `return` strands the documented main-thread fallback — no timer/reminder notifications in portable mode (`js/audio.js` + `js/pwa.js`) | Medium | ✅ Fixed — SW branch gates on `navigator.serviceWorker.controller` |
+| Y-8 | `?openfile=1` (manifest file-handler routing param) never stripped from the URL after an "Open with Odta" launch, unlike the share-target params (`js/app.js`, `manifest.json`) | Low | ✅ Fixed — scrubbed via `history.replaceState` at boot |
+
+**Verified clean in the small-module/contract sweep:** every `data-action`/`data-on*` in `index.html` and JS-generated markup resolves to a defined global with well-formed `data-args`; no duplicate ids; all `aria-*`/`label[for]` targets exist; version strings consistent; all `typeof`-guarded cross-module calls resolve; boot IIFE ordering sound.
+
+**Adversarially re-verified as sound in this pass:** the other 13 changes of the first v75 commit (comparator additions cause no sync churn — `_snapshotTask` deep-clones and `_repairTask` normalizes shapes; `SCHEMA_VERSION` 9 gate and v8↔v9 sync interop; monthly clamp incl. Dec→Jan rollover; `_hadController` guard vs the app.js update-banner path; `escAttr`→CSSOM dot-color round-trip; `externalReads` seeding only taints turns with real feed events). Also probed sound: `ui.js` escaping at every innerHTML sink incl. the markdown renderer; undo-toast/Ctrl+Z ring consistency; gen-worker dispose-during-load; task-index rebuild coverage; storage encryption (fresh salt+IV per export); sync `_packState` field fidelity and tombstone merge; ICS folding/escaping.
+
+**Verified as sound in this pass (no action):** SW precache list vs disk, cache-version consistency, fetch handler + navigation fallback; gen worker message protocol and abort watchdog; sync LWW/tombstone/handshake; calfeeds RRULE/TZID/SSRF handling; embed-store transaction lifetimes; no unescaped user data in `innerHTML` sinks; all `data-action`/`data-on*` handlers resolve.
+
+**Remaining known residuals (unchanged from v74):**
+- New initiator → old (≤v73) acceptor late-Accept case (peer-side PeerJS bug; resolves as peers upgrade).
+- `connect-src` remains broad by design (user-configured CORS proxies).
+
+---
+
 ## v74 audit wave (2026-07-04)
 
 A second full audit at v73 (three parallel passes: core app layer, AI/sync/network layer, infrastructure/CI), followed in the same branch by fixes for every confirmed finding. All prior (v48-era) findings below were re-verified as still resolved. Baseline at audit time: 573/573 tests green, all CI checks green.
@@ -31,7 +79,7 @@ A second full audit at v73 (three parallel passes: core app layer, AI/sync/netwo
 **Audit findings rejected as false positives** (verified against source before fixing): `STORAGE_KEYS.GEN_CFG`/`GEN_HISTORY` are *not* dead (actively read by `js/gen.js`; the v48 purge in `app.js` is a one-shot legacy migration), and `updateLiveParsePreview` *does* exist (`js/tasks.js:523`) so `app.js`'s fallback branch is live.
 
 **Known residuals (deliberately not fixed in this wave):**
-- `_askCalendarBlock()` injects the next-7-days event digest into every Ask turn's base prompt, even with zero read rounds — a smaller prompt-injection surface than W-2 (no tool-result framing) but not covered by the taint gate. Candidate follow-up: taint when the block is non-empty, or strip it from op-producing turns.
+- ~~`_askCalendarBlock()` injects the next-7-days event digest into every Ask turn's base prompt, even with zero read rounds — a smaller prompt-injection surface than W-2 (no tool-result framing) but not covered by the taint gate. Candidate follow-up: taint when the block is non-empty, or strip it from op-producing turns.~~ ✅ Fixed in the v75 wave (X-7) — the turn is tainted whenever the block is non-empty.
 - New initiator → old (≤v73) acceptor who clicks Accept *after* the channel opened: the old side's `open` handler never fires (pre-existing PeerJS late-listener bug on their end), so state flows only after the old side's next local save. No worse than old↔old today; resolves as peers upgrade.
 - `connect-src` remains broad (`http: https:`) by design — user-configured CORS proxies for calendar feeds need it (documented in the CSP comment).
 

@@ -110,7 +110,13 @@
   // button (#23 in the UX audit).
   let _swReloading = false;
   if ('serviceWorker' in navigator && !isFileProtocol) {
+    // On a first install there is no prior controller: activate's
+    // clients.claim() fires controllerchange on the freshly painted page,
+    // and reloading there would yank every new visitor through a pointless
+    // full reload. Only reload when an old SW is actually being replaced.
+    const _hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if(!_hadController) return;
       if(_swReloading) return;
       _swReloading = true;
       window.location.reload();
@@ -127,7 +133,7 @@
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
       const swBase = (typeof window !== 'undefined' && window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.swCache)
         ? window.ODTAULAI_RELEASE.swCache
-        : 'odtaulai-v74';
+        : 'odtaulai-v75';
       const swCode = `
         const CACHE = '${swBase}-inline';
         self.addEventListener('install', e => self.skipWaiting());

@@ -22,6 +22,17 @@ test('ask.js: ASK_EXTERNAL_READS exists and covers GET_CALENDAR_EVENTS', () => {
   assert.match(m[1], /GET_CALENDAR_EVENTS/, 'calendar reads are external content');
 });
 
+test('ask.js: the always-injected calendar block taints the turn up front', () => {
+  // _askUserPrompt embeds _askCalendarBlock() into EVERY turn's base prompt,
+  // so feed-authored text can influence ops even when the model never calls
+  // GET_CALENDAR_EVENTS. externalReads must therefore start true whenever
+  // the block is non-empty, not only flip on an explicit calendar read.
+  const m = askSrc.match(/let externalReads = ([^;]+);/);
+  assert.ok(m, 'externalReads declaration');
+  assert.match(m[1], /_askCalendarBlock/,
+    'externalReads is seeded from the calendar block, not initialized false');
+});
+
 test('ask.js: ops-bearing returns carry the externalContent flag', () => {
   // Both the main return and the write-retry return can hand ops to the UI —
   // each must carry the taint or the write-retry becomes a bypass.

@@ -1616,7 +1616,7 @@ document.addEventListener('keydown',(e)=>{
   // Skip native "new window" only when the meta-N combo would conflict — but
   // Cmd+N is browser-level "new window" so we must require the focus to NOT
   // be in a field AND the user to be in the app's primary surface.
-  if(isMeta && tag === 'input') return;
+  if(isMeta && inField) return;
   e.preventDefault();
   // Same path as the FAB: on mobile the add cluster lives in the bottom sheet.
   if(typeof quickAddFabClick === 'function'){ quickAddFabClick(); return; }
@@ -1640,6 +1640,22 @@ document.addEventListener('keydown',(e)=>{
   if(tag==='input' || tag==='textarea' || tag==='select' || (active && active.isContentEditable)) return;
   e.preventDefault();
   if(typeof toggleTheme === 'function') toggleTheme();
+});
+
+// Global shortcut: 1–5 when not in a field → switch top-level tab. Advertised
+// in the shortcuts cheatsheet and on the command-palette items; wired here so
+// the affordance isn't a lie.
+document.addEventListener('keydown',(e)=>{
+  const TAB_KEYS = { '1':'tasks', '2':'focus', '3':'tools', '4':'data', '5':'settings' };
+  const tab = TAB_KEYS[e.key];
+  if(!tab) return;
+  if(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if(_blockingOverlaysForCmdK && _blockingOverlaysForCmdK()) return;
+  const active = document.activeElement;
+  const tag = active ? active.tagName.toLowerCase() : '';
+  if(tag==='input' || tag==='textarea' || tag==='select' || (active && active.isContentEditable)) return;
+  e.preventDefault();
+  if(typeof window.showTab === 'function') window.showTab(tab);
 });
 
 // Global shortcut: "?" (Shift+/) when not in a field → show the keyboard
@@ -4076,6 +4092,7 @@ async function clearLog(){
 window.clearLog = clearLog;
 
 // ========== TAB NAVIGATION ==========
+const _enteredTabs = {};
 function showTab(tab){
   if(typeof closeCmdK==='function')closeCmdK();
   activeTab=tab;
@@ -4104,25 +4121,20 @@ function showTab(tab){
   if(typeof closeSidebar==='function') closeSidebar();
   updateMiniTimer();
   saveState('auto');
-}
-
-// Mark panels as "entered" after initial animation so repeat visits don't re-trigger
-(function(){
-  let _enteredTabs = {};
-  const _origShowTab = window.showTab;
-  window.showTab = function(tab) {
-    _origShowTab(tab);
-    if(!_enteredTabs[tab]) {
-      const panel = document.querySelector('[data-tab="' + tab + '"]:not([hidden])');
-      if(panel) {
-        setTimeout(() => {
-          panel.setAttribute('data-panel-entered', '1');
-          _enteredTabs[tab] = true;
-        }, 360);
-      }
+  // Mark panels as "entered" after the initial animation so repeat visits
+  // don't re-trigger it. Lives inside showTab (not a window.showTab wrapper):
+  // internal call sites bind the hoisted declaration directly, so a
+  // monkey-patched wrapper would only run for data-action dispatch.
+  if(!_enteredTabs[tab]) {
+    const panel = document.querySelector('[data-tab="' + tab + '"]:not([hidden])');
+    if(panel) {
+      setTimeout(() => {
+        panel.setAttribute('data-panel-entered', '1');
+        _enteredTabs[tab] = true;
+      }, 360);
     }
-  };
-})();
+  }
+}
 
 // Session completion summary: celebrate work phase completion with closure toast
 window.showPomodoroSummary=function(){
