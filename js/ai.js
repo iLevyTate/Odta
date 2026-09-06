@@ -551,6 +551,12 @@ function executeIntelOp(op){
     }
     case 'SET_RECUR':{
       const t = findTask(a.id); if(!t) return null;
+      // `recur` is optional in the schema (it is how the model clears a
+      // recurrence), but an unrecognised value ("yearly", "every monday") is
+      // dropped by the validator and used to arrive here as "no recur" —
+      // silently wiping the existing recurrence. Only a null sent on purpose
+      // clears; an absent value is a rejected op.
+      if(a.recur === undefined && !('recur' in a)) return null;
       snap = { type: 'updated', id: t.id, before: { ...t } };
       t.recur = a.recur || null;
       break;
@@ -566,9 +572,14 @@ function executeIntelOp(op){
     case 'RESCHEDULE':{
       const t = findTask(a.id); if(!t) return null;
       snap = { type: 'updated', id: t.id, before: { ...t } };
+      const dueChanged = !!a.dueDate && a.dueDate !== t.dueDate;
       if(a.dueDate) t.dueDate = a.dueDate;
       if(a.remindAt != null) t.remindAt = a.remindAt;
-      t.reminderFired = false;
+      // Re-arm only when the reminder time actually moves: an explicit new
+      // remindAt, or a due-date change on a task whose reminder derives from
+      // the due date. Clearing it unconditionally re-fired already-delivered
+      // past reminders as "Missed:" on every bulk reschedule.
+      if(a.remindAt != null || (dueChanged && !t.remindAt)) t.reminderFired = false;
       break;
     }
     case 'SPLIT_TASK':{
@@ -1943,6 +1954,7 @@ function renderAIPanel(){
 function _makeProgressAggregator(onUpdate){
   const files = new Map(); // file path -> {loaded, total, done}
   let lastEmittedPct = -1;
+  let lastLoadedBytes = 0;
   return function(ev){
     if(!ev || typeof ev !== 'object') return;
     const file = ev.file || ev.name || '_';
@@ -1950,8 +1962,11 @@ function _makeProgressAggregator(onUpdate){
     if(ev.status === 'progress'){
       if(Number.isFinite(ev.loaded)) entry.loaded = ev.loaded;
       if(Number.isFinite(ev.total) && ev.total > 0) entry.total = ev.total;
-      // Fallback when byte counts missing: convert per-file percent into synthetic bytes.
-      if((!entry.total || !entry.loaded) && Number.isFinite(ev.progress)){
+      // Fallback when byte counts are missing: convert per-file percent into
+      // synthetic bytes — but never overwrite a known total (the first event
+      // of every file has loaded===0, and clobbering a 200 MB total with 100
+      // made the bar jump then freeze for the whole download).
+      if(!entry.total && Number.isFinite(ev.progress)){
         entry.total = 100;
         entry.loaded = Math.min(100, Math.max(0, ev.progress));
       }
@@ -1975,9 +1990,16 @@ function _makeProgressAggregator(onUpdate){
       const doneCount = [...files.values()].filter(v => v.done).length;
       pct = files.size ? Math.round((doneCount / files.size) * 100) : 0;
     }
-    // Never go backwards once we've emitted a higher number — avoids visual jitter
-    // when Transformers.js emits `initiate` for a new file mid-stream.
-    if(pct < lastEmittedPct) pct = lastEmittedPct;
+    // Never go backwards once we've emitted a higher number — avoids visual
+    // jitter when Transformers.js emits `initiate` for a new file mid-stream.
+    // Clamp on bytes, not on the ratio: the denominator legitimately grows as
+    // new shards join, and freezing the percentage there hid real progress.
+    if(sumTotal > 0){
+      if(sumLoaded < lastLoadedBytes) sumLoaded = lastLoadedBytes;
+      lastLoadedBytes = sumLoaded;
+      pct = Math.max(0, Math.min(100, Math.round((sumLoaded / sumTotal) * 100)));
+    }
+    if(pct < lastEmittedPct && sumTotal === 0) pct = lastEmittedPct;
     lastEmittedPct = pct;
     onUpdate(pct, ev, entry);
   };
@@ -2917,12 +2939,24 @@ async function genDownloadClick(){
     // LLM-dependent surfaces (parse-with-LLM button) may need to appear now.
     if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
   }catch(e){
-    const msg = (e && e.message) ? e.message : 'Load failed';
-    _askLoadError = { modelId: targetModelId, message: msg };
-    syncGenChip('error', 'LLM load failed');
-    if(typeof showExportToast === 'function'){
-      const short = msg.length > 80 ? msg.slice(0, 77) + '…' : msg;
-      showExportToast('LLM download failed: ' + short);
+    const raw = (e && e.message) ? e.message : 'Load failed';
+    if(raw === 'LOAD_ABORTED' || raw === 'GEN_DISPOSED'){
+      // The user pressed Cancel: not an error, don't paint the chip red.
+      _askLoadError = null;
+      syncGenChip('idle', '');
+      if(typeof showExportToast === 'function') showExportToast('Download cancelled.');
+    } else if(raw === 'GEN_SWITCH_IN_PROGRESS'){
+      _askLoadError = null;
+      if(typeof showExportToast === 'function') showExportToast('Another model is still loading — wait for it to finish first.');
+    } else {
+      // Prefer gen.js's human-readable mapping over the raw runtime string.
+      const friendly = (typeof getGenLastError === 'function' && getGenLastError()) || raw;
+      _askLoadError = { modelId: targetModelId, message: friendly };
+      syncGenChip('error', 'LLM load failed');
+      if(typeof showExportToast === 'function'){
+        const short = friendly.length > 80 ? friendly.slice(0, 77) + '…' : friendly;
+        showExportToast('LLM download failed: ' + short);
+      }
     }
   }finally{
     clearTimeout(ribbonTimeout);

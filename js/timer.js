@@ -1,6 +1,6 @@
 // ========== CONFIG ==========
 function updateConfig(){cfg.work=Math.max(1,parseInt(gid('cfgWork').value)||25);cfg.short=Math.max(1,parseInt(gid('cfgShort').value)||5);cfg.long=Math.max(1,parseInt(gid('cfgLong').value)||15);cfg.cycle=Math.max(2,parseInt(gid('cfgCycle').value)||4);if(getTimerState()==='idle'){setPhaseTime();renderTimerChrome()}saveState('user')}
-function toggleOpt(id){const el=gid(id);el.classList.toggle('on');const on=el.classList.contains('on');el.setAttribute('aria-checked',on?'true':'false');if(id==='togBreak')cfg.autoBreak=on;if(id==='togWork')cfg.autoWork=on;if(id==='togSound'){cfg.sound=on;if(!cfg.sound){cancelScheduledAudio();if(typeof swScheduledIntervalNodes!=='undefined'&&swScheduledIntervalNodes.length&&typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes);if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers))quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)});}else if(running){schedulePhaseAudio()}}if(id==='togLink')cfg.linkTask=on;if(id==='togNotif'){cfg.notif=on;if(cfg.notif){reqNotifPerm().then(()=>{ if(typeof renderNotifStatus==='function') renderNotifStatus(); })}else{ if(typeof renderNotifStatus==='function') renderNotifStatus(); }}if(id==='togSnpNote')cfg.askSessionNote=on;saveState('user')}
+function toggleOpt(id){const el=gid(id);el.classList.toggle('on');const on=el.classList.contains('on');el.setAttribute('aria-checked',on?'true':'false');if(id==='togBreak')cfg.autoBreak=on;if(id==='togWork')cfg.autoWork=on;if(id==='togSound'){cfg.sound=on;if(!cfg.sound){cancelScheduledAudio();if(typeof swScheduledIntervalNodes!=='undefined'&&swScheduledIntervalNodes.length&&typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes);if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers))quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)});}else if(running){schedulePhaseAudio()}}if(id==='togLink')cfg.linkTask=on;if(id==='togDueNotify'){cfg.dueNotify=on}if(id==='togNotif'){cfg.notif=on;if(cfg.notif){reqNotifPerm().then(()=>{ if(typeof renderNotifStatus==='function') renderNotifStatus(); })}else{ if(typeof renderNotifStatus==='function') renderNotifStatus(); }}if(id==='togSnpNote')cfg.askSessionNote=on;saveState('user')}
 // ========== STATE ==========
 let cfg={work:25,short:5,long:15,cycle:4,autoBreak:true,autoWork:false,sound:true,linkTask:true,notif:true,timerSub:'pomo',hideHabitsInMainViews:true,askSessionNote:true,focusListMode:false,phasePreset:'classic',qaHintHidden:true,quickAddFields:['entryKind','list','due'],cascadeCompletion:true,dueNotify:true,calMode:'month',timerDock:{}};
 
@@ -42,7 +42,7 @@ let taskGroupBy='none',calMonth=null,_calFocusDate=null,theme='dark';
 let collapsedSections={};
 let timeLog=[],goals=[],goalIdCtr=0,logIdCtr=0;
 let swRunning=false,swStartTime=0,swElapsed=0,swPausedEl=0,swTickId=null,swLapList=[];
-let swFireCounts={},swScheduledIntervalNodes=[];
+let swFireCounts={},swScheduledIntervalNodes=[],swAudioHorizonEl=null;
 let quickTimers=[],qtIdCtr=0,qtGlobalTick=null,qtUiRefreshId=null;
 let activeTab='tasks';
 
@@ -136,11 +136,11 @@ function _syncRingState(){
 // cross-tab storage event merges (LWW) instead of wholesale _applyState(),
 // which would silently reset the running timer from the other tab's snapshot.
 function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.floor((Date.now()-startedAt)/1000);pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
 function tick(){
   if(!running)return;
-  const el=Math.floor((Date.now()-startedAt)/1000);remaining=Math.max(0,pausedRemaining-el);
+  const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));remaining=Math.max(0,pausedRemaining-el);
   const totalEl=totalDuration-remaining,circ=553;
   gid('ringFg').setAttribute('stroke-dashoffset',String(circ-(remaining/totalDuration)*circ));
   const disp=gid('display');disp.textContent=fmt(remaining);disp.className='ring-time'+(remaining<=10&&remaining>0?' warn':'');
@@ -177,12 +177,16 @@ function onPhaseComplete(){
   if(cfg.sound&&(!audioScheduled||_audioLost()))(phase==='work'?playTransition:playBreakEnd)();
   audioScheduled=false;scheduledAudio=[];
   // System notification for backgrounded tabs
-  notify(getPL(phase)+' Complete',phase==='work'?'Great work! Time for a break.':'Break over — back to focus.');
+  notify(getPL(phase)+' Complete',phase==='work'?'Great work! Time for a break.':'Break over — back to focus.',{tag:'pomo-phase',data:{action:'openTimer',url:'./?tab=focus'}});
   // Show in-app summary toast after work phase completes
   if(phase==='work'&&typeof window.showPomodoroSummary==='function')window.showPomodoroSummary();
   gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
   renderStats();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();updateTitle();saveState('auto');
   _scheduleAutoAdvance();
+  // Nothing auto-advancing and nothing else running → release the keepalive
+  // (silent tone, wake lock, background worker) instead of holding it forever.
+  const willAutoAdvance=(phase==='work'&&cfg.autoBreak)||(phase!=='work'&&cfg.autoWork);
+  if(!willAutoAdvance) maybeStopKeepalive();
 }
 // Single-pending-timer guard. Without this, rapid Skip → Skip queues two
 // 1500ms autoAdvances; both fire startTimer 300ms later and the
@@ -214,7 +218,7 @@ function advancePhase(){
 let _lastSkipAt = 0;
 function skipPhase(){
   const wasRunning=running;running=false;clearInterval(tickId);cancelScheduledAudio();
-  const el=wasRunning?Math.floor((Date.now()-startedAt)/1000):0;
+  const el=wasRunning?Math.max(0,Math.floor((Date.now()-startedAt)/1000)):0;
   remaining=Math.max(0,pausedRemaining-el);
   const worked=totalDuration-remaining;
   // Rapid back-to-back skips during triage should not pile up audible chimes
@@ -245,7 +249,7 @@ function skipPhase(){
     totalBreaks++;sessionHistory.push({type:phase});addLog(getPL(phase),worked||getPS(phase),phase);
   }
   if(cfg.sound && !_silentSkip)(phase==='work'?playTransition:playBreakEnd)();
-  if(!_silentSkip) notify(getPL(phase)+' Skipped','Moving to next phase.');
+  if(!_silentSkip) notify(getPL(phase)+' Skipped','Moving to next phase.',{tag:'pomo-phase',data:{action:'openTimer',url:'./?tab=focus'}});
   finished=true;gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
   renderStats();renderCtrls();window._preserveTaskScroll=true;renderTaskList();updateTitle();saveState('user');
   if(_skippedTaskId && typeof refreshOpenTaskModalIfMatches === 'function'){
@@ -258,6 +262,7 @@ function skipPhase(){
     try{ showSessionNotePrompt(_skippedTaskId, worked, 'work-partial'); }catch(_){}
   }
   _scheduleAutoAdvance();
+  if(!((phase==='work'&&cfg.autoBreak)||(phase!=='work'&&cfg.autoWork))) maybeStopKeepalive();
 }
 async function resetAll(){
   // Mid-cycle "↻ Cycle" mis-taps used to silently wipe pomosInCycle with no
@@ -270,7 +275,7 @@ async function resetAll(){
     const ok = await showAppConfirm('Reset cycle? Pip progress (' + pomosInCycle + '/' + cfg.cycle + ') will clear. Time already worked on the linked task is preserved.');
     if(!ok) return;
   }
-  running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();phase='work';pomosInCycle=0;fireCounts={};
+  running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();phase='work';pomosInCycle=0;fireCounts={};maybeStopKeepalive();
   // Cancel queued auto-advance / auto-start from a just-completed phase —
   // resetPhase() already does this; without it here, the pending 300ms
   // startTimer() fires right after the reset and the timer starts running
@@ -285,7 +290,7 @@ async function resetAll(){
 // progress. Time already worked this phase is folded back into the linked
 // active task so it isn't lost.
 function resetPhase(){
-  running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();fireCounts={};
+  running=false;finished=false;clearInterval(tickId);cancelScheduledAudio();fireCounts={};maybeStopKeepalive();
   // Cancel any auto-advance / auto-start that was queued from a prior phase
   // complete — without this, a phase reset followed by user idle still flips
   // the timer 1.5s later, ignoring the explicit reset (#15 in UX audit).
@@ -303,14 +308,14 @@ function swToggle(){
     swRunning=false;swPausedEl+=Date.now()-swStartTime;
     clearInterval(swTickId);swTickId=null;
     gid('swStartBtn').textContent='Resume';gid('swStartBtn').className='btn btn-primary';
-    cancelSwIntervalChimes(swScheduledIntervalNodes);
+    cancelSwIntervalChimes(swScheduledIntervalNodes);swAudioHorizonEl=null;
     maybeStopKeepalive();
   }else{
     swRunning=true;swStartTime=Date.now();
     clearInterval(swTickId);swTickId=setInterval(swTick,100);
     gid('swStartBtn').textContent='Pause';gid('swStartBtn').className='btn btn-pause';
     startKeepalive();
-    scheduleSwIntervalChimes(Math.floor(swElapsed/1000),intervals,swFireCounts,swScheduledIntervalNodes);
+    swAudioHorizonEl=scheduleSwIntervalChimes(Math.floor(swElapsed/1000),intervals,swFireCounts,swScheduledIntervalNodes);
   }
 }
 function swTick(){
@@ -331,11 +336,16 @@ function swTick(){
     }
   });
   if(needsRender&&typeof renderIntList==='function')renderIntList();
+  // Past the scheduled lookahead: top the audio queue back up from here.
+  if(cfg.sound&&swAudioHorizonEl!=null&&elSec>=swAudioHorizonEl){
+    cancelSwIntervalChimes(swScheduledIntervalNodes);
+    swAudioHorizonEl=scheduleSwIntervalChimes(elSec,intervals,swFireCounts,swScheduledIntervalNodes);
+  }
 }
 function swLap(){if(swElapsed<=0)return;const s=Math.floor(swElapsed/1000),d=document.createElement('div');d.className='sw-lap';const s1=document.createElement('span');s1.textContent='Lap '+(swLapList.length+1);const s2=document.createElement('span');s2.textContent=fmtHMS(s);d.appendChild(s1);d.appendChild(s2);gid('swLaps').prepend(d);swLapList.push(s)}
 function swReset(){
   swRunning=false;swElapsed=0;swPausedEl=0;swLapList=[];swFireCounts={};
-  cancelSwIntervalChimes(swScheduledIntervalNodes);
+  cancelSwIntervalChimes(swScheduledIntervalNodes);swAudioHorizonEl=null;
   clearInterval(swTickId);
   gid('swDisplay').textContent='00:00:00';gid('swStartBtn').textContent='Start';gid('swStartBtn').className='btn btn-primary';gid('swLaps').textContent='';
   maybeStopKeepalive();
@@ -410,14 +420,14 @@ function toggleQuickTimer(id){
   if(!qt)return;
   if(qt.finished){
     qt.remaining=qt.totalSec;qt.pausedRem=qt.totalSec;qt.finished=false;qt.running=true;qt.startedAt=Date.now();qt._fireCounts={};
-    reqNotifPerm();scheduleQtAudio(qt);startKeepalive();
+    if(cfg.notif!==false)reqNotifPerm().then(()=>{if(typeof renderNotifStatus==='function')renderNotifStatus()});scheduleQtAudio(qt);startKeepalive();
   }else if(qt.running){
-    const el=Math.floor((Date.now()-qt.startedAt)/1000);
+    const el=Math.max(0,Math.floor((Date.now()-qt.startedAt)/1000));
     qt.pausedRem=Math.max(0,qt.pausedRem-el);qt.remaining=qt.pausedRem;qt.running=false;
     cancelQtAudio(qt);maybeStopKeepalive();
   }else{
     qt.running=true;qt.startedAt=Date.now();
-    reqNotifPerm();scheduleQtAudio(qt);startKeepalive();
+    if(cfg.notif!==false)reqNotifPerm().then(()=>{if(typeof renderNotifStatus==='function')renderNotifStatus()});scheduleQtAudio(qt);startKeepalive();
   }
   ensureQuickTick();renderQuickTimers();saveState('user')
 }
@@ -477,16 +487,21 @@ function scheduleQtAudio(qt){
     qt._intervalNodes=qt._intervalNodes||[];
     const totalEl=qt.totalSec-qt.remaining;
     const QT_AUDIO_HORIZON_SEC = 5400; // 90 minutes
+    // Elapsed-seconds point up to which every quick-target interval has
+    // scheduled nodes; the tick paths re-arm when the timer crosses it.
+    qt._audioHorizonEl=null;
     intervals.forEach(iv=>{
       if(iv.intervalSec<=0)return;
       if((iv.target||'pomo')!=='quick')return;
       const alreadyFired=(qt._fireCounts&&qt._fireCounts[iv.id])||0;
       const ic=CH[iv.chime]||CH.bell;
       const horizon = Math.min(qt.remaining, QT_AUDIO_HORIZON_SEC);
+      let lastFireAt=null;
       for(let n=alreadyFired+1;n*iv.intervalSec<qt.totalSec;n++){
         const d=n*iv.intervalSec-totalEl;
         if(d<=0||d>=qt.remaining)continue;
         if(d>=horizon)break;
+        lastFireAt=n*iv.intervalSec;
         const ibase=x.currentTime+d;
         ic.freq.forEach((f,i)=>{
           const o=x.createOscillator(),g=x.createGain(),t=ibase+i*.05;
@@ -497,23 +512,34 @@ function scheduleQtAudio(qt){
           qt._intervalNodes.push(o);
         });
       }
+      // Only intervals that were cut short by the horizon need a re-arm.
+      if(lastFireAt!=null && lastFireAt+iv.intervalSec<qt.totalSec && (lastFireAt+iv.intervalSec-totalEl)>=horizon){
+        qt._audioHorizonEl=(qt._audioHorizonEl==null)?lastFireAt:Math.min(qt._audioHorizonEl,lastFireAt);
+      }
     });
   }catch(e){}
+}
+/** Re-arm a running quick timer's scheduled audio once it crosses the lookahead horizon. */
+function _qtMaybeRearmAudio(qt,totalEl){
+  if(!cfg.sound||!qt||!qt.running||qt._audioHorizonEl==null)return;
+  if(totalEl<qt._audioHorizonEl)return;
+  scheduleQtAudio(qt);
 }
 
 function cancelQtAudio(qt){
   if(qt._nodes){qt._nodes.forEach(o=>{try{o.stop(0)}catch(e){}});qt._nodes=[]}
   if(qt._intervalNodes){qt._intervalNodes.forEach(o=>{try{o.stop(0)}catch(e){}});qt._intervalNodes=[]}
-  qt._audioScheduled=false;
+  qt._audioScheduled=false;qt._audioHorizonEl=null;
 }
 
 function ensureQuickUiRefresh(){
   if(qtUiRefreshId!=null)return;
   qtUiRefreshId=setInterval(()=>{
-    if(quickTimers.some(qt=>qt.running))renderQuickTimers();
+    renderQuickTimers(); // last pass also clears the finished row's flash state
     if(!quickTimers.some(qt=>qt.running)){
       clearInterval(qtUiRefreshId);
       qtUiRefreshId=null;
+      setTimeout(()=>{try{renderQuickTimers()}catch(e){}},2100);
     }
   },1000);
 }
@@ -527,7 +553,7 @@ function ensureQuickTick(){
     quickTimers.forEach(qt=>{
       if(!qt.running)return;
       anyRunning=true;
-      const el=Math.floor((Date.now()-qt.startedAt)/1000);
+      const el=Math.max(0,Math.floor((Date.now()-qt.startedAt)/1000));
       const newRem=Math.max(0,qt.pausedRem-el);
       if(newRem!==qt.remaining){qt.remaining=newRem;needsRender=true}
       // Fire 'quick'-target repeating chimes (fallback play + flash)
@@ -543,16 +569,18 @@ function ensureQuickTick(){
             qt._fireCounts[iv.id]=exp;flashInt(iv.id);needsRender=true;
           }
         });
+        _qtMaybeRearmAudio(qt,totalEl);
       }
       if(newRem<=0&&!qt.finished){
         qt.running=false;qt.finished=true;qt.pausedRem=0;
         // Scheduled audio already played; fall back to manual play only if scheduling failed
         if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
         qt._audioScheduled=false;qt._nodes=[];
-        notify('Timer done',qt.label);
+        notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
         qt.flashUntil=Date.now()+2000;
         addLog(qt.label,qt.totalSec,'quick');
         needsRender=true;saveState('auto');
+        maybeStopKeepalive();
       }
     });
     if(!anyRunning){clearInterval(qtGlobalTick);qtGlobalTick=null}
@@ -569,7 +597,7 @@ function renderQuickTimers(){
   gid('qtEmpty').hidden = true;
   quickTimers.forEach(qt=>{
     let rem=qt.remaining;
-    if(qt.running){const el=Math.floor((Date.now()-qt.startedAt)/1000);rem=Math.max(0,qt.pausedRem-el)}
+    if(qt.running){const el=Math.max(0,Math.floor((Date.now()-qt.startedAt)/1000));rem=Math.max(0,qt.pausedRem-el)}
     const pct=qt.totalSec>0?((qt.totalSec-rem)/qt.totalSec)*100:0;
     const flash=qt.flashUntil&&Date.now()<qt.flashUntil;
     const d=document.createElement('div');
@@ -626,7 +654,7 @@ function _intFireState(iv){
     fires+=f;
     if(qt.running){
       anyRunning=true;
-      const el=Math.floor((Date.now()-qt.startedAt)/1000);
+      const el=Math.max(0,Math.floor((Date.now()-qt.startedAt)/1000));
       const totalEl=qt.totalSec-Math.max(0,qt.pausedRem-el);
       const n=(f+1)*iv.intervalSec-totalEl;
       if(n>0&&n<nextMin)nextMin=n;
@@ -671,7 +699,7 @@ function _bgQuickTick(){
   quickTimers.forEach(qt=>{
     if(!qt.running)return;
     anyRunning=true;
-    const el=Math.floor((Date.now()-qt.startedAt)/1000);
+    const el=Math.max(0,Math.floor((Date.now()-qt.startedAt)/1000));
     const newRem=Math.max(0,qt.pausedRem-el);
     if(newRem!==qt.remaining){qt.remaining=newRem;needsRender=true}
     if(newRem>0){
@@ -686,15 +714,17 @@ function _bgQuickTick(){
           qt._fireCounts[iv.id]=exp;flashInt(iv.id);needsRender=true;
         }
       });
+      _qtMaybeRearmAudio(qt,totalEl);
     }
     if(newRem<=0&&!qt.finished){
       qt.running=false;qt.finished=true;qt.pausedRem=0;
       if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
       qt._audioScheduled=false;qt._nodes=[];
-      notify('Timer done',qt.label);
+      notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
       qt.flashUntil=Date.now()+2000;
       addLog(qt.label,qt.totalSec,'quick');
       needsRender=true;saveState('auto');
+      maybeStopKeepalive();
     }
   });
   if(needsRender&&!document.hidden)renderQuickTimers();
@@ -742,7 +772,7 @@ function _reconcileTimerAfterWake(opts){
     // Whatever is still running needs fresh scheduled audio on the resumed clock.
     try{if(running)schedulePhaseAudio()}catch(e){}
     try{quickTimers.forEach(qt=>{if(qt&&qt.running&&typeof scheduleQtAudio==='function')scheduleQtAudio(qt)})}catch(e){}
-    try{if(swRunning&&typeof scheduleSwIntervalChimes==='function')scheduleSwIntervalChimes(Math.floor(swElapsed/1000),intervals,swFireCounts,swScheduledIntervalNodes)}catch(e){}
+    try{if(swRunning&&typeof scheduleSwIntervalChimes==='function')swAudioHorizonEl=scheduleSwIntervalChimes(Math.floor(swElapsed/1000),intervals,swFireCounts,swScheduledIntervalNodes)}catch(e){}
   }
   if(!document.hidden){
     try{renderQuickTimers()}catch(e){}

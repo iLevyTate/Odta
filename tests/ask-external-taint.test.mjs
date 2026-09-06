@@ -29,8 +29,12 @@ test('ask.js: the always-injected calendar block taints the turn up front', () =
   // the block is non-empty, not only flip on an explicit calendar read.
   const m = askSrc.match(/let externalReads = ([^;]+);/);
   assert.ok(m, 'externalReads declaration');
-  assert.match(m[1], /_askCalendarBlock/,
+  // The block is computed once per turn (guarded, so a malformed feed can't
+  // throw into the chat) as `calendarBlock` and seeds the taint from there.
+  assert.match(m[1], /calendarBlock|_askCalendarBlock/,
     'externalReads is seeded from the calendar block, not initialized false');
+  assert.match(askSrc, /const calendarBlock = _askSafeCalendarBlock\(\);/, 'calendar block computed once via the guarded helper');
+  assert.match(askSrc, /function _askSafeCalendarBlock\(\)\{\s*try\{/, 'calendar block read is guarded');
 });
 
 test('ask.js: ops-bearing returns carry the externalContent flag', () => {

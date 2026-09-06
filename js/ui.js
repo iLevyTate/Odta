@@ -155,7 +155,7 @@ function renderCalendar(visibleTasks){
     el.ondrop=function(e){
       e.preventDefault();el.classList.remove('drop-target');
       const srcId=parseInt(e.dataTransfer.getData('text/plain'));const src=findTask(srcId);
-      if(src){src.dueDate=el.dataset.date;renderTaskList();saveState('user')}
+      if(src){if(src.dueDate!==el.dataset.date)src.reminderFired=false;src.dueDate=el.dataset.date;renderTaskList();saveState('user')}
     };
     el.onclick=function(e){
       if(e.target.closest('.cal-task')||e.target.closest('[data-action]')||e.target.closest('.cal-task-more'))return;
@@ -490,8 +490,10 @@ function _cmdkAbortAsk(){
   // Invalidate any in-flight turn so its post-await work (including auto-apply)
   // becomes stale and won't touch task state after dismissal.
   _cmdkAskReqSeq++;
+  // Abort only Ask's own request (its signal reaches the worker per-reqId).
+  // The old global genAbort() here also killed unrelated in-flight LLM work
+  // — e.g. opening the palette to search mid "Break down" made that fail.
   if(_cmdkAskCtl){try{_cmdkAskCtl.abort()}catch(_){}_cmdkAskCtl=null}
-  if(typeof genAbort==='function'){try{genAbort()}catch(_){}}
   _cmdkAskBusy=false;
 }
 function cmdkSetAskMode(on){
@@ -656,9 +658,10 @@ async function _cmdkConfirmDestructiveApply(ops, destructiveLevel){
   const msg = hasDelete
     ? 'This batch includes permanent deletes. Apply anyway?'
     : 'This batch includes bulk list moves or other destructive changes. Apply anyway?';
-  _applyAppConfirmChrome({ destructive: true, okLabel: 'Apply' });
   if(typeof showAppConfirm !== 'function') return false;
-  const ok = await showAppConfirm(msg);
+  // Chrome is passed in: showAppConfirm resets styling as its first act, so
+  // applying it beforehand rendered this as a neutral green "OK" prompt.
+  const ok = await showAppConfirm(msg, { destructive: true, okLabel: 'Apply' });
   _resetAppConfirmChrome();
   return !!ok;
 }
@@ -708,7 +711,11 @@ async function cmdkAskReviewTurn(turnId){
 function cmdkAskRejectTurn(turnId){
   const turn = _cmdkFindAskTurn(turnId);
   if(!turn) return;
-  if(typeof intelRejectPending === 'function') intelRejectPending();
+  // Only clear the shared pending-ops preview if it is showing THIS turn's
+  // plan — a harmonize / auto-organize batch staged in Tools isn't ours.
+  const pendingIsOurs = typeof _pendingOps !== 'undefined' && Array.isArray(_pendingOps) && Array.isArray(turn.ops)
+    && _pendingOps.length && _pendingOps.every(p => turn.ops.some(o => o === p || (o && p && o.name === p.name && JSON.stringify(o.args) === JSON.stringify(p.args))));
+  if(pendingIsOurs && typeof intelRejectPending === 'function') intelRejectPending();
   _cmdkAskUpdate(turn, { status: 'empty', text: 'Changes dismissed.', ops: null });
 }
 
@@ -935,7 +942,16 @@ function _cmdkAppendRejectedDetails(parent, turn){
   list.className = 'cmdk-ask-rejected-list';
   turn.rejected.slice(0, 25).forEach(r => {
     const li = document.createElement('li');
-    const op = (r && r.op) || (r && r.name) || 'op';
+    // validateOps stores the raw op object under `op`; show its name (and
+    // the task id it pointed at) rather than "[object Object]".
+    const rawOp = r && r.op;
+    let op = 'op';
+    if(rawOp && typeof rawOp === 'object'){
+      op = String(rawOp.name || rawOp.op || 'op');
+      const rid = rawOp.args && typeof rawOp.args === 'object' ? rawOp.args.id : undefined;
+      if(rid != null) op += ' #' + rid;
+    } else if(typeof rawOp === 'string') op = rawOp;
+    else if(r && r.name) op = String(r.name);
     const why = (r && (r.reason || r.error || r.message)) || 'invalid';
     li.textContent = String(op) + ' — ' + String(why);
     list.appendChild(li);
@@ -1027,7 +1043,10 @@ function _cmdkAskReasonText(reason){
   return 'Something went wrong handling that request. Try rephrasing.';
 }
 async function cmdkAskSubmit(){
-  if(_cmdkAskBusy)return;
+  if(_cmdkAskBusy){
+    if(typeof showExportToast==='function') showExportToast('Still thinking — wait for the current answer or press Stop.');
+    return;
+  }
   const input=gid('cmdkInput');if(!input)return;
   const q=input.value.trim();
   if(!q)return;
@@ -1076,6 +1095,9 @@ async function cmdkAskSubmit(){
         const lbl = n > 0
           ? 'Planning ' + n + ' change' + (n!==1?'s':'') + '…'
           : (turn.text && turn.text !== 'Thinking on-device…' ? turn.text : 'Thinking on-device…');
+        // _cmdkAskUpdate rebuilds the whole conversation DOM (collapsing
+        // open <details>, yanking scroll) — only do it when the label changes.
+        if(lbl === turn.text) return;
         _cmdkAskUpdate(turn, { text: lbl });
       },
     });
@@ -3950,11 +3972,12 @@ function closeAppConfirm(ok){
   Modal.close('appConfirmModal');
   if(fn) fn(!!ok);
 }
-function showAppConfirm(message){
+function showAppConfirm(message, chrome){
   return new Promise(resolve=>{
     const ov=gid('appConfirmModal'), m=gid('appConfirmMessage');
     if(!ov||!m){ resolve(confirm(message)); return; }
     _resetAppConfirmChrome();
+    if(chrome && typeof _applyAppConfirmChrome==='function') _applyAppConfirmChrome(chrome);
     m.textContent=message;
     _appConfirmResolve=resolve;
     // Modal.open captures prev-focus via openFocusTrap and restores on close.
@@ -4110,6 +4133,8 @@ function showTab(tab){
     // newly added lists) shows up immediately when the tab is opened.
     if(typeof renderClassificationSettings==='function') renderClassificationSettings();
     if(typeof renderListsManager==='function') renderListsManager();
+    // Permission can change in the browser's own site settings; re-read it.
+    if(typeof renderNotifStatus==='function') renderNotifStatus();
   }
   const nav=gid('navTabs');
   if(nav&&nav.getBoundingClientRect().top<0){

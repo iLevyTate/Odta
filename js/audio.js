@@ -11,20 +11,19 @@ function getAudioCtx(){if(!_audioCtx||_audioCtx.state==='closed')_audioCtx=new(w
 // break phases (autoWork/autoBreak) silently fail to chime because the resume
 // inside getAudioCtx() runs outside a gesture. Single-shot: removed after first
 // successful prime.
+// Not single-shot: iOS re-suspends the context every time the app goes to the
+// background and refuses resume() outside user activation, so the listeners
+// stay armed and re-prime on any later gesture while the context isn't
+// running. The check is a cheap state read, so this costs nothing once primed.
 (function(){
   if(typeof document === 'undefined') return;
-  let primed = false;
   const prime = () => {
-    if(primed) return;
     try{
+      if(_audioCtx && _audioCtx.state === 'running') return;
       const x = getAudioCtx();
-      if(x && x.state === 'suspended' && typeof x.resume === 'function'){
+      if(x && x.state !== 'running' && x.state !== 'closed' && typeof x.resume === 'function'){
         x.resume().catch(()=>{});
       }
-      primed = true;
-      document.removeEventListener('pointerdown', prime, true);
-      document.removeEventListener('keydown',     prime, true);
-      document.removeEventListener('touchstart',  prime, true);
     }catch(_){}
   };
   document.addEventListener('pointerdown', prime, true);
@@ -70,17 +69,34 @@ function startKeepalive(){
         album:'Odta'
       });
       navigator.mediaSession.playbackState='playing';
-      navigator.mediaSession.setActionHandler('pause',()=>{if(running)pauseTimer()});
-      navigator.mediaSession.setActionHandler('play',()=>{if(!running)startTimer()});
+      // Lock-screen / headphone controls act on whatever is actually running.
+      // 'play' only resumes a paused Pomodoro — it must never start a fresh
+      // phase the user didn't ask for while a quick timer or stopwatch runs.
+      navigator.mediaSession.setActionHandler('pause',()=>{
+        try{
+          if(running){ pauseTimer(); return; }
+          if(typeof quickTimers!=='undefined'&&quickTimers.some(qt=>qt.running)){ quickTimers.filter(qt=>qt.running).forEach(qt=>toggleQuickTimer(qt.id)); return; }
+          if(typeof swRunning!=='undefined'&&swRunning&&typeof swToggle==='function') swToggle();
+        }catch(e){}
+      });
+      navigator.mediaSession.setActionHandler('play',()=>{
+        try{ if(!running&&typeof getTimerState==='function'&&getTimerState()==='paused') resumeTimer(); }catch(e){}
+      });
     }catch(e){}
   }
   updateBgAudioStatus();
 }
 function stopKeepalive(){
   try{if(_keepaliveNode){_keepaliveNode.stop();_keepaliveNode=null;_keepaliveGain=null}}catch(e){}
+  _wakeLockWanted=false;
   if(_wakeLock){try{_wakeLock.release()}catch(e){}_wakeLock=null}
   if('mediaSession' in navigator){
-    try{navigator.mediaSession.playbackState='none'}catch(e){}
+    try{
+      navigator.mediaSession.playbackState='none';
+      navigator.mediaSession.setActionHandler('pause',null);
+      navigator.mediaSession.setActionHandler('play',null);
+      navigator.mediaSession.metadata=null;
+    }catch(e){}
   }
   updateBgAudioStatus();
 }
@@ -95,6 +111,9 @@ function updateBgAudioStatus(){
   }
 }
 let _wakeLock=null;
+// The request is async: a stop that lands before it resolves used to leave
+// the lock held forever (screen never sleeping with no timer running).
+let _wakeLockWanted=false;
 
 /**
  * Acquire the Screen Wake Lock. Extracted so it can be called both from
@@ -104,13 +123,15 @@ let _wakeLock=null;
  * is active).
  */
 function _acquireWakeLock(){
+  _wakeLockWanted=true;
   if(_wakeLock) return; // already held
   if(!('wakeLock' in navigator)) return;
   navigator.wakeLock.request('screen').then(l=>{
+    if(!_wakeLockWanted||_wakeLock){ try{l.release()}catch(e){} return; } // stopped (or re-acquired) meanwhile
     _wakeLock=l;
     // When the OS releases the lock (e.g. page hidden), null it out so
     // re-acquire on visibilitychange works correctly.
-    l.addEventListener('release', ()=>{ _wakeLock=null; });
+    l.addEventListener('release', ()=>{ if(_wakeLock===l) _wakeLock=null; });
   }).catch(()=>{});
 }
 
@@ -209,8 +230,16 @@ if(typeof window!=='undefined'){ window.audioClockStalledSec=audioClockStalledSe
 // startElapsedSec = current stopwatch elapsed seconds at scheduling time.
 // Caps at min(SW_LOOKAHEAD_SEC, SW_MAX_FIRES_PER_INTERVAL) per interval.
 const SW_LOOKAHEAD_SEC=3600,SW_MAX_FIRES_PER_INTERVAL=200;
+/**
+ * @returns {number|null} elapsed-seconds horizon up to which every sw-target
+ *   interval has scheduled chimes (null when nothing was scheduled). swTick
+ *   re-arms when the stopwatch crosses it — previously chimes simply stopped
+ *   after the lookahead because the played nodes stayed in `nodesOut` and
+ *   suppressed the runtime fallback.
+ */
 function scheduleSwIntervalChimes(startElapsedSec,intervalsList,fireCounts,nodesOut){
-  if(!cfg.sound)return;
+  if(!cfg.sound)return null;
+  let horizon=null;
   try{
     const x=getAudioCtx();
     intervalsList.forEach(iv=>{
@@ -218,7 +247,7 @@ function scheduleSwIntervalChimes(startElapsedSec,intervalsList,fireCounts,nodes
       if((iv.target||'pomo')!=='sw')return;
       const c=CH[iv.chime]||CH.bell;
       const alreadyFired=(fireCounts&&fireCounts[iv.id])||0;
-      let scheduled=0;
+      let scheduled=0,lastFireAt=null;
       for(let n=alreadyFired+1;scheduled<SW_MAX_FIRES_PER_INTERVAL;n++){
         const fireAt=n*iv.intervalSec;
         const delay=fireAt-startElapsedSec;
@@ -233,10 +262,12 @@ function scheduleSwIntervalChimes(startElapsedSec,intervalsList,fireCounts,nodes
           o.start(t);o.stop(t+c.decay+.1);
           nodesOut.push(o);
         });
-        scheduled++;
+        scheduled++;lastFireAt=fireAt;
       }
+      if(lastFireAt!=null) horizon=(horizon==null)?lastFireAt:Math.min(horizon,lastFireAt);
     });
   }catch(e){}
+  return horizon;
 }
 function cancelSwIntervalChimes(nodesOut){
   if(!nodesOut)return;
@@ -305,7 +336,7 @@ function renderNotifStatus(){
   if(!row || !host) return;
   host.replaceChildren();
   // Toggle off → don't surface anything; the user has disabled it explicitly.
-  if(typeof cfg !== 'undefined' && !cfg.notif){ row.hidden = true; return; }
+  if(typeof cfg !== 'undefined' && cfg && cfg.notif === false){ row.hidden = true; return; }
   const support = notifSupportLevel();
   const perm = notifPermissionState();
   let msg = '', cls = 'notif-status notif-status--ok', cta = null;
@@ -347,10 +378,16 @@ function renderNotifStatus(){
 if(typeof window !== 'undefined') window.renderNotifStatus = renderNotifStatus;
 
 function notify(title, body, opts){
-  if(!cfg.notif)return;
+  if(cfg.notif===false)return;
   if(!('Notification' in window))return;
   if(Notification.permission!=='granted')return;
   const o = opts || {};
+  const mainThreadFallback = () => {
+    try{
+      const n=new Notification(title,{body,tag:o.tag||'odtaulai',renotify:true,silent:false,data:o.data||{}});
+      setTimeout(()=>{try{n.close()}catch(e){}},8000);
+    }catch(e){}
+  };
   // ── Prefer ServiceWorker.showNotification() ──
   // This fires even when the tab is frozen / the app is backgrounded on
   // mobile, unlike main-thread `new Notification()` which requires an
@@ -362,7 +399,9 @@ function notify(title, body, opts){
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.ready.then(reg => {
       if(reg && reg.showNotification){
-        reg.showNotification(title, {
+        // Only fall back if the SW refuses; a resolved promise means it was
+        // shown, so the two paths never double-fire.
+        return reg.showNotification(title, {
           body: body || '',
           tag: o.tag || 'odtaulai',
           renotify: true,
@@ -371,19 +410,14 @@ function notify(title, body, opts){
           silent: false,
           requireInteraction: !!o.requireInteraction,
           data: o.data || {},
-        }).catch(() => {});
-        return;
+        }).catch(mainThreadFallback);
       }
-    }).catch(() => {});
-    // The SW path returns — don't also fire the main-thread fallback
-    // when the SW is available to avoid double notifications.
+      mainThreadFallback();
+    }).catch(mainThreadFallback);
     return;
   }
   // ── Fallback: main-thread Notification (file:// or no SW) ──
-  try{
-    const n=new Notification(title,{body,tag:o.tag||'odtaulai',renotify:true,silent:false});
-    setTimeout(()=>{try{n.close()}catch(e){}},8000);
-  }catch(e){}
+  mainThreadFallback();
 }
 
 // ========== BACKGROUND RESILIENCE ==========

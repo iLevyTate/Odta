@@ -16,7 +16,7 @@ test('timer: skipPhase does not count elapsed when paused (wasRunning guard)', (
   // the captured wasRunning) without locking in a specific code-layout.
   assert.match(
     src,
-    /function skipPhase\(\)\s*\{\s*const wasRunning\s*=\s*running\s*;[\s\S]*?const el\s*=\s*wasRunning\s*\?\s*Math\.floor/,
+    /function skipPhase\(\)\s*\{\s*const wasRunning\s*=\s*running\s*;[\s\S]*?const el\s*=\s*wasRunning\s*\?\s*(?:Math\.max\(0,\s*)?Math\.floor/,
     'skipPhase should derive el only when wasRunning',
   );
 });

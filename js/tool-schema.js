@@ -38,7 +38,7 @@ const TOOL_SCHEMA = {
   RESCHEDULE:     { required:['id','dueDate'], optional:['remindAt'], destructive:false, readOnly:false },
   SPLIT_TASK:     { required:['id','parts'], optional:[], destructive:false, readOnly:false },
   CLASSIFY_TASK:  { required:['id'], optional:[], destructive:false, readOnly:false },
-  CREATE_FROM_EVENT: { required:['feedId','eventUid'], optional:[], destructive:false, readOnly:false },
+  CREATE_FROM_EVENT: { required:['feedId','eventUid'], optional:['eventDate'], destructive:false, readOnly:false },
 };
 
 /** Task id is not used by these ops (GET_TASK_DETAIL still has id — validated below) */
@@ -200,7 +200,7 @@ function _coerceArg(key, raw, ctx){
     if(n == null) return 20;
     return Math.max(1, Math.min(100, n));
   }
-  if(key === 'fromDate' || key === 'toDate' || key === 'untilDate' || key === 'dueBefore' || key === 'dueAfter') return _coerceDate(raw);
+  if(key === 'fromDate' || key === 'toDate' || key === 'untilDate' || key === 'dueBefore' || key === 'dueAfter' || key === 'eventDate') return _coerceDate(raw);
   if(key === 'overdue' || key === 'includeDone' || key === 'includeArchived'){ const b = _coerceBool(raw); return b == null ? null : b; }
   if(key === 'feedId' || key === 'eventUid'){
     return String(raw).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, 500) || null;

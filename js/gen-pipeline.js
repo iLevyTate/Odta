@@ -36,6 +36,41 @@ function _withTimeout(promise, ms, label){
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// A model load that stops reporting progress for this long is treated as
+// wedged (stalled fetch, hung WASM instantiation). Progress events reset it,
+// so a slow-but-alive 300 MB download on a poor connection is never cut off.
+const GEN_LOAD_IDLE_TIMEOUT_MS = 90000;
+
+/**
+ * Race a load against (a) the caller's abort signal and (b) an idle watchdog
+ * that only fires when no progress has arrived for `idleMs`. Neither can stop
+ * the native work already in flight, but both make the *promise* settle so
+ * the UI can leave "Loading…" — previously a WASM load could hang forever and
+ * "Cancel download" was a no-op.
+ * @returns {{ promise: Promise<any>, touch: () => void }}
+ */
+function _watchLoad(promise, { signal, idleMs } = {}){
+  let idleTimer = null;
+  let settle;
+  const guard = new Promise((_, reject) => { settle = reject; });
+  const arm = () => {
+    if(!idleMs) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => settle(new Error('LOAD_STALLED: no progress for ' + Math.round(idleMs / 1000) + 's')), idleMs);
+  };
+  const onAbort = () => settle(new Error('LOAD_ABORTED'));
+  if(signal){
+    if(signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+  arm();
+  const out = Promise.race([promise, guard]).finally(() => {
+    clearTimeout(idleTimer);
+    if(signal) signal.removeEventListener('abort', onAbort);
+  });
+  return { promise: out, touch: arm };
+}
+
 /**
  * Pre-flight check: verify the runtime can actually create a WebGPU device.
  * Returns true only when adapter + device succeed; false on any failure.
@@ -79,13 +114,28 @@ export function createGenEngine(cfg){
   // for one specific in-flight generation without touching the others.
   const stoppers = new Map();
 
+  let importGen = 0;
   async function _import(){
-    if(!mod) mod = await import(transformersUrl);
+    if(!mod){
+      // The module registry caches by resolved URL, so a plain re-import after
+      // a crash hands back the same poisoned ONNX Runtime instance. A query
+      // string forces a genuinely fresh module (and runtime) on retries.
+      const url = importGen === 0 ? transformersUrl
+        : transformersUrl + (transformersUrl.indexOf('?') >= 0 ? '&' : '?') + 'ortgen=' + importGen;
+      mod = await import(url);
+    }
     return mod;
   }
   // A fatal WASM Aborted() crash poisons the ONNX Runtime instance; dropping
-  // the cached module forces a fresh, un-aborted import for the next attempt.
-  function _resetModule(){ mod = null; }
+  // the cached module (and bumping the cache-buster) forces a fresh import
+  // for the next attempt. Callers must re-apply _configureEnv on the new module.
+  function _resetModule(){ mod = null; importGen++; }
+  function _configureEnv(env){
+    if(!env) return;
+    env.allowLocalModels = false;
+    try{ env.backends.onnx.wasm.wasmPaths = wasmDir; }catch(_){}
+    env.useBrowserCache = true;
+  }
 
   /**
    * Load the text-generation pipeline, trying WebGPU first (with a hard init
@@ -103,9 +153,7 @@ export function createGenEngine(cfg){
     }catch(e){
       throw new Error('TRANSFORMERS_IMPORT_FAILED: ' + ((e && e.message) || e));
     }
-    env.allowLocalModels = false;
-    env.backends.onnx.wasm.wasmPaths = wasmDir;
-    env.useBrowserCache = true;
+    _configureEnv(env);
 
     // On WebGPU we prefer q4f16 (int4 weights + fp16 activations) when the
     // caller's stored dtype is plain q4; on WASM we use q4 (fp16 activations
@@ -122,7 +170,7 @@ export function createGenEngine(cfg){
           // Cap the GPU init phase: a hung shader compile / session build must
           // fall back to WASM rather than leave the UI on "Initializing model…"
           // forever (the native build emits no progress and can't be aborted).
-          pipe = await _withTimeout(
+          pipe = await _watchLoad(_withTimeout(
             pipeline('text-generation', slug, {
               device: 'webgpu',
               dtype: webgpuDtype,
@@ -130,7 +178,7 @@ export function createGenEngine(cfg){
             }),
             GEN_WEBGPU_INIT_TIMEOUT_MS,
             'WEBGPU_INIT_TIMEOUT'
-          );
+          ), { signal }).promise;
           device = 'webgpu';
           return;
         }catch(e){
@@ -144,6 +192,7 @@ export function createGenEngine(cfg){
           try{
             const fresh = await _import();
             pipeline = fresh.pipeline;
+            _configureEnv(fresh.env);
           }catch(reErr){
             console.error('[gen] Failed to re-import Transformers.js after WebGPU crash', reErr);
           }
@@ -154,11 +203,17 @@ export function createGenEngine(cfg){
       // ---- WASM (CPU) fallback ----
       if(signal && signal.aborted) throw new Error('LOAD_ABORTED');
       try{ onProgress({ status: 'Loading with WASM (CPU)', file: slug, progress: undefined }); }catch(_){}
-      pipe = await pipeline('text-generation', slug, {
-        device: 'wasm',
-        dtype: wasmDtype,
-        progress_callback: onProgress,
-      });
+      let watch = null;
+      const progressTouch = (ev) => { if(watch) watch.touch(); onProgress(ev); };
+      watch = _watchLoad(
+        pipeline('text-generation', slug, {
+          device: 'wasm',
+          dtype: wasmDtype,
+          progress_callback: progressTouch,
+        }),
+        { signal, idleMs: GEN_LOAD_IDLE_TIMEOUT_MS }
+      );
+      pipe = await watch.promise;
       device = 'wasm';
     };
 

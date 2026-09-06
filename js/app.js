@@ -171,6 +171,8 @@ if ('serviceWorker' in navigator && !window.location.protocol.startsWith('file')
     if(d.action === 'openTask' && d.taskId != null){
       if(typeof showTab === 'function') showTab('tasks');
       if(typeof openTaskDetail === 'function') openTaskDetail(d.taskId);
+    } else if(d.action === 'openTasks'){
+      if(typeof showTab === 'function') showTab('tasks');
     } else if(d.action === 'openTimer'){
       if(typeof showTab === 'function') showTab('focus');
     }
@@ -401,6 +403,10 @@ window.hideWorkerInstructions = function(){
 
 // ========== INIT ==========
 loadState();
+// The permission diagnostic under the Notifications toggle only rendered from
+// inside _applyState's saved-cfg branch, so a brand-new install (no saved
+// state) showed a green toggle with no "Allow notifications" prompt at all.
+if(typeof renderNotifStatus==='function') renderNotifStatus();
 if(typeof setHeaderDate==='function') setHeaderDate();
 if(typeof ensureClassificationConfig==='function') ensureClassificationConfig(cfg);
 ensureDefaultList();
@@ -422,6 +428,29 @@ setTimeout(() => {
       try { saveState('auto'); } catch(e) {}
     }
   } catch(e) {}
+})();
+
+// Notification tap on a closed app: the service worker opens ./?tab=tasks&task=<id>
+// (see checkReminders → data.url). Route straight to that task's detail.
+(function applyTaskFromUrl(){
+  try{
+    const u = new URL(window.location.href);
+    const raw = u.searchParams.get('task');
+    if(raw == null) return;
+    const id = parseInt(raw, 10);
+    u.searchParams.delete('task');
+    history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : '') + u.hash);
+    if(!Number.isFinite(id)) return;
+    activeTab = 'tasks';
+    const after = () => {
+      try{
+        if(typeof showTab === 'function') showTab('tasks');
+        if(typeof findTask === 'function' && findTask(id) && typeof openTaskDetail === 'function') openTaskDetail(id);
+      }catch(_){}
+    };
+    if(document.readyState === 'complete') setTimeout(after, 200);
+    else window.addEventListener('DOMContentLoaded', () => setTimeout(after, 200));
+  }catch(_){}
 })();
 
 // Quick-add launch: ?quickadd=1 → focus the task input + scroll into view + flash.
@@ -565,7 +594,28 @@ renderLog();
 renderGoalList();
 renderIntList();
 renderQuickTimers();
+// Quick-timer post-rehydrate reconciliation (mirror of the Pomodoro block
+// below): a timer still running needs its chimes re-scheduled on the fresh
+// AudioContext and the keepalive up, or it will finish silently the moment
+// the tab is hidden; one that ran out while the app was closed owes the user
+// the completion flow — chime, notification, session-log entry.
+try{
+  quickTimers.forEach(qt=>{
+    if(!qt) return;
+    if(qt._needsCompletion){
+      qt._needsCompletion=false;
+      if(cfg.sound && typeof playChime==='function') playChime(qt.sound);
+      if(typeof notify==='function') notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
+      qt.flashUntil=Date.now()+2000;
+      if(typeof addLog==='function') addLog(qt.label,qt.totalSec,'quick');
+    } else if(qt.running){
+      if(typeof scheduleQtAudio==='function' && cfg.sound) scheduleQtAudio(qt);
+      if(typeof startKeepalive==='function') startKeepalive();
+    }
+  });
+}catch(e){ console.warn('[app] quick-timer rehydrate reconcile', e); }
 ensureQuickTick();
+renderQuickTimers();
 // Restore task toolbar UI
 if(gid('taskSortSel'))gid('taskSortSel').value=taskSortBy;
 if(gid('groupBySel'))gid('groupBySel').value=taskGroupBy;
@@ -587,6 +637,10 @@ if(window._timerStateRehydrated){
     if(running && remaining > 0){
       clearInterval(tickId);
       tickId = setInterval(tick, 250);
+      // Re-open the linked task's session clock so the remainder of the phase
+      // is credited (totalSec / sessions / sessionEntries) instead of being
+      // logged as an anonymous "Focus" block.
+      if(cfg.linkTask && phase==='work' && activeTaskId && !taskStartedAt) taskStartedAt = Date.now();
       if(typeof schedulePhaseAudio === 'function' && cfg.sound) schedulePhaseAudio();
       if(typeof startKeepalive === 'function') startKeepalive();
       if(typeof _syncRingState === 'function') _syncRingState();

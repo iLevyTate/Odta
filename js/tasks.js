@@ -234,18 +234,36 @@ if(typeof window !== 'undefined') window.formatRemindAtLabel = formatRemindAtLab
 
 /** Strip clock phrases and set remindAt (uses dueDate, else today). */
 function _applyQuickAddTime(text, props){
+  const explicitDate = !!props.dueDate;
   const dayIso = props.dueDate || (typeof todayISO === 'function' ? todayISO() : null);
   if(!dayIso) return text;
   let m;
+  // A bare clock with no date ("standup 09:30" typed at 15:00) means the
+  // NEXT occurrence, not a reminder that is already in the past — which used
+  // to fire "Missed:" thirty seconds after the task was created. Only rolls
+  // when the target day really is the current calendar day, so fixed-date
+  // callers (tests, imports) are untouched.
+  const rollIfPast = (hour, minute) => {
+    if(explicitDate) return dayIso;
+    const now = new Date();
+    const realToday = now.getFullYear() + '-' + _qaPad2(now.getMonth() + 1) + '-' + _qaPad2(now.getDate());
+    if(dayIso !== realToday) return dayIso;
+    if(hour * 60 + minute > now.getHours() * 60 + now.getMinutes()) return dayIso;
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return d.getFullYear() + '-' + _qaPad2(d.getMonth() + 1) + '-' + _qaPad2(d.getDate());
+  };
+  const setAt = (hour, minute) => {
+    const day = rollIfPast(hour, minute);
+    props.remindAt = _qaLocalDateTime(day, hour, minute);
+    if(!props.dueDate) props.dueDate = day;
+  };
 
   if(/\b(at\s+)?noon\b|\bmidday\b/i.test(text)){
-    props.remindAt = _qaLocalDateTime(dayIso, 12, 0);
-    if(!props.dueDate) props.dueDate = dayIso;
+    setAt(12, 0);
     return text.replace(/\b(at\s+)?noon\b|\bmidday\b/ig, ' ');
   }
   if(/\b(at\s+)?midnight\b/i.test(text)){
-    props.remindAt = _qaLocalDateTime(dayIso, 0, 0);
-    if(!props.dueDate) props.dueDate = dayIso;
+    setAt(0, 0);
     return text.replace(/\b(at\s+)?midnight\b/ig, ' ');
   }
 
@@ -253,8 +271,7 @@ function _applyQuickAddTime(text, props){
   if(m){
     const clock = _qaParseClock(m[1], m[2], m[3]);
     if(clock){
-      props.remindAt = _qaLocalDateTime(dayIso, clock.hour, clock.minute);
-      if(!props.dueDate) props.dueDate = dayIso;
+      setAt(clock.hour, clock.minute);
       return text.replace(m[0], ' ');
     }
   }
@@ -263,8 +280,7 @@ function _applyQuickAddTime(text, props){
   if(m){
     const clock = _qaParseClock(m[1], m[2], null);
     if(clock){
-      props.remindAt = _qaLocalDateTime(dayIso, clock.hour, clock.minute);
-      if(!props.dueDate) props.dueDate = dayIso;
+      setAt(clock.hour, clock.minute);
       return text.replace(m[0], ' ');
     }
   }
@@ -1727,14 +1743,26 @@ function setQuickReminder(offset,hour){
   gid('mdRemindAt').value=yr+'-'+mo+'-'+da+'T'+hh+':'+mm;
 }
 
+// Implicit due-date reminders older than this are consumed silently: a
+// backlog of stale tasks (first run after upgrade, a restored backup, a
+// synced peer) must not detonate as a wall of sticky "Missed:" alerts.
+// Explicit remindAt reminders always fire — the user set that time.
+const REMINDER_DUE_STALE_MS = 24 * 60 * 60 * 1000;
+// More than this many reminders in one pass collapse into a single summary
+// notification instead of one sticky alert each.
+const REMINDER_BURST_MAX = 3;
+
 function checkReminders(){
   const now=Date.now();
   let fired=false;
   const dueNotify = !(typeof cfg !== 'undefined' && cfg && cfg.dueNotify === false);
+  const canNotify = !(typeof cfg !== 'undefined' && cfg && cfg.notif === false)
+    && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+  const due = [];
   tasks.forEach(t=>{
     if(t.reminderFired||t.archived||t.status==='done')return;
     // Either an explicit remindAt, or — opt-out via cfg.dueNotify — the
-    // dueDate at midday acts as the implicit reminder time. Other apps treat
+    // dueDate at 09:00 acts as the implicit reminder time. Other apps treat
     // a due date as a reminder by default; without this, a user sets a due
     // date and never hears about it.
     let reminderSrc = null;
@@ -1742,44 +1770,70 @@ function checkReminders(){
     if(t.remindAt){
       const rt = new Date(t.remindAt).getTime();
       if(Number.isFinite(rt)){ remindTime = rt; reminderSrc = 'remindAt'; }
-      else { console.warn('[tasks] Invalid remindAt on task', t.id); return; }
-    } else if(dueNotify && t.dueDate){
-      // Fire at 09:00 local on the due date — the same heuristic users see in
-      // Apple Reminders / Things when no specific time was set.
-      const rt = new Date(String(t.dueDate) + 'T09:00:00').getTime();
-      if(Number.isFinite(rt)){ remindTime = rt; reminderSrc = 'dueDate'; }
-      else return;
-    } else {
+      else {
+        // Garbage value (e.g. an unvalidated import). Clear it once so the
+        // due-date branch can take over instead of warning every 30 s forever.
+        console.warn('[tasks] Invalid remindAt on task', t.id, '— clearing');
+        t.remindAt = null; fired = true;
+      }
+    }
+    if(!reminderSrc){
+      if(dueNotify && t.dueDate){
+        // Fire at 09:00 local on the due date — the same heuristic users see in
+        // Apple Reminders / Things when no specific time was set.
+        const rt = new Date(String(t.dueDate) + 'T09:00:00').getTime();
+        if(Number.isFinite(rt)){ remindTime = rt; reminderSrc = 'dueDate'; }
+        else return;
+      } else {
+        return;
+      }
+    }
+    if(now<remindTime) return;
+    if(reminderSrc === 'dueDate' && (now - remindTime) > REMINDER_DUE_STALE_MS){
+      t.reminderFired = true; fired = true; // stale: consume silently
       return;
     }
-    if(now>=remindTime){
-      t.reminderFired=true;fired=true;
+    t.reminderFired=true;fired=true;
+    due.push({ t, remindTime, reminderSrc });
+  });
+
+  const describe = (t) => {
+    let body = t.dueDate ? ('Due ' + fmtDue(t.dueDate)) : 'No due date';
+    if(t.category && typeof getCategoryDef === 'function'){
+      const catDef = getCategoryDef(t.category);
+      if(catDef && catDef.label) body = 'Life area: ' + catDef.label + ' · ' + body;
+    }
+    return body;
+  };
+  const send = (title, body, opts) => {
+    if(canNotify && typeof notify === 'function'){
+      try{ notify(title, body, opts); }catch(e){ console.warn('[tasks] Notification failed', e); }
+    } else if(cfg.sound && typeof playChime === 'function'){
+      // Notifications off / not permitted: the chime is the reminder.
+      try{ playChime('bell'); }catch(e){}
+    }
+  };
+
+  if(due.length > REMINDER_BURST_MAX){
+    const names = due.slice(0, 4).map(x => x.t.name).join(', ') + (due.length > 4 ? '…' : '');
+    send(due.length + ' task reminders', names, {
+      tag: 'task-reminders-summary',
+      requireInteraction: true,
+      data: { action: 'openTasks', url: './?tab=tasks' },
+    });
+  } else {
+    due.forEach(({ t, remindTime, reminderSrc }) => {
       const late=(now-remindTime)>5*60*1000;
       const title=(late?'Missed: ':(reminderSrc === 'dueDate' ? 'Due now: ' : 'Task reminder: '))+t.name;
-      let body = t.dueDate ? ('Due ' + fmtDue(t.dueDate)) : 'No due date';
-      if(t.category && typeof getCategoryDef === 'function'){
-        const catDef = getCategoryDef(t.category);
-        if(catDef && catDef.label) body = 'Life area: ' + catDef.label + ' · ' + body;
-      }
-      if('Notification' in window&&Notification.permission==='granted'){
-        try{
-          if(typeof notify === 'function'){
-            notify(title, body, {
-              tag: 'task-'+t.id,
-              requireInteraction: true,
-              data: { action: 'openTask', taskId: t.id, category: t.category || null },
-            });
-          } else {
-            const n=new Notification(title,{
-              body:t.dueDate?'Due '+fmtDue(t.dueDate):'No due date',
-              tag:'task-'+t.id,requireInteraction:true
-            });
-            n.onclick=function(){window.focus();showTab('tasks');openTaskDetail(t.id);n.close()};
-          }
-        }catch(e){ console.warn('[tasks] Notification failed for task', t.id, e); }
-      }else if(cfg.sound){playChime('bell')}
-    }
-  });
+      send(title, describe(t), {
+        tag: 'task-'+t.id,
+        requireInteraction: true,
+        // `url` is what the service worker opens when the app is closed at
+        // tap time; `action`/`taskId` serve the already-open-window path.
+        data: { action: 'openTask', taskId: t.id, category: t.category || null, url: './?tab=tasks&task=' + t.id },
+      });
+    });
+  }
   if(fired)saveState('auto')
 }
 

@@ -245,7 +245,13 @@ function _askCalendarBlock(){
   return ('Calendar (next 7 days):\n' + lines.join('\n')).slice(0, 600);
 }
 
-function _askUserPrompt(query, contextLines){
+// The calendar digest reads every subscribed feed; a malformed feed must
+// never turn into a raw JS error in the chat bubble.
+function _askSafeCalendarBlock(){
+  try{ return (typeof _askCalendarBlock === 'function') ? (_askCalendarBlock() || '') : ''; }catch(_){ return ''; }
+}
+
+function _askUserPrompt(query, contextLines, calendarBlock){
   const parts = [];
   const d = _askDateRef();
   parts.push('Today: ' + d.today + (d.weekday ? ' (' + d.weekday + ')' : '')
@@ -253,7 +259,7 @@ function _askUserPrompt(query, contextLines){
     + ', next Monday: ' + d.monday + ', next Friday: ' + d.friday + '. Tasks with due before ' + d.today + ' are overdue.');
   const listBlock = _askListsBlock();
   if(listBlock) parts.push('Lists:\n' + listBlock);
-  const calB = (typeof _askCalendarBlock === 'function') ? _askCalendarBlock() : '';
+  const calB = (typeof calendarBlock === 'string') ? calendarBlock : _askSafeCalendarBlock();
   if(calB) parts.push(calB);
   if(contextLines.length) parts.push('Context (relevant tasks):\n' + contextLines.join('\n'));
   parts.push('Request: ' + _askStripCtrl(query).slice(0, 600));
@@ -407,7 +413,12 @@ function runReadOp(op){
       const windowDays = _calendarFetchWindowDays(fromD, toD);
       let evs = getUpcomingEvents(windowDays, 500, { strictFuture: false });
       evs = _filterCalEventsByDateRange(evs, fromD, toD);
-      return { events: evs.slice(0, lim).map(e => ({ title: e.title, dateISO: e.dateISO, time: e.time, location: (e.location || '').slice(0, 80), feed: e.feedLabel })) };
+      // feedId / eventUid / eventDate are exactly what CREATE_FROM_EVENT needs —
+      // without them the model could only hallucinate ids and the op always failed.
+      return { events: evs.slice(0, lim).map(e => ({
+        title: e.title, dateISO: e.dateISO, time: e.time, location: (e.location || '').slice(0, 80), feed: e.feedLabel,
+        feedId: e.feedId != null ? String(e.feedId) : undefined, eventUid: e.uid ? String(e.uid).slice(0, 200) : undefined, eventDate: e.dateISO,
+      })) };
     }
     if(n === 'LIST_CATEGORIES'){
       const rows = (typeof getActiveCategories === 'function') ? getActiveCategories() : [];
@@ -509,8 +520,10 @@ function _askProseSystemPrompt(){
  * guards against a stream that trickles forever.
  * @returns {{ touch:()=>void, restart:()=>void, clear:()=>void }}
  */
-function _askIdleAbort(idleMs, ctl){
-  const capMs = Math.max(idleMs * 6, 120000);
+function _askIdleAbort(idleMs, ctl, capMsOverride){
+  const capMs = (typeof capMsOverride === 'number' && Number.isFinite(capMsOverride))
+    ? Math.max(1000, capMsOverride)
+    : Math.max(idleMs * 6, 120000);
   let idleTimer = null;
   const fire = () => { try{ ctl.abort(); }catch(_){} };
   const cap = setTimeout(fire, capMs);
@@ -521,6 +534,15 @@ function _askIdleAbort(idleMs, ctl){
     restart: () => arm(idleMs * 2),
     clear:   () => { clearTimeout(idleTimer); clearTimeout(cap); },
   };
+}
+
+/** Milliseconds left in the submit's shared budget (see cognitaskRun); a
+ *  follow-up pass needs at least a few seconds to be worth starting. */
+function _askRemainingBudget(opts, defaultMs){
+  const dl = opts && typeof opts._deadline === 'number' ? opts._deadline : null;
+  if(dl == null) return defaultMs;
+  const left = dl - Date.now();
+  return left < 4000 ? 0 : Math.min(defaultMs * 6, left);
 }
 
 /**
@@ -540,8 +562,10 @@ async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
       { role: 'user',   content: _askUserPrompt(q, contextLines) },
     ];
     const proseTimeoutMs = Math.max(10000, ((cfg && cfg.timeoutSec) || 30) * 1000);
+    const budget = _askRemainingBudget(opts, proseTimeoutMs);
+    if(budget <= 0) return { chatAnswer: '', proseText: '' };
     const proseTimeoutCtl = new AbortController();
-    const proseWatch = _askIdleAbort(proseTimeoutMs, proseTimeoutCtl);
+    const proseWatch = _askIdleAbort(proseTimeoutMs, proseTimeoutCtl, budget);
     const proseSignal = (() => {
       const ctl = new AbortController();
       const bail = () => ctl.abort();
@@ -595,6 +619,7 @@ async function cognitaskRun(query, opts){
   }
 
   const contextLines = await _askBuildContext(q);
+  const calendarBlock = _askSafeCalendarBlock();
   const useNativeQwenTools = typeof isGenModelNativeQwen25Tools === 'function' && isGenModelNativeQwen25Tools()
     && typeof buildOpenAIToolsFromToolSchema === 'function';
   const cognitaskOpenAITools = useNativeQwenTools ? buildOpenAIToolsFromToolSchema() : null;
@@ -603,7 +628,7 @@ async function cognitaskRun(query, opts){
   const systemNativeQwen = 'You are a local task assistant. Use only the provided function tools. '
     + 'Call read tools first if you need tasks, calendar, lists, or categories. '
     + 'Use task ids that appear in the user context. Answer with tool call(s) in the required <tool_call> format; do not add other text.';
-  const user = _askUserPrompt(q, contextLines);
+  const user = _askUserPrompt(q, contextLines, calendarBlock);
   // Conversation context: prior user/assistant exchanges from the chat
   // sheet, sanitised + capped, so follow-up turns like "now archive those"
   // can resolve relative references against the previous answer. Each
@@ -627,7 +652,13 @@ async function cognitaskRun(query, opts){
   const cfg = (typeof getGenCfg === 'function') ? getGenCfg() : { timeoutSec: 30 };
   const timeoutMs = Math.max(5000, (cfg.timeoutSec || 30) * 1000);
   const timeoutCtl = new AbortController();
-  const watch = _askIdleAbort(timeoutMs, timeoutCtl);
+  // One wall-clock budget for the WHOLE submit — ops turns, the write retry
+  // and the prose pass share it, so a single question can't run several
+  // multiples of the configured "Max generation time" back to back.
+  const totalCapMs = Math.max(timeoutMs * 6, 120000);
+  const deadline = Date.now() + totalCapMs;
+  opts = { ...opts, _deadline: deadline };
+  const watch = _askIdleAbort(timeoutMs, timeoutCtl, totalCapMs);
   const mergedSignal = (() => {
     const ctl = new AbortController();
     const bail = () => ctl.abort();
@@ -655,7 +686,7 @@ async function cognitaskRun(query, opts){
   // (_askCalendarBlock) on every turn, so externally-authored feed text can
   // influence write ops even when the model never calls GET_CALENDAR_EVENTS.
   // Taint from the start whenever that block is non-empty.
-  let externalReads = !!((typeof _askCalendarBlock === 'function') && _askCalendarBlock());
+  let externalReads = !!calendarBlock;
 
   const runOnce = async (temp) => {
     let rawText = '';
@@ -880,8 +911,10 @@ async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
       { role: 'user',   content: _askUserPrompt(q, contextLines) },
     ];
     const retryTimeoutMs = Math.max(8000, ((cfg && cfg.timeoutSec) || 30) * 1000);
+    const budget = _askRemainingBudget(opts, retryTimeoutMs);
+    if(budget <= 0) return null;
     const retryTimeoutCtl = new AbortController();
-    const retryWatch = _askIdleAbort(retryTimeoutMs, retryTimeoutCtl);
+    const retryWatch = _askIdleAbort(retryTimeoutMs, retryTimeoutCtl, budget);
     const retrySignal = (() => {
       const ctl = new AbortController();
       const bail = () => ctl.abort();
