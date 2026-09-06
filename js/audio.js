@@ -37,6 +37,17 @@ function getAudioCtx(){if(!_audioCtx||_audioCtx.state==='closed')_audioCtx=new(w
 // audio is playing, which means timers, scheduled audio, and notifications continue firing
 // even when the tab is backgrounded or minimized. This is how Pomofocus, Forest, etc. work.
 let _keepaliveNode=null,_keepaliveGain=null;
+// Chrome only treats a tab as "playing audio" when the rendered output rises
+// above its silence threshold, -72.25 dBFS (an amplitude of 1/4096 ≈ 0.00024;
+// see media/audio/audio_stream_monitor.cc). The old keepalive ran at 0.0001
+// (≈ -80 dBFS) — below the line — so the browser classified the tab as silent:
+// no media session, background timer throttling / page freezing applied as
+// usual, the AudioContext was suspended on screen-lock, and every pre-scheduled
+// chime silently vanished. 0.004 at 20 Hz is ≈ -51 dBFS (20 dB of margin) yet
+// still inaudible on real hardware: phone speakers can't reproduce 20 Hz at
+// all and headphones sit far below the hearing threshold at that level.
+const KEEPALIVE_GAIN=0.004;
+const KEEPALIVE_FREQ_HZ=20;
 function startKeepalive(){
   if(_keepaliveNode)return;
   try{
@@ -44,8 +55,8 @@ function startKeepalive(){
     _keepaliveNode=x.createOscillator();
     _keepaliveGain=x.createGain();
     _keepaliveNode.type='sine';
-    _keepaliveNode.frequency.value=20;
-    _keepaliveGain.gain.value=0.0001;
+    _keepaliveNode.frequency.value=KEEPALIVE_FREQ_HZ;
+    _keepaliveGain.gain.value=KEEPALIVE_GAIN;
     _keepaliveNode.connect(_keepaliveGain);
     _keepaliveGain.connect(x.destination);
     _keepaliveNode.start();
@@ -76,7 +87,7 @@ function stopKeepalive(){
 function updateBgAudioStatus(){
   const el=gid('bgAudioStatus');if(!el)return;
   if(_keepaliveNode){
-    el.textContent='● Active — background OK';
+    el.textContent='● Active — background OK (tab shows a speaker icon while a timer runs)';
     el.style.color='var(--success)';
   }else{
     el.textContent='○ Idle — starts with timer';
@@ -161,6 +172,38 @@ function cancelScheduledAudio(){
   scheduledAudio.forEach(o=>{try{o.stop(0)}catch(e){}});
   scheduledAudio=[];audioScheduled=false;
 }
+
+// ========== AUDIO-CLOCK STALL DETECTION ==========
+// Pre-scheduled oscillators fire on the AudioContext clock. When the OS
+// suspends that context (iOS always does on background; Android/desktop do
+// once the tab is considered silent or frozen) the clock stops while wall
+// time keeps going. On resume, every scheduled chime is still "in the
+// future" on the audio clock, so it plays late — minutes or hours after the
+// timer actually ended — and the completion path skips its fallback chime
+// because it believes the scheduled one already played. We snapshot both
+// clocks when the page hides and compare on wake; a gap means the scheduled
+// audio is stale and must be replaced (see _reconcileTimerAfterWake).
+let _audioClockRef=null; // { wall: ms epoch, audio: AudioContext seconds }
+const AUDIO_STALL_TOLERANCE_SEC=1.5;
+function _markAudioClock(){
+  try{
+    if(!_audioCtx){ _audioClockRef=null; return; }
+    _audioClockRef={ wall: Date.now(), audio: _audioCtx.currentTime };
+  }catch(e){ _audioClockRef=null; }
+}
+/** Seconds the audio clock fell behind wall time since the last mark (0 when in sync / unknown). */
+function audioClockStalledSec(){
+  try{
+    if(!_audioCtx||!_audioClockRef) return 0;
+    const wall=(Date.now()-_audioClockRef.wall)/1000;
+    const aud=_audioCtx.currentTime-_audioClockRef.audio;
+    if(!Number.isFinite(wall)||!Number.isFinite(aud)) return 0;
+    return Math.max(0, wall-aud);
+  }catch(e){ return 0; }
+}
+/** True when chimes scheduled before the last mark can no longer be trusted to have played on time. */
+function scheduledAudioLost(){ return audioClockStalledSec()>AUDIO_STALL_TOLERANCE_SEC; }
+if(typeof window!=='undefined'){ window.audioClockStalledSec=audioClockStalledSec; window.scheduledAudioLost=scheduledAudioLost; }
 
 // Bounded lookahead pre-scheduler for the (open-ended) stopwatch.
 // startElapsedSec = current stopwatch elapsed seconds at scheduling time.
@@ -354,6 +397,10 @@ function notify(title, body, opts){
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){
     // ── Going to background ──
+    // Snapshot wall vs audio clock so the wake path can tell whether the
+    // context kept running (chimes played on time) or was suspended
+    // (chimes are stale and must be replayed / rescheduled).
+    _markAudioClock();
     // Proactively resume the AudioContext right as we go hidden so any
     // pre-scheduled oscillator nodes keep playing. Some browsers suspend
     // the context within seconds of hiding the page; calling resume()
@@ -364,9 +411,12 @@ document.addEventListener('visibilitychange',()=>{
     }
   }else{
     // ── Coming back to foreground ──
+    // Measure the stall BEFORE resuming: resume() restarts the audio clock
+    // and the gap is what tells us the scheduled chimes were lost.
+    const stalledSec=audioClockStalledSec();
     // Resume AudioContext (may have been suspended by OS while hidden)
-    if(_audioCtx&&_audioCtx.state==='suspended'){
-      try{_audioCtx.resume()}catch(e){}
+    if(_audioCtx&&_audioCtx.state!=='running'&&_audioCtx.state!=='closed'){
+      try{const p=_audioCtx.resume();if(p&&p.catch)p.catch(()=>{})}catch(e){}
     }
     // Re-acquire Wake Lock — the browser releases it when page goes hidden
     if(_keepaliveNode) _acquireWakeLock();
@@ -376,10 +426,13 @@ document.addEventListener('visibilitychange',()=>{
       try{checkReminders()}catch(e){}
     }
     // Re-check timer state — if a phase completed while backgrounded,
-    // the tick() function may not have fired; reconcile now
+    // the tick() function may not have fired; reconcile now. Passing the
+    // stall lets timer.js discard stale scheduled audio, play any chime
+    // that should already have sounded, and reschedule what remains.
     if(typeof _reconcileTimerAfterWake==='function'){
-      try{_reconcileTimerAfterWake()}catch(e){}
+      try{_reconcileTimerAfterWake({audioStalledSec:stalledSec})}catch(e){}
     }
+    _audioClockRef=null;
   }
 });
 

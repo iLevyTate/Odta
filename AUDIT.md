@@ -6,6 +6,25 @@
 
 ---
 
+## v76 wave (2026-09-06)
+
+Targeted root-cause pass on two user reports: generative Ask failing with "Couldn't parse a valid plan" (screenshot: `Clean up overdue tasks` → parse error with the model reported ready), and timer chimes / notifications going silent once the app is backgrounded. Baseline 652/652 green; 684/684 after.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| Z-1 | `parseOpsJson` threw on every non-canonical reply shape small models emit — truncated arrays (max_new_tokens), bare op objects, wrappers, Python literals, trailing commas, `<tool_call>` blocks, `arguments`/flattened args (`js/tool-schema.js`) | High | ✅ Fixed — structural salvage + `normalizeProposedOp`; `tests/tool-schema-tolerant-parse.test.mjs` |
+| Z-2 | On parse failure `cognitaskRun` re-sent the identical message list up to 4× (`continue` with no feedback), then reported PARSE_FAILED; non-question commands never reached the write retry (`js/ask.js`) | High | ✅ Fixed — one corrective turn quoting the failure, then write-retry / prose fallbacks; `tests/ask-parse-recovery.test.mjs` |
+| Z-3 | Prompt examples used `<tomorrow>` style placeholders that small models copy literally; validator dropped the field silently (`js/ask.js`, `js/tool-schema.js`) | Medium | ✅ Fixed — concrete ISO dates in examples + user prompt; `_naturalDateISO` backstop in the coercer |
+| Z-4 | `QUERY_TASKS` had only a name-substring `filter`, so "overdue" queries had no tool path (`js/tool-schema.js`, `js/ask.js` `runReadOp`) | Medium | ✅ Fixed — `overdue`/`dueBefore`/`dueAfter`/`status`/`priority`/`tag`/`listId`/`includeDone`/`includeArchived` |
+| Z-5 | Ops turns sampled at T=0.1–0.2; `timeoutSec` was a wall clock over the entire multi-turn run (30 s mobile default ≈ one WASM prefill of the ~1.5k-token prompt) (`js/ask.js`) | Medium | ✅ Fixed — greedy decode for structured turns; idle watchdog (`_askIdleAbort`) with prefill allowance and hard cap |
+| Z-6 | `_extractProseAnswer` surfaced broken JSON fragments as a chat "answer" (`js/ask.js`) | Low | ✅ Fixed — JSON-looking lines filtered before the prose fallback |
+| Z-7 | Keepalive oscillator gain 0.0001 (≈ −80 dBFS) was below Chrome's −72.25 dBFS audibility threshold (`kSilenceThresholdDBFS`, amplitude 1/4096) — the tab was classified silent, so the media session, background-throttling exemption and screen-lock audio survival the design relied on never engaged (`js/audio.js`) | High | ✅ Fixed — `KEEPALIVE_GAIN = 0.004` (≈ −51 dBFS) at 20 Hz; `tests/audio-background-wake.test.mjs` pins the threshold |
+| Z-8 | `onPhaseComplete` / quick-timer / stopwatch chime paths short-circuited on `audioScheduled` even when the AudioContext clock had stalled while hidden; `_reconcileTimerAfterWake` only ticked the Pomodoro (quick timers + stopwatch not reconciled) and never discarded/rescheduled stale nodes (`js/timer.js`, `js/audio.js`) | High | ✅ Fixed — wall-vs-audio clock snapshot on hide, measured before `resume()` on show; reconcile cancels stale nodes → catch-up ticks (chime + notification now) → reschedule; guards consult `_audioLost()` |
+
+**Not fixable client-side (documented residual)**: a browser tab that the OS fully freezes or kills (iOS Safari after a few minutes in the background without playing media, aggressive Android battery savers) cannot run JavaScript, so a chime can only be *caught up* on the next wake; only an installed PWA with the keepalive engaged, or a server-driven push, can beat that.
+
+---
+
 ## v75 follow-up wave (2026-07-20)
 
 A third review pass (three parallel deep-reads: data layer, UI/PWA layer, AI/intel layer) targeting what the v74 wave missed. Baseline at review time: 597/597 tests green, all CI checks green. Every confirmed finding below was fixed in the same branch; 644/644 tests green after, browser smoke green (exit 0, zero actionable console errors — it crashed or failed on the pre-fix baseline).

@@ -144,7 +144,7 @@ function tick(){
   const totalEl=totalDuration-remaining,circ=553;
   gid('ringFg').setAttribute('stroke-dashoffset',String(circ-(remaining/totalDuration)*circ));
   const disp=gid('display');disp.textContent=fmt(remaining);disp.className='ring-time'+(remaining<=10&&remaining>0?' warn':'');
-  intervals.forEach(iv=>{if(iv.intervalSec<=0)return;if((iv.target||'pomo')!=='pomo')return;const exp=Math.floor(totalEl/iv.intervalSec),prev=fireCounts[iv.id]||0;if(exp>prev&&totalEl>0){if(cfg.sound&&!audioScheduled)playChime(iv.chime);fireCounts[iv.id]=exp;flashInt(iv.id)}});
+  intervals.forEach(iv=>{if(iv.intervalSec<=0)return;if((iv.target||'pomo')!=='pomo')return;const exp=Math.floor(totalEl/iv.intervalSec),prev=fireCounts[iv.id]||0;if(exp>prev&&totalEl>0){if(cfg.sound&&(!audioScheduled||_audioLost()))playChime(iv.chime);fireCounts[iv.id]=exp;flashInt(iv.id)}});
   if(remaining!==lastTickSec){lastTickSec=remaining;if(intervals.length)renderIntList();}
   renderBanner();updateTitle();updateMiniTimer();
   if(typeof updateTimerDock==='function') updateTimerDock();
@@ -174,7 +174,7 @@ function onPhaseComplete(){
     refreshOpenTaskModalIfMatches(completedTaskIdForNote);
   }
   // Scheduled audio already fired at the right moment; only play manually if scheduling failed
-  if(cfg.sound&&!audioScheduled)(phase==='work'?playTransition:playBreakEnd)();
+  if(cfg.sound&&(!audioScheduled||_audioLost()))(phase==='work'?playTransition:playBreakEnd)();
   audioScheduled=false;scheduledAudio=[];
   // System notification for backgrounded tabs
   notify(getPL(phase)+' Complete',phase==='work'?'Great work! Time for a break.':'Break over — back to focus.');
@@ -326,7 +326,7 @@ function swTick(){
     const exp=Math.floor(elSec/iv.intervalSec),prev=swFireCounts[iv.id]||0;
     if(exp>prev&&elSec>0){
       // Scheduled audio likely already played within the lookahead; only fall back if no nodes are pending
-      if(cfg.sound&&swScheduledIntervalNodes.length===0)playChime(iv.chime);
+      if(cfg.sound&&(swScheduledIntervalNodes.length===0||_audioLost()))playChime(iv.chime);
       swFireCounts[iv.id]=exp;flashInt(iv.id);needsRender=true;
     }
   });
@@ -539,7 +539,7 @@ function ensureQuickTick(){
           if((iv.target||'pomo')!=='quick')return;
           const exp=Math.floor(totalEl/iv.intervalSec),prev=qt._fireCounts[iv.id]||0;
           if(exp>prev&&totalEl>0){
-            if(cfg.sound&&!qt._audioScheduled)playChime(iv.chime);
+            if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(iv.chime);
             qt._fireCounts[iv.id]=exp;flashInt(iv.id);needsRender=true;
           }
         });
@@ -547,7 +547,7 @@ function ensureQuickTick(){
       if(newRem<=0&&!qt.finished){
         qt.running=false;qt.finished=true;qt.pausedRem=0;
         // Scheduled audio already played; fall back to manual play only if scheduling failed
-        if(cfg.sound&&!qt._audioScheduled)playChime(qt.sound);
+        if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
         qt._audioScheduled=false;qt._nodes=[];
         notify('Timer done',qt.label);
         qt.flashUntil=Date.now()+2000;
@@ -682,14 +682,14 @@ function _bgQuickTick(){
         if((iv.target||'pomo')!=='quick')return;
         const exp=Math.floor(totalEl/iv.intervalSec),prev=qt._fireCounts[iv.id]||0;
         if(exp>prev&&totalEl>0){
-          if(cfg.sound&&!qt._audioScheduled)playChime(iv.chime);
+          if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(iv.chime);
           qt._fireCounts[iv.id]=exp;flashInt(iv.id);needsRender=true;
         }
       });
     }
     if(newRem<=0&&!qt.finished){
       qt.running=false;qt.finished=true;qt.pausedRem=0;
-      if(cfg.sound&&!qt._audioScheduled)playChime(qt.sound);
+      if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
       qt._audioScheduled=false;qt._nodes=[];
       notify('Timer done',qt.label);
       qt.flashUntil=Date.now()+2000;
@@ -701,16 +701,51 @@ function _bgQuickTick(){
 }
 window._bgQuickTick=_bgQuickTick;
 
+// Pre-scheduled chimes ride the AudioContext clock; when the OS suspended
+// that clock while we were hidden they never played (and would play late on
+// resume). audio.js measures the stall; while it is non-zero the "scheduled
+// audio already covered this" guards below must not suppress the fallback
+// playChime()/playTransition() calls.
+function _audioLost(){return typeof scheduledAudioLost==='function'&&scheduledAudioLost()}
+
 /**
  * Reconcile timer state after waking from a backgrounded/suspended tab.
- * If a Pomodoro phase should have completed while the page was hidden,
- * calling tick() once will catch up (because tick is wall-clock based,
- * not delta based). If the timer finished while hidden, we fire the
- * completion flow now.
+ * All three timers are wall-clock based, so one catch-up tick each is enough
+ * to detect a phase / quick timer that completed while hidden and run its
+ * completion flow (chime + notification + log) now.
+ *
+ * @param {{audioStalledSec?:number}} [opts] — from audio.js: how far the
+ *   AudioContext clock fell behind wall time while hidden. Above the
+ *   tolerance, every pre-scheduled oscillator is stale: the ones that
+ *   should have fired never did, and the rest would fire at the wrong
+ *   moment. We drop them all, let the catch-up ticks play whatever is now
+ *   overdue, and re-schedule the remainder against the fresh clock.
  */
-function _reconcileTimerAfterWake(){
+function _reconcileTimerAfterWake(opts){
+  const stalled=!!(opts&&typeof opts.audioStalledSec==='number'&&opts.audioStalledSec>1.5);
+  if(stalled){
+    try{cancelScheduledAudio()}catch(e){}
+    try{if(typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes)}catch(e){}
+    try{quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)})}catch(e){}
+  }
   if(running){
     try{tick()}catch(e){}
+  }
+  if(quickTimers.some(qt=>qt.running)){
+    try{_bgQuickTick()}catch(e){}
+    try{ensureQuickTick()}catch(e){}
+  }
+  if(swRunning){
+    try{swTick()}catch(e){}
+  }
+  if(stalled&&cfg.sound){
+    // Whatever is still running needs fresh scheduled audio on the resumed clock.
+    try{if(running)schedulePhaseAudio()}catch(e){}
+    try{quickTimers.forEach(qt=>{if(qt&&qt.running&&typeof scheduleQtAudio==='function')scheduleQtAudio(qt)})}catch(e){}
+    try{if(swRunning&&typeof scheduleSwIntervalChimes==='function')scheduleSwIntervalChimes(Math.floor(swElapsed/1000),intervals,swFireCounts,swScheduledIntervalNodes)}catch(e){}
+  }
+  if(!document.hidden){
+    try{renderQuickTimers()}catch(e){}
   }
 }
 window._reconcileTimerAfterWake=_reconcileTimerAfterWake;

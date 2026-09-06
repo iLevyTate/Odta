@@ -63,7 +63,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v75">
+<link rel="stylesheet" href="css/main.css?v=v76">
 
 </head>
 <body>
@@ -643,7 +643,7 @@
               <span id="bgAudioStatus" class="text-status">○ Idle</span>
             </div>
             <span class="text-hint">
-              Chimes play while this tab is in the background via Web Audio scheduling + Media Session API. Sounds <strong>stop if the browser is fully closed</strong> — install as a PWA for reliable background operation.
+              While a timer runs, a sub-audible keepalive tone keeps the browser treating this tab as playing audio (you'll see a speaker icon on the tab, and a media control on Android) so scheduled chimes and notifications survive the screen turning off. Anything missed while the OS froze the page is played the moment you return. Sounds <strong>stop if the browser is fully closed</strong> — install as a PWA for reliable background operation.
             </span>
           </div>
         </div>
