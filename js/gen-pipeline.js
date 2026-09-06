@@ -228,10 +228,14 @@ export function createGenEngine(cfg){
       }, { once: true });
     }
 
+    // temperature ≤ 0 means greedy. Never hand 0 to the library: its
+    // TemperatureLogitsWarper divides logits by the value. (This vendored
+    // build never applies that warper — only the do_sample boolean changes
+    // decoding — but an upgrade that honours temperature would NaN out.)
     const generateOpts = {
       max_new_tokens: maxTokens,
       do_sample: temperature > 0,
-      temperature: temperature,
+      temperature: temperature > 0 ? temperature : 1,
       return_full_text: false,
       streamer,
     };
