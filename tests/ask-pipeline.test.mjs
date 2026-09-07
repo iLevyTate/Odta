@@ -742,8 +742,10 @@ test('askRun: help/question query recovers via prose pass when the first pass is
     genGenerate: async () => {
       calls += 1;
       // Ops-pipeline turns emit a bracket fragment that fails parseOpsJson and
-      // scrubs to empty in _extractProseAnswer; the final (prose) call answers.
-      return calls <= 4 ? '[,' : 'You should focus on the electric bill first.';
+      // scrubs to empty in _extractProseAnswer. The loop now gives the model
+      // exactly one corrective retry (2 ops calls total) before falling back
+      // to the prose pass, which answers.
+      return calls <= 2 ? '[,' : 'You should focus on the electric bill first.';
     },
   };
   new Function(...Object.keys(ctx), schemaSrc2)(...Object.values(ctx));

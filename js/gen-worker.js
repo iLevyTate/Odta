@@ -32,14 +32,16 @@ self.onmessage = async (e) => {
         onToken: (reqId, text) => post({ type: 'token', reqId, text }),
       });
       loadCtl = new AbortController();
+      const eng = engine; // 'dispose' may null the shared ref mid-load
       try{
-        const finalSlug = await engine.load({
+        const finalSlug = await eng.load({
           modelId: msg.modelId,
           dtype: msg.dtype,
           altSlug: msg.altSlug,
           signal: loadCtl.signal,
         });
-        post({ type: 'loaded', device: engine.getDevice(), modelId: msg.modelId, finalSlug });
+        if(engine !== eng){ post({ type: 'load-error', message: 'LOAD_ABORTED' }); break; }
+        post({ type: 'loaded', device: eng.getDevice(), modelId: msg.modelId, finalSlug });
       }catch(err){
         post({ type: 'load-error', message: (err && err.message) || String(err) });
       }finally{

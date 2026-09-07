@@ -123,8 +123,32 @@ function _askListsBlock(){
     .join('\n');
 }
 
+// Concrete calendar anchors for the prompt. Small models copy relative
+// phrasing verbatim ("dueDate":"<tomorrow>") rather than doing date
+// arithmetic, so every example and the user prompt spell the real ISO dates
+// out. (The validator additionally resolves the common relative words as a
+// backstop — see _naturalDateISO in tool-schema.js.)
+function _askDateRef(){
+  const todayIso = _askToday();
+  const base = new Date(todayIso + 'T00:00:00');
+  const ok = Number.isFinite(base.getTime());
+  const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const plus = (n) => { if(!ok) return todayIso; const d = new Date(base.getTime()); d.setDate(d.getDate() + n); return iso(d); };
+  const nextWeekday = (idx) => { if(!ok) return todayIso; let ahead = (idx - base.getDay() + 7) % 7; if(ahead === 0) ahead = 7; return plus(ahead); };
+  const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  return {
+    today: todayIso,
+    weekday: ok ? names[base.getDay()] : '',
+    tomorrow: plus(1),
+    plus7: plus(7),
+    monday: nextWeekday(1),
+    friday: nextWeekday(5),
+  };
+}
+
 function _askSystemPrompt(){
   const schema = (typeof toolSchemaPromptBlock === 'function') ? toolSchemaPromptBlock() : '';
+  const d = _askDateRef();
   return [
     'You convert a user request into a JSON array of task operations for a local task manager.',
     'Return ONLY a JSON array. No prose, no code fences, no explanation.',
@@ -144,17 +168,20 @@ function _askSystemPrompt(){
     '- Never output DELETE_TASK unless the user explicitly says "delete forever".',
     '- Keep the array short — only the ops that clearly satisfy the request.',
     '- Read-only ops (QUERY_TASKS, GET_TASK_DETAIL, GET_CALENDAR_EVENTS, LIST_CATEGORIES, LIST_LISTS) are for gathering facts; you will receive tool results and can then output write ops. Do not try to open UI modals.',
+    '- QUERY_TASKS filters: overdue:true (open tasks due before today), dueBefore/dueAfter (YYYY-MM-DD), status, priority, tag, listId, filter (text). A task is overdue when its due date is before Today.',
+    '- Always write real calendar dates (Today is ' + d.today + '; tomorrow is ' + d.tomorrow + '). Never write relative words or angle-bracket placeholders in date fields.',
     '',
-    'Examples:',
+    'Examples (Today = ' + d.today + '):',
     'User: make task 12 urgent\n→ [{"name":"UPDATE_TASK","args":{"id":12,"priority":"urgent"}}]',
-    'User: create a task "buy milk" due tomorrow tagged shopping\n→ [{"name":"CREATE_TASK","args":{"name":"buy milk","dueDate":"<tomorrow>","tags":["shopping"]}}]',
-    'User: remind me to call mom tomorrow at 9am\n→ [{"name":"CREATE_TASK","args":{"name":"Call mom","dueDate":"<tomorrow>","remindAt":"<tomorrow>T09:00"}}]',
-    'User: add "submit expenses" to my Work list, due friday, high priority\n→ [{"name":"CREATE_TASK","args":{"name":"Submit expenses","listId":<id of "Work" from Context>,"dueDate":"<friday>","priority":"high"}}]',
-    'User: schedule the dentist next monday\n→ [{"name":"CREATE_TASK","args":{"name":"Dentist","dueDate":"<next monday>"}}]',
+    'User: create a task "buy milk" due tomorrow tagged shopping\n→ [{"name":"CREATE_TASK","args":{"name":"buy milk","dueDate":"' + d.tomorrow + '","tags":["shopping"]}}]',
+    'User: remind me to call mom tomorrow at 9am\n→ [{"name":"CREATE_TASK","args":{"name":"Call mom","dueDate":"' + d.tomorrow + '","remindAt":"' + d.tomorrow + 'T09:00"}}]',
+    'User: add "submit expenses" to my Work list, due friday, high priority\n→ [{"name":"CREATE_TASK","args":{"name":"Submit expenses","listId":<id of "Work" from Context>,"dueDate":"' + d.friday + '","priority":"high"}}]',
+    'User: schedule the dentist next monday\n→ [{"name":"CREATE_TASK","args":{"name":"Dentist","dueDate":"' + d.monday + '"}}]',
     'User: move the rent task to Personal\n→ [{"name":"CHANGE_LIST","args":{"id":<id>,"listId":<id of "Personal" from Context>}}]',
-    'User: snooze task 7 for a week\n→ [{"name":"UPDATE_TASK","args":{"id":7,"hiddenUntil":"<+7d>"}}]',
+    'User: snooze task 7 for a week\n→ [{"name":"UPDATE_TASK","args":{"id":7,"hiddenUntil":"' + d.plus7 + '"}}]',
     'User: mark all my #errands as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
     'User: mark everything already completed last week as done\n→ [{"name":"MARK_DONE","args":{"id":<id>}}, ...]',
+    'User: clean up my overdue tasks\n→ first [{"name":"QUERY_TASKS","args":{"overdue":true}}], then after the tool result one op per returned id, e.g. [{"name":"RESCHEDULE","args":{"id":<id>,"dueDate":"' + d.today + '"}}, ...] (or MARK_DONE for ones the user says are finished)',
     'User: what should I do next?\n→ []',
     'User: nevermind\n→ []',
   ].join('\n');
@@ -167,11 +194,16 @@ function _askSystemPrompt(){
 // but we let question take precedence at the call site.
 function _askIsImperative(q){
   if(typeof q !== 'string') return false;
-  const s = q.trim();
+  let s = q.trim();
+  if(!s) return false;
+  // Politeness / framing prefixes carry no intent of their own: "please add
+  // X", "can you make X urgent", "I want you to reschedule X".
+  s = s.replace(/^(?:hey|hi|ok|okay|so|please|pls|plz|kindly|just|now|go ahead and|(?:can|could|would|will) you(?: please)?|i(?:'d| would) like you to|i (?:want|need) you to|i(?:'d| would) like to|i want to|i need to|let'?s|help me)\s+/i, '').trim();
+  s = s.replace(/^(?:please|pls)\s+/i, '');
   if(!s) return false;
   // Leading-verb match — covers the common phrasings without being too
   // greedy ("show me" stays a question, "find the X" stays a question).
-  return /^(remind|add|create|make|schedule|move|archive|delete|complete|finish|done|mark|set|tag|untag|star|unstar|rename|update|change|reschedule|snooze|unsnooze|prioriti[sz]e|deprioriti[sz]e|assign|note|note that|cancel|reopen|undo|note|book|plan|put|drop)\b/i.test(s);
+  return /^(remind|add|create|make|schedule|move|archive|unarchive|delete|remove|complete|finish|done|mark|set|tag|untag|star|unstar|rename|update|change|edit|fix|reschedule|snooze|unsnooze|postpone|defer|push|bump|prioriti[sz]e|deprioriti[sz]e|assign|note|cancel|reopen|close|undo|book|plan|put|drop|clean|clear|tidy|organi[sz]e|sort|group|categori[sz]e|classify|label|flag|unflag|pin|unpin|hide|unhide|split|break|breakdown|duplicate|copy|merge|dedupe|deduplicate|block|unblock|link|unlink|start|stop|log|record|track|file|save|turn|get rid)\b/i.test(s);
 }
 
 // Stronger second-pass prompt for imperatives the ops pipeline missed.
@@ -213,12 +245,21 @@ function _askCalendarBlock(){
   return ('Calendar (next 7 days):\n' + lines.join('\n')).slice(0, 600);
 }
 
-function _askUserPrompt(query, contextLines){
+// The calendar digest reads every subscribed feed; a malformed feed must
+// never turn into a raw JS error in the chat bubble.
+function _askSafeCalendarBlock(){
+  try{ return (typeof _askCalendarBlock === 'function') ? (_askCalendarBlock() || '') : ''; }catch(_){ return ''; }
+}
+
+function _askUserPrompt(query, contextLines, calendarBlock){
   const parts = [];
-  parts.push('Today: ' + _askToday());
+  const d = _askDateRef();
+  parts.push('Today: ' + d.today + (d.weekday ? ' (' + d.weekday + ')' : '')
+    + '. Date reference — tomorrow: ' + d.tomorrow + ', in 7 days: ' + d.plus7
+    + ', next Monday: ' + d.monday + ', next Friday: ' + d.friday + '. Tasks with due before ' + d.today + ' are overdue.');
   const listBlock = _askListsBlock();
   if(listBlock) parts.push('Lists:\n' + listBlock);
-  const calB = (typeof _askCalendarBlock === 'function') ? _askCalendarBlock() : '';
+  const calB = (typeof calendarBlock === 'string') ? calendarBlock : _askSafeCalendarBlock();
   if(calB) parts.push(calB);
   if(contextLines.length) parts.push('Context (relevant tasks):\n' + contextLines.join('\n'));
   parts.push('Request: ' + _askStripCtrl(query).slice(0, 600));
@@ -314,11 +355,30 @@ function runReadOp(op){
       // stays narrow so everyday ops don't accidentally hit done/archived ids.
       const wantDone     = a.includeDone     === true || a.includeDone     === 'true' || a.status === 'done';
       const wantArchived = a.includeArchived === true || a.includeArchived === 'true';
+      // Structured filters (all optional, AND-ed together). `overdue` is the
+      // one the model reaches for on "clean up / what's late" requests — a
+      // text filter can't express it because "overdue" appears in no task.
+      const today = _askToday();
+      const overdue = a.overdue === true || a.overdue === 'true' || a.overdue === 1;
+      const dueBefore = a.dueBefore != null ? _coerceReadKey('dueBefore', a.dueBefore) : null;
+      const dueAfter  = a.dueAfter  != null ? _coerceReadKey('dueAfter',  a.dueAfter)  : null;
+      const wantStatus = (typeof a.status === 'string' && a.status.trim()) ? a.status.trim().toLowerCase() : null;
+      const wantPriority = (typeof a.priority === 'string' && a.priority.trim()) ? a.priority.trim().toLowerCase() : null;
+      const wantTag = (typeof a.tag === 'string' && a.tag.trim()) ? a.tag.trim().replace(/^#/, '').toLowerCase() : null;
+      const wantListId = a.listId != null ? _coerceReadKey('id', a.listId) : null;
       const pool = (typeof tasks !== 'undefined' && Array.isArray(tasks))
         ? tasks.filter(t => {
             if(!t) return false;
             if(t.archived && !wantArchived) return false;
             if(t.status === 'done' && !wantDone) return false;
+            if(wantStatus && String(t.status || 'open') !== wantStatus) return false;
+            if(wantPriority && String(t.priority || 'none') !== wantPriority) return false;
+            if(wantTag && !(Array.isArray(t.tags) && t.tags.some(x => String(x).toLowerCase() === wantTag))) return false;
+            if(wantListId != null && Number.isFinite(wantListId) && (t.listId == null ? null : t.listId) !== wantListId) return false;
+            const due = (typeof t.dueDate === 'string' && t.dueDate) ? t.dueDate.slice(0, 10) : null;
+            if(overdue && !(due && due < today && t.status !== 'done')) return false;
+            if(dueBefore && !(due && due <= dueBefore)) return false;
+            if(dueAfter && !(due && due >= dueAfter)) return false;
             return true;
           }) : [];
       const picked = f
@@ -327,7 +387,11 @@ function runReadOp(op){
             return (String(t.name || '') + ' ' + desc).toLowerCase().includes(f);
           })
         : pool;
-      return { tasks: picked.slice(0, lim).map(t => ({ id: t.id, name: t.name, dueDate: t.dueDate, status: t.status, priority: t.priority, completedAt: t.completedAt || null, archived: !!t.archived })) };
+      return { tasks: picked.slice(0, lim).map(t => ({
+        id: t.id, name: t.name, dueDate: t.dueDate, status: t.status, priority: t.priority,
+        overdue: !!(t.dueDate && String(t.dueDate).slice(0, 10) < today && t.status !== 'done'),
+        completedAt: t.completedAt || null, archived: !!t.archived,
+      })) };
     }
     if(n === 'GET_TASK_DETAIL'){
       const id = _coerceReadKey('id', a.id);
@@ -349,7 +413,12 @@ function runReadOp(op){
       const windowDays = _calendarFetchWindowDays(fromD, toD);
       let evs = getUpcomingEvents(windowDays, 500, { strictFuture: false });
       evs = _filterCalEventsByDateRange(evs, fromD, toD);
-      return { events: evs.slice(0, lim).map(e => ({ title: e.title, dateISO: e.dateISO, time: e.time, location: (e.location || '').slice(0, 80), feed: e.feedLabel })) };
+      // feedId / eventUid / eventDate are exactly what CREATE_FROM_EVENT needs —
+      // without them the model could only hallucinate ids and the op always failed.
+      return { events: evs.slice(0, lim).map(e => ({
+        title: e.title, dateISO: e.dateISO, time: e.time, location: (e.location || '').slice(0, 80), feed: e.feedLabel,
+        feedId: e.feedId != null ? String(e.feedId) : undefined, eventUid: e.uid ? String(e.uid).slice(0, 200) : undefined, eventDate: e.dateISO,
+      })) };
     }
     if(n === 'LIST_CATEGORIES'){
       const rows = (typeof getActiveCategories === 'function') ? getActiveCategories() : [];
@@ -384,11 +453,18 @@ function _extractProseAnswer(raw){
   if(typeof raw !== 'string' || !raw) return '';
   let s = raw;
   s = s.replace(/```[\s\S]*?```/g, ' ');
-  s = s.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, ' ');
-  s = s.replace(/^\s*\[[\s\S]*?\]\s*$/m, ' ');
+  s = s.replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/gi, ' ');
+  s = s.replace(/^\s*\[[\s\S]*?\]\s*$/gm, ' ');
+  // Anything that still reads as JSON — a broken op fragment, a dangling
+  // {"name":…} object, a stray key/value line — must not be shown to the
+  // user as an "answer". Only natural-language lines survive.
+  const looksJson = (l) => /^[\[\]\{\}",]/.test(l)
+    || /"(?:name|args|arguments|op|id)"\s*:/.test(l)
+    || /^<\/?tool_call>?/i.test(l)
+    || /^[\w\s]*[\[\{]\s*$/.test(l);
   const lines = s.split('\n')
     .map(l => l.trim())
-    .filter(l => l && !/^[\[\]\{\},]+$/.test(l) && !/^"[^"]*"\s*:/.test(l));
+    .filter(l => l && !/^[\[\]\{\},]+$/.test(l) && !looksJson(l));
   const joined = lines.join('\n').trim();
   if(joined.length < 4) return '';
   return joined.length > 1200 ? joined.slice(0, 1200) + '…' : joined;
@@ -435,6 +511,41 @@ function _askProseSystemPrompt(){
 }
 
 /**
+ * Abort a generation when it stops making progress rather than at a fixed
+ * wall-clock limit. `timeoutSec` used to bound the whole multi-turn run, so a
+ * slow-but-healthy device — a ~1.5k-token prompt prefilling on WASM on a
+ * phone takes most of the 30 s mobile default by itself — was killed before
+ * its first token. Now: no token for `idleMs` (2× that while waiting for the
+ * first token of a turn, i.e. prefill) aborts, and a generous hard cap
+ * guards against a stream that trickles forever.
+ * @returns {{ touch:()=>void, restart:()=>void, clear:()=>void }}
+ */
+function _askIdleAbort(idleMs, ctl, capMsOverride){
+  const capMs = (typeof capMsOverride === 'number' && Number.isFinite(capMsOverride))
+    ? Math.max(1000, capMsOverride)
+    : Math.max(idleMs * 6, 120000);
+  let idleTimer = null;
+  const fire = () => { try{ ctl.abort(); }catch(_){} };
+  const cap = setTimeout(fire, capMs);
+  const arm = (ms) => { clearTimeout(idleTimer); idleTimer = setTimeout(fire, ms); };
+  arm(idleMs * 2);
+  return {
+    touch:   () => arm(idleMs),
+    restart: () => arm(idleMs * 2),
+    clear:   () => { clearTimeout(idleTimer); clearTimeout(cap); },
+  };
+}
+
+/** Milliseconds left in the submit's shared budget (see cognitaskRun); a
+ *  follow-up pass needs at least a few seconds to be worth starting. */
+function _askRemainingBudget(opts, defaultMs){
+  const dl = opts && typeof opts._deadline === 'number' ? opts._deadline : null;
+  if(dl == null) return defaultMs;
+  const left = dl - Date.now();
+  return left < 4000 ? 0 : Math.min(defaultMs * 6, left);
+}
+
+/**
  * Run a grounded, prose-only answer turn over the same task/list/calendar
  * context the ops pipeline used. Shared by both the "ops came back empty but
  * the user asked a question" path and the parse-failure fallback so a
@@ -451,8 +562,10 @@ async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
       { role: 'user',   content: _askUserPrompt(q, contextLines) },
     ];
     const proseTimeoutMs = Math.max(10000, ((cfg && cfg.timeoutSec) || 30) * 1000);
+    const budget = _askRemainingBudget(opts, proseTimeoutMs);
+    if(budget <= 0) return { chatAnswer: '', proseText: '' };
     const proseTimeoutCtl = new AbortController();
-    const proseTimer = setTimeout(() => proseTimeoutCtl.abort(), proseTimeoutMs);
+    const proseWatch = _askIdleAbort(proseTimeoutMs, proseTimeoutCtl, budget);
     const proseSignal = (() => {
       const ctl = new AbortController();
       const bail = () => ctl.abort();
@@ -471,13 +584,14 @@ async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
         temperature: 0.4,
         onToken: (t) => {
           proseText += t;
+          proseWatch.touch();
           if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
         },
         signal: proseSignal,
       });
       if(!proseText) proseText = full || '';
     }finally{
-      clearTimeout(proseTimer);
+      proseWatch.clear();
     }
     return { chatAnswer: _extractProseAnswer(proseText), proseText };
   }catch(e){
@@ -505,6 +619,7 @@ async function cognitaskRun(query, opts){
   }
 
   const contextLines = await _askBuildContext(q);
+  const calendarBlock = _askSafeCalendarBlock();
   const useNativeQwenTools = typeof isGenModelNativeQwen25Tools === 'function' && isGenModelNativeQwen25Tools()
     && typeof buildOpenAIToolsFromToolSchema === 'function';
   const cognitaskOpenAITools = useNativeQwenTools ? buildOpenAIToolsFromToolSchema() : null;
@@ -513,7 +628,7 @@ async function cognitaskRun(query, opts){
   const systemNativeQwen = 'You are a local task assistant. Use only the provided function tools. '
     + 'Call read tools first if you need tasks, calendar, lists, or categories. '
     + 'Use task ids that appear in the user context. Answer with tool call(s) in the required <tool_call> format; do not add other text.';
-  const user = _askUserPrompt(q, contextLines);
+  const user = _askUserPrompt(q, contextLines, calendarBlock);
   // Conversation context: prior user/assistant exchanges from the chat
   // sheet, sanitised + capped, so follow-up turns like "now archive those"
   // can resolve relative references against the previous answer. Each
@@ -537,7 +652,13 @@ async function cognitaskRun(query, opts){
   const cfg = (typeof getGenCfg === 'function') ? getGenCfg() : { timeoutSec: 30 };
   const timeoutMs = Math.max(5000, (cfg.timeoutSec || 30) * 1000);
   const timeoutCtl = new AbortController();
-  const timer = setTimeout(() => timeoutCtl.abort(), timeoutMs);
+  // One wall-clock budget for the WHOLE submit — ops turns, the write retry
+  // and the prose pass share it, so a single question can't run several
+  // multiples of the configured "Max generation time" back to back.
+  const totalCapMs = Math.max(timeoutMs * 6, 120000);
+  const deadline = Date.now() + totalCapMs;
+  opts = { ...opts, _deadline: deadline };
+  const watch = _askIdleAbort(timeoutMs, timeoutCtl, totalCapMs);
   const mergedSignal = (() => {
     const ctl = new AbortController();
     const bail = () => ctl.abort();
@@ -565,10 +686,11 @@ async function cognitaskRun(query, opts){
   // (_askCalendarBlock) on every turn, so externally-authored feed text can
   // influence write ops even when the model never calls GET_CALENDAR_EVENTS.
   // Taint from the start whenever that block is non-empty.
-  let externalReads = !!((typeof _askCalendarBlock === 'function') && _askCalendarBlock());
+  let externalReads = !!calendarBlock;
 
   const runOnce = async (temp) => {
     let rawText = '';
+    watch.restart(); // each turn prefills again before its first token
     const full = await genGenerate({
       messages,
       maxTokens: 512,
@@ -576,6 +698,7 @@ async function cognitaskRun(query, opts){
       tools: cognitaskOpenAITools || undefined,
       onToken: (t) => {
         rawText += t;
+        watch.touch();
         if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
       },
       signal: mergedSignal,
@@ -584,6 +707,31 @@ async function cognitaskRun(query, opts){
     return rawText;
   };
 
+  // Parse one model reply into an op array, or null. Tries the native
+  // <tool_call> path first for Qwen-style models, then the tolerant JSON
+  // parser (which itself handles fences, wrappers, truncation and
+  // <tool_call> blocks for every model). Ops are normalised to {name,args}.
+  const parseReply = (raw) => {
+    let parsed = null;
+    if(useNativeQwenTools && typeof parseQwen25ToolCallBlocks === 'function'){
+      const tco = parseQwen25ToolCallBlocks(raw);
+      if(tco != null) parsed = tco;
+    }
+    if(parsed == null){
+      try{ parsed = parseOpsJson(raw); }catch(e){ lastError = e; return null; }
+    }
+    if(!Array.isArray(parsed)) return null;
+    if(typeof normalizeProposedOps === 'function') parsed = normalizeProposedOps(parsed);
+    return parsed;
+  };
+
+  // How many times we let the model fix an unparseable reply before giving
+  // up. Re-sending the identical prompt (the old behaviour) just reproduced
+  // the same broken output four times and burned the mobile timeout; one
+  // corrective turn that quotes the failure is what small models respond to.
+  const COGNITASK_MAX_PARSE_RETRIES = 1;
+  let parseFailures = 0;
+
   try{
     for(let turn = 0; turn < COGNITASK_MAX_TURNS; turn++){
       if(mergedSignal && mergedSignal.aborted) break;
@@ -591,18 +739,22 @@ async function cognitaskRun(query, opts){
         messages.push({ role: 'user', content: 'This is your last turn — return only a JSON array of write operations or []. Do not call read-only tools.' });
         cognitaskTerminalInjected = true;
       }
-      const temp = turn === 0 ? 0.2 : 0.1;
+      // Greedy decoding for structured output: sampling (even at T=0.1–0.2)
+      // is where small models drift into half-JSON. The corrective retry
+      // gets a little temperature so it doesn't reproduce the same failure.
+      const temp = parseFailures > 0 ? 0.2 : 0;
       const raw = await runOnce(temp);
       allRaw += (allRaw ? '\n' : '') + raw;
-      let parsed = null;
-      if(useNativeQwenTools && typeof parseQwen25ToolCallBlocks === 'function'){
-        const tco = parseQwen25ToolCallBlocks(raw);
-        if(tco != null) parsed = tco;
+      const parsed = parseReply(raw);
+      if(!parsed){
+        parseFailures++;
+        if(parseFailures > COGNITASK_MAX_PARSE_RETRIES) break;
+        messages.push({ role: 'assistant', content: String(raw || '').slice(0, 1500) });
+        messages.push({ role: 'user', content: 'That reply was not a valid JSON array of operations'
+          + (lastError && lastError.message ? ' (' + String(lastError.message).slice(0, 80) + ')' : '')
+          + '. Reply again with ONLY a JSON array like [{"name":"OP_NAME","args":{...}}] or [] — no prose, no code fences, no comments.' });
+        continue;
       }
-      if(parsed == null){
-        try{ parsed = parseOpsJson(raw); }catch(e){ lastError = e; }
-      }
-      if(!parsed || !Array.isArray(parsed)) continue;
 
       const reads = [];
       const writes = [];
@@ -643,7 +795,7 @@ async function cognitaskRun(query, opts){
   }catch(e){
     lastError = e;
   }finally{
-    clearTimeout(timer);
+    watch.clear();
   }
 
   if(mergedSignal && mergedSignal.aborted){
@@ -657,6 +809,16 @@ async function cognitaskRun(query, opts){
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'ABORTED' };
   }
 
+  const questionLike = _askIsQuestionLike(q);
+  const imperative = _askIsImperative(q);
+  // A politely-framed command ("can you add X?") reads as a question to the
+  // leading-word heuristic but is a write request; only a real interrogative
+  // inside it ("can you tell me what's overdue?") keeps it on the prose path.
+  const politeImperative = imperative && questionLike
+    && /^\s*(?:can|could|would|will)\s+you\b/i.test(q)
+    && !/\b(what|which|when|where|why|how|who|whose)\b/i.test(q);
+  const wantsWrite = imperative && (!questionLike || politeImperative);
+
   if(!gotParse || lastFinal == null){
     // Free-form chat fallback: if the model produced prose instead of a
     // tool-call JSON array, treat the prose as the answer rather than a
@@ -669,17 +831,19 @@ async function cognitaskRun(query, opts){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
       return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer };
     }
-    // The first pass produced no parseable ops and no usable prose (e.g. the
-    // model emitted a malformed fragment that got scrubbed to nothing). For a
-    // question-shaped query — "help me figure out what to do", "what's next?" —
-    // run a dedicated grounded prose pass before surfacing PARSE_FAILED so the
-    // user gets a real answer instead of "Couldn't parse a valid plan."
-    if(_askIsQuestionLike(q)){
-      const { chatAnswer: proseAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
-      if(proseAnswer){
-        if(typeof pushAskHistory === 'function') pushAskHistory(q);
-        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer };
-      }
+    // The ops turns produced nothing usable. For a command, run the
+    // write-only retry (stronger prompt, NOOP escape hatch) so the user gets
+    // either their ops or a concrete "what's missing"; for a question, a
+    // grounded prose pass; otherwise still try prose — anything beats
+    // "Couldn't parse a valid plan."
+    if(wantsWrite){
+      const r = await _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, { allRaw, readRounds, externalReads });
+      if(r) return r;
+    }
+    const { chatAnswer: proseAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
+    if(proseAnswer){
+      if(typeof pushAskHistory === 'function') pushAskHistory(q);
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer };
     }
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'PARSE_FAILED:' + (lastError && lastError.message ? lastError.message : 'no_ops') };
   }
@@ -693,94 +857,9 @@ async function cognitaskRun(query, opts){
     // system prompt that REQUIRES either a write op or an explicit NOOP
     // explaining what's missing. Without this, imperatives silently
     // produce "no changes" and the user wonders if Ask is broken.
-    if(_askIsImperative(q) && !_askIsQuestionLike(q)){
-      try{
-        const retryMsgs = [
-          { role: 'system', content: _askWriteRetrySystemPrompt() },
-          ...priorMsgs,
-          { role: 'user',   content: _askUserPrompt(q, contextLines) },
-        ];
-        const retryTimeoutMs = Math.max(8000, (cfg.timeoutSec || 30) * 1000);
-        const retryTimeoutCtl = new AbortController();
-        const retryTimer = setTimeout(() => retryTimeoutCtl.abort(), retryTimeoutMs);
-        const retrySignal = (() => {
-          const ctl = new AbortController();
-          const bail = () => ctl.abort();
-          if(opts.signal){
-            if(opts.signal.aborted) bail();
-            else opts.signal.addEventListener('abort', bail, { once: true });
-          }
-          retryTimeoutCtl.signal.addEventListener('abort', bail, { once: true });
-          return ctl.signal;
-        })();
-        let retryRaw = '';
-        try{
-          const full = await genGenerate({
-            messages: retryMsgs,
-            maxTokens: 384,
-            temperature: 0.1,
-            onToken: (t) => {
-              retryRaw += t;
-              if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
-            },
-            signal: retrySignal,
-          });
-          if(!retryRaw) retryRaw = full || '';
-        }finally{ clearTimeout(retryTimer); }
-
-        let retryParsed = null;
-        try{ retryParsed = parseOpsJson(retryRaw); }catch(_){}
-        if(Array.isArray(retryParsed)){
-          // Filter out the synthetic NOOP placeholder we instructed the model
-          // to emit when it's stuck. If we get one, surface its reason as a
-          // chat-style explanation so the user knows what to add.
-          const noop = retryParsed.find(o => o && String(o.name).toUpperCase() === 'NOOP');
-          const real = retryParsed.filter(o => o && o.name && String(o.name).toUpperCase() !== 'NOOP' && !_schemaReadOnly(String(o.name).toUpperCase()));
-          if(real.length){
-            const ctx = (typeof _askCtx === 'function') ? _askCtx() : { tasksById: new Map(), listsById: new Map() };
-            const val = validateOps(real, ctx);
-            if(val.valid.length){
-              if(typeof pushAskHistory === 'function') pushAskHistory(q);
-              return {
-                ok: true,
-                ops: val.valid,
-                rejected: val.rejected,
-                destructiveLevel: val.destructiveLevel,
-                rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
-                truncated: !!val.truncated,
-                readRounds,
-                // Turn-scoped taint: the retry runs after external content
-                // already entered this turn's conversation state.
-                externalContent: externalReads,
-              };
-            }
-          }
-          if(noop){
-            // Reason is the canonical field but some models drop it. Fall
-            // back to a generic chat answer rather than letting the path
-            // return ops:[] with no answer, which the UI renders as a
-            // bare "No actionable changes" and confuses the user.
-            const reason = (noop.args && typeof noop.args.reason === 'string' && noop.args.reason.trim())
-              ? String(noop.args.reason).slice(0, 300)
-              : '';
-            const msg = reason
-              ? ('I couldn\'t create that yet — ' + reason + ' Try rephrasing with the missing detail.')
-              : 'I couldn\'t figure out enough detail to create that — try adding a name or due date (e.g. "remind me to call mom tomorrow at 9am").';
-            if(typeof pushAskHistory === 'function') pushAskHistory(q);
-            return {
-              ok: true, ops: [], rejected: [], destructiveLevel: 'none',
-              rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
-              truncated: false, readRounds, chatAnswer: msg,
-            };
-          }
-        }
-        // Last resort prose pass: just surface what the retry model said.
-        const retryProse = _extractProseAnswer(retryRaw);
-        if(retryProse){
-          if(typeof pushAskHistory === 'function') pushAskHistory(q);
-          return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + '\n' + retryRaw, truncated: false, readRounds, chatAnswer: retryProse };
-        }
-      }catch(e){ /* write-retry is best-effort */ }
+    if(wantsWrite){
+      const r = await _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, { allRaw, readRounds, externalReads });
+      if(r) return r;
     }
     // The ops pipeline correctly returned [] for a non-write query, but if
     // the user actually asked a question ("what's overdue?", "summarise my
@@ -788,7 +867,7 @@ async function cognitaskRun(query, opts){
     // Run a second, prose-only pass on the same context. Best-effort —
     // failures fall through to the original empty result. Independent
     // timeout so a slow prose turn can't trip the op-pipeline timeout.
-    if(_askIsQuestionLike(q)){
+    if(questionLike){
       const { chatAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
       if(chatAnswer){
         if(typeof pushAskHistory === 'function') pushAskHistory(q);
@@ -814,6 +893,121 @@ async function cognitaskRun(query, opts){
 }
 
 /**
+ * Write-only retry pass (see the call sites in cognitaskRun). Returns a
+ * finished askRun result when the retry produced something worth showing —
+ * validated ops, a NOOP explanation, or prose — and null when it didn't, so
+ * the caller can fall through to its next fallback. Never throws.
+ * @param {{ allRaw:string, readRounds:number, externalReads:boolean }} state
+ */
+async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
+  opts = opts || {};
+  const allRaw = (state && state.allRaw) || '';
+  const readRounds = (state && state.readRounds) || 0;
+  const externalReads = !!(state && state.externalReads);
+  try{
+    const retryMsgs = [
+      { role: 'system', content: _askWriteRetrySystemPrompt() },
+      ...priorMsgs,
+      { role: 'user',   content: _askUserPrompt(q, contextLines) },
+    ];
+    const retryTimeoutMs = Math.max(8000, ((cfg && cfg.timeoutSec) || 30) * 1000);
+    const budget = _askRemainingBudget(opts, retryTimeoutMs);
+    if(budget <= 0) return null;
+    const retryTimeoutCtl = new AbortController();
+    const retryWatch = _askIdleAbort(retryTimeoutMs, retryTimeoutCtl, budget);
+    const retrySignal = (() => {
+      const ctl = new AbortController();
+      const bail = () => ctl.abort();
+      if(opts.signal){
+        if(opts.signal.aborted) bail();
+        else opts.signal.addEventListener('abort', bail, { once: true });
+      }
+      retryTimeoutCtl.signal.addEventListener('abort', bail, { once: true });
+      return ctl.signal;
+    })();
+    let retryRaw = '';
+    try{
+      const full = await genGenerate({
+        messages: retryMsgs,
+        maxTokens: 384,
+        temperature: 0,
+        onToken: (t) => {
+          retryRaw += t;
+          retryWatch.touch();
+          if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
+        },
+        signal: retrySignal,
+      });
+      if(!retryRaw) retryRaw = full || '';
+    }finally{ retryWatch.clear(); }
+
+    let retryParsed = null;
+    try{ retryParsed = parseOpsJson(retryRaw); }catch(_){}
+    if(Array.isArray(retryParsed)){
+      if(typeof normalizeProposedOps === 'function') retryParsed = normalizeProposedOps(retryParsed);
+      // Filter out the synthetic NOOP placeholder we instructed the model
+      // to emit when it's stuck. If we get one, surface its reason as a
+      // chat-style explanation so the user knows what to add.
+      const noop = retryParsed.find(o => o && String(o.name).toUpperCase() === 'NOOP');
+      const real = retryParsed.filter(o => o && o.name && String(o.name).toUpperCase() !== 'NOOP' && !_schemaReadOnly(String(o.name).toUpperCase()));
+      if(real.length){
+        const ctx = (typeof _askCtx === 'function') ? _askCtx() : { tasksById: new Map(), listsById: new Map() };
+        const val = validateOps(real, ctx);
+        if(val.valid.length){
+          if(typeof pushAskHistory === 'function') pushAskHistory(q);
+          return {
+            ok: true,
+            ops: val.valid,
+            rejected: val.rejected,
+            destructiveLevel: val.destructiveLevel,
+            rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
+            truncated: !!val.truncated,
+            readRounds,
+            // Turn-scoped taint: the retry runs after external content
+            // already entered this turn's conversation state.
+            externalContent: externalReads,
+          };
+        }
+        // Everything the model proposed referenced ids / lists that don't
+        // exist. Say so rather than dropping to a generic failure.
+        if(val.rejected.length){
+          return {
+            ok: true, ops: [], rejected: val.rejected, destructiveLevel: 'none',
+            rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
+            truncated: false, readRounds,
+          };
+        }
+      }
+      if(noop){
+        // Reason is the canonical field but some models drop it. Fall
+        // back to a generic chat answer rather than letting the path
+        // return ops:[] with no answer, which the UI renders as a
+        // bare "No actionable changes" and confuses the user.
+        const reason = (noop.args && typeof noop.args.reason === 'string' && noop.args.reason.trim())
+          ? String(noop.args.reason).slice(0, 300)
+          : '';
+        const msg = reason
+          ? ('I couldn\'t create that yet — ' + reason + ' Try rephrasing with the missing detail.')
+          : 'I couldn\'t figure out enough detail to create that — try adding a name or due date (e.g. "remind me to call mom tomorrow at 9am").';
+        if(typeof pushAskHistory === 'function') pushAskHistory(q);
+        return {
+          ok: true, ops: [], rejected: [], destructiveLevel: 'none',
+          rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
+          truncated: false, readRounds, chatAnswer: msg,
+        };
+      }
+    }
+    // Last resort prose pass: just surface what the retry model said.
+    const retryProse = _extractProseAnswer(retryRaw);
+    if(retryProse){
+      if(typeof pushAskHistory === 'function') pushAskHistory(q);
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + '\n' + retryRaw, truncated: false, readRounds, chatAnswer: retryProse };
+    }
+  }catch(e){ /* write-retry is best-effort */ }
+  return null;
+}
+
+/**
  * @param {string} query
  * @param {{ onToken?:(t:string)=>void, onReadRound?:(o:object)=>void, signal?:AbortSignal }} [opts]
  */
@@ -835,4 +1029,7 @@ if(typeof window !== 'undefined'){
   window._askIsImperative = _askIsImperative;
   window._askCtx = _askCtx;
   window._askCalendarBlock = _askCalendarBlock;
+  window._askDateRef = _askDateRef;
+  window._askIdleAbort = _askIdleAbort;
+  window._askExtractProseAnswer = _extractProseAnswer;
 }

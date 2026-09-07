@@ -437,6 +437,19 @@ async function _genLoadInThread(modelId, dtype, onProgress){
 function genAbortLoad(){
   if(_genWorker){ try{ _genWorker.postMessage({ type: 'abort-load' }); }catch(_){} }
   if(_genLoadAbortCtl){ try{ _genLoadAbortCtl.abort(); }catch(_){} }
+  // The engine settles its promise on abort, but a worker wedged in native
+  // code never gets to. Settle locally after a grace period so the UI can
+  // always leave "Loading…"; a late 'loaded' for a discarded load is ignored
+  // because the resolvers are gone by then.
+  if(_genLoadResolvers){
+    setTimeout(() => {
+      if(!_genLoadResolvers) return;
+      const r = _genLoadResolvers; _genLoadResolvers = null;
+      try{ r.reject(new Error('LOAD_ABORTED')); }catch(_){}
+      _genTeardownWorker('LOAD_ABORTED');
+      _genLastError = 'Download cancelled.';
+    }, GEN_ABORT_WATCHDOG_MS);
+  }
 }
 
 function _friendlyGenError(msg, modelId){
@@ -548,15 +561,28 @@ async function _genGenerateInThread(payload){
     if(payload.signal.aborted) ctl.abort();
     else payload.signal.addEventListener('abort', () => ctl.abort(), { once: true });
   }
-  ctl.signal.addEventListener('abort', () => { if(_genEngine) _genEngine.abort(reqId); }, { once: true });
+  // Same watchdog as the worker path: the stopping criteria are only consulted
+  // between tokens, so a stall during prefill would otherwise never settle
+  // and leave the Ask sheet locked with Stop doing nothing.
+  let abortTimer = null;
+  const abortGuard = new Promise((_, reject) => {
+    ctl.signal.addEventListener('abort', () => {
+      if(_genEngine) _genEngine.abort(reqId);
+      abortTimer = setTimeout(() => reject(new Error('GEN_ABORTED')), GEN_ABORT_WATCHDOG_MS);
+    }, { once: true });
+  });
   try{
-    return await _genEngine.generate({
-      reqId,
-      messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
-      maxTokens: payload.maxTokens, temperature: payload.temperature,
-      signal: ctl.signal,
-    });
+    return await Promise.race([
+      _genEngine.generate({
+        reqId,
+        messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
+        maxTokens: payload.maxTokens, temperature: payload.temperature,
+        signal: ctl.signal,
+      }),
+      abortGuard,
+    ]);
   }finally{
+    clearTimeout(abortTimer);
     _settleGen(reqId);
   }
 }
@@ -966,8 +992,14 @@ async function genWeeklyReview(opts){
 // automatically on tab close but also exposed as `genDispose()` so callers can
 // proactively free memory after heavy generation runs on constrained devices.
 function genDispose(){
-  // Abort any in-flight generation first.
+  // Abort any in-flight generation (and load) first, and settle the load
+  // promise so isGenBusy() can't stay stuck after a mid-load dispose.
   genAbort();
+  if(_genLoadAbortCtl){ try{ _genLoadAbortCtl.abort(); }catch(_){} }
+  if(_genWorker){ try{ _genWorker.postMessage({ type: 'abort-load' }); }catch(_){} }
+  if(_genLoadResolvers){ const r = _genLoadResolvers; _genLoadResolvers = null; try{ r.reject(new Error('GEN_DISPOSED')); }catch(_){} }
+  _genLoading = false;
+  _genLoadPromise = null;
   if(_genWorker){ try{ _genWorker.postMessage({ type: 'dispose' }); }catch(_){} }
   if(_genEngine){ try{ _genEngine.dispose(); }catch(_){} _genEngine = null; }
   // Reject anything still awaiting so callers don't hang after disposal.

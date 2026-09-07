@@ -355,6 +355,59 @@ function persistAfterSyncMerge(remoteEpoch, remoteNonce){
   saveState('sync');
 }
 
+/**
+ * Repair a cfg object that arrived from storage, a backup import, or a sync
+ * peer. Every boolean the notification/timer paths branch on must be a real
+ * boolean: `cfg.notif === undefined` used to render the toggle ON, hide the
+ * permission diagnostic, and silently suppress every notification at once.
+ */
+function normalizeCfg(c){
+  if(!c || typeof c!=='object') return c;
+  if(!c.timerSub) c.timerSub='pomo';
+  if(!c.calMode) c.calMode='month';
+  if(!c.timerDock || typeof c.timerDock!=='object') c.timerDock={};
+  if(typeof c.hideHabitsInMainViews!=='boolean') c.hideHabitsInMainViews=true;
+  if(typeof c.notif!=='boolean') c.notif=true;
+  if(typeof c.dueNotify!=='boolean') c.dueNotify=true;
+  if(typeof c.sound!=='boolean') c.sound=true;
+  if(typeof ensureClassificationConfig === 'function') ensureClassificationConfig(c);
+  return c;
+}
+if(typeof window!=='undefined') window.normalizeCfg=normalizeCfg;
+
+/** Push the live `cfg` into every Settings control. Shared by load and sync. */
+function syncCfgToggles(){
+  if(typeof gid!=='function') return;
+  const hh=gid('hideHabitsInMain'); if(hh) hh.checked=!!cfg.hideHabitsInMainViews;
+  const cw=gid('cfgWork'); if(cw) cw.value = _int(cfg.work,25);
+  const cs=gid('cfgShort');if(cs) cs.value = _int(cfg.short,5);
+  const cl=gid('cfgLong'); if(cl) cl.value = _int(cfg.long,15);
+  const cc=gid('cfgCycle');if(cc) cc.value = _int(cfg.cycle,4);
+  setToggle('togBreak', _bool(cfg.autoBreak,true));
+  setToggle('togWork',  _bool(cfg.autoWork,false));
+  setToggle('togSound', _bool(cfg.sound,true));
+  setToggle('togLink',  _bool(cfg.linkTask,true));
+  setToggle('togNotif', cfg.notif!==false);
+  setToggle('togDueNotify', cfg.dueNotify!==false);
+  // Surface OS-level permission status next to the toggle so users can see
+  // when iOS/denied state is the actual blocker, not their toggle setting.
+  if(typeof renderNotifStatus === 'function') renderNotifStatus();
+  setToggle('togSnpNote', cfg.askSessionNote!==false);
+  // G-16: restore phase-preset dropdown selection
+  const cp=gid('cfgPreset'); if(cp && typeof cfg.phasePreset==='string') cp.value=cfg.phasePreset;
+}
+if(typeof window!=='undefined') window.syncCfgToggles=syncCfgToggles;
+
+/** Quick timers carry live AudioContext nodes and scheduling flags at runtime;
+ *  none of that survives a reload (OscillatorNodes serialise to `{}` and a
+ *  stale `_audioScheduled:true` would silence the restored timer's chime). */
+function _qtSerializable(qt){
+  if(!qt || typeof qt!=='object') return qt;
+  const { _nodes, _intervalNodes, _audioScheduled, _audioHorizonEl, _needsCompletion, ...rest } = qt;
+  return rest;
+}
+if(typeof window!=='undefined') window._qtSerializable=_qtSerializable;
+
 /** @param {'auto'|'unload'|'user'|'sync'} [reason] — only 'user' shows the save pill (throttled) */
 function saveState(reason){
   if(!reason) reason = 'auto';
@@ -430,7 +483,7 @@ function saveState(reason){
     pomosInCycle, phase,
     pomoLive: _pomoLive,
     intervals, intIdCtr,
-    quickTimers, qtIdCtr,
+    quickTimers: quickTimers.map(_qtSerializable), qtIdCtr,
     activeTab,
     lists, listIdCtr, activeListId, showAllLists,
     taskView, taskSortBy, smartView, smartViewsExpanded, taskGroupBy, theme, collapsedSections,
@@ -665,27 +718,8 @@ function _applyState(s){
     // Config — repair individual values defensively
     if(s.cfg && typeof s.cfg==='object'){
       cfg = s.cfg;
-      if(!cfg.timerSub) cfg.timerSub='pomo';
-      if(!cfg.calMode) cfg.calMode='month';
-      if(!cfg.timerDock || typeof cfg.timerDock!=='object') cfg.timerDock={};
-      if(typeof cfg.hideHabitsInMainViews!=='boolean') cfg.hideHabitsInMainViews=true;
-      if(typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
-      const hh=gid('hideHabitsInMain'); if(hh) hh.checked=!!cfg.hideHabitsInMainViews;
-      const cw=gid('cfgWork'); if(cw) cw.value = _int(cfg.work,25);
-      const cs=gid('cfgShort');if(cs) cs.value = _int(cfg.short,5);
-      const cl=gid('cfgLong'); if(cl) cl.value = _int(cfg.long,15);
-      const cc=gid('cfgCycle');if(cc) cc.value = _int(cfg.cycle,4);
-      setToggle('togBreak', _bool(cfg.autoBreak,true));
-      setToggle('togWork',  _bool(cfg.autoWork,false));
-      setToggle('togSound', _bool(cfg.sound,true));
-      setToggle('togLink',  _bool(cfg.linkTask,true));
-      setToggle('togNotif', cfg.notif!==false);
-      // Surface OS-level permission status next to the toggle so users can see
-      // when iOS/denied state is the actual blocker, not their toggle setting.
-      if(typeof renderNotifStatus === 'function') renderNotifStatus();
-      setToggle('togSnpNote', cfg.askSessionNote!==false);
-      // G-16: restore phase-preset dropdown selection
-      const cp=gid('cfgPreset'); if(cp && typeof cfg.phasePreset==='string') cp.value=cfg.phasePreset;
+      normalizeCfg(cfg);
+      syncCfgToggles();
       // G-7: restore focus-list-mode body class so the saved layout matches
       if(cfg.focusListMode){ try{ document.body.classList.add('app-focus-list'); }catch(_){}}
     } else if(typeof ensureClassificationConfig === 'function'){
@@ -832,10 +866,16 @@ function _applyState(s){
     if(Array.isArray(s.quickTimers)){
       quickTimers = s.quickTimers; qtIdCtr = _int(s.qtIdCtr,0);
       quickTimers.forEach(qt=>{
+        // Runtime-only audio bookkeeping never survives a reload.
+        qt._nodes=[]; qt._intervalNodes=[]; qt._audioScheduled=false; qt._audioHorizonEl=null;
         if(qt.running && qt.startedAt){
           const elapsed = Math.floor((Date.now()-qt.startedAt)/1000);
           const rem     = Math.max(0, _int(qt.pausedRem,0)-elapsed);
-          if(rem<=0){ qt.running=false; qt.finished=true; qt.remaining=0; qt.pausedRem=0; }
+          if(rem<=0){
+            // Ran out while the app was closed: the boot reconcile in app.js
+            // owes the user the completion flow (chime, notification, log).
+            qt.running=false; qt.finished=true; qt.remaining=0; qt.pausedRem=0; qt._needsCompletion=true;
+          }
           else qt.remaining = rem;
         } else if(qt.running && !qt.startedAt){
           qt.running = false;
@@ -1641,7 +1681,13 @@ function _csvRowToTask(obj, existingTask){
   if('priority' in obj)        T.priority = obj.priority || 'none';
   if('starred' in obj)         T.starred = bool(obj.starred);
   if('archived' in obj)        T.archived = bool(obj.archived);
-  if('dueDate' in obj)         T.dueDate = str(obj.dueDate);
+  if('dueDate' in obj){
+    const nd = str(obj.dueDate);
+    // A rescheduled import must re-arm the reminder unless the file states
+    // reminderFired itself; otherwise a previously-fired task stays muted.
+    if(nd !== T.dueDate && !('reminderFired' in obj)) T.reminderFired = false;
+    T.dueDate = nd;
+  }
   if('startDate' in obj)       T.startDate = str(obj.startDate);
   if('remindAt' in obj)        T.remindAt = str(obj.remindAt);
   if('completedAt' in obj)     T.completedAt = str(obj.completedAt);
@@ -1960,7 +2006,12 @@ if(typeof setManagedInterval === 'function'){
 } else {
   setInterval(() => queueAutoSave(), 10000);
 }
-document.addEventListener('visibilitychange', ()=>{ if(document.hidden) queueAutoSave(); });
+// Save synchronously the moment we go hidden — the 450 ms debounce is exactly
+// the window in which mobile browsers freeze a backgrounded page, and iOS
+// frequently never fires beforeunload for a swiped-away PWA. pagehide is the
+// last reliable hook on every platform.
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden){ clearTimeout(_autoSaveDebounce); _autoSaveDebounce=null; try{ saveState('auto'); }catch(_){} } });
+window.addEventListener('pagehide', () => { try{ saveState('unload'); }catch(_){} });
 if(typeof window !== 'undefined'){
   window.resetTaskSnapshotBaseline = resetTaskSnapshotBaseline;
   window.persistAfterSyncMerge = persistAfterSyncMerge;

@@ -84,7 +84,9 @@ Embedding-driven proposers (harmonize, auto-organize, dedupe, reclassify, due‑
 
 ```
 proposer (harmonize / auto-organize / dedupe / suggest-due-date / …)
-   │
+   │   (LLM replies first pass through parseOpsJson — tolerant of truncated
+   │    arrays, bare objects, <tool_call> blocks, Python literals — and
+   │    normalizeProposedOp, which folds name/args aliases into {name,args})
    ▼
 validateOps(ops, ctx) in js/tool-schema.js
    │  required fields, enum coercion, id existence checks

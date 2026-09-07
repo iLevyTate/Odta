@@ -6,6 +6,42 @@
 
 ---
 
+## v76 wave (2026-09-06)
+
+Targeted root-cause pass on two user reports: generative Ask failing with "Couldn't parse a valid plan" (screenshot: `Clean up overdue tasks` → parse error with the model reported ready), and timer chimes / notifications going silent once the app is backgrounded. Baseline 652/652 green; 684/684 after.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| Z-1 | `parseOpsJson` threw on every non-canonical reply shape small models emit — truncated arrays (max_new_tokens), bare op objects, wrappers, Python literals, trailing commas, `<tool_call>` blocks, `arguments`/flattened args (`js/tool-schema.js`) | High | ✅ Fixed — structural salvage + `normalizeProposedOp`; `tests/tool-schema-tolerant-parse.test.mjs` |
+| Z-2 | On parse failure `cognitaskRun` re-sent the identical message list up to 4× (`continue` with no feedback), then reported PARSE_FAILED; non-question commands never reached the write retry (`js/ask.js`) | High | ✅ Fixed — one corrective turn quoting the failure, then write-retry / prose fallbacks; `tests/ask-parse-recovery.test.mjs` |
+| Z-3 | Prompt examples used `<tomorrow>` style placeholders that small models copy literally; validator dropped the field silently (`js/ask.js`, `js/tool-schema.js`) | Medium | ✅ Fixed — concrete ISO dates in examples + user prompt; `_naturalDateISO` backstop in the coercer |
+| Z-4 | `QUERY_TASKS` had only a name-substring `filter`, so "overdue" queries had no tool path (`js/tool-schema.js`, `js/ask.js` `runReadOp`) | Medium | ✅ Fixed — `overdue`/`dueBefore`/`dueAfter`/`status`/`priority`/`tag`/`listId`/`includeDone`/`includeArchived` |
+| Z-5 | Ops turns sampled at T=0.1–0.2; `timeoutSec` was a wall clock over the entire multi-turn run (30 s mobile default ≈ one WASM prefill of the ~1.5k-token prompt) (`js/ask.js`) | Medium | ✅ Fixed — greedy decode for structured turns; idle watchdog (`_askIdleAbort`) with prefill allowance and hard cap |
+| Z-6 | `_extractProseAnswer` surfaced broken JSON fragments as a chat "answer" (`js/ask.js`) | Low | ✅ Fixed — JSON-looking lines filtered before the prose fallback |
+| Z-7 | Keepalive oscillator gain 0.0001 (≈ −80 dBFS) was below Chrome's −72.25 dBFS audibility threshold (`kSilenceThresholdDBFS`, amplitude 1/4096) — the tab was classified silent, so the media session, background-throttling exemption and screen-lock audio survival the design relied on never engaged (`js/audio.js`) | High | ✅ Fixed — `KEEPALIVE_GAIN = 0.004` (≈ −51 dBFS) at 20 Hz; `tests/audio-background-wake.test.mjs` pins the threshold |
+| Z-8 | `onPhaseComplete` / quick-timer / stopwatch chime paths short-circuited on `audioScheduled` even when the AudioContext clock had stalled while hidden; `_reconcileTimerAfterWake` only ticked the Pomodoro (quick timers + stopwatch not reconciled) and never discarded/rescheduled stale nodes (`js/timer.js`, `js/audio.js`) | High | ✅ Fixed — wall-vs-audio clock snapshot on hide, measured before `resume()` on show; reconcile cancels stale nodes → catch-up ticks (chime + notification now) → reschedule; guards consult `_audioLost()` |
+
+### v76 second pass (same branch)
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| Z-9 | Reminder notifications carried no `url`, so a tap with the app closed opened `./` and dropped the task id; no boot handler for a task param (`sw.js`, `js/tasks.js`, `js/app.js`) | High | ✅ Fixed — `data.url` + `applyTaskFromUrl` |
+| Z-10 | `reminderFired` set regardless of delivery; with notifications toggled off but permission granted nothing was shown and the reminder was consumed; no staleness cutoff → "Missed:" storm on first load / restore / sync (`js/tasks.js`) | High | ✅ Fixed — chime fallback, 24 h stale cutoff for implicit reminders, burst summary |
+| Z-11 | Quick-add bare clock in the past fired "Missed:" ~30 s after creation (`js/tasks.js` `_applyQuickAddTime`) | High | ✅ Fixed — rolls to tomorrow when the target day is today and the time has passed |
+| Z-12 | `cfg.dueNotify` opt-out had no UI; `cfg.notif === undefined` read as ON by the toggle and OFF by `notify()`; synced cfg never updated toggles; `renderNotifStatus` never ran on a fresh install (`index.html`, `js/storage.js`, `js/sync.js`, `js/audio.js`, `js/app.js`) | Medium | ✅ Fixed — `togDueNotify`, `normalizeCfg`, `syncCfgToggles`, boot + settings-open render |
+| Z-13 | Restored running quick timer: no keepalive, no scheduled audio, stale `_audioScheduled:true` persisted → silent completion; expired-while-closed quick timers fired nothing (`js/app.js`, `js/storage.js`) | High | ✅ Fixed — boot reconcile, `_needsCompletion`, `_qtSerializable` |
+| Z-14 | Stopwatch / quick-timer interval chimes silent after the scheduling horizon (played nodes suppressed the fallback) (`js/audio.js`, `js/timer.js`) | High | ✅ Fixed — scheduler returns the covered horizon; ticks re-arm past it |
+| Z-15 | Keepalive (tone, wake lock, worker) never released on natural completion / skip / reset; wake-lock request vs stop race; single-shot audio primer; media-session `play` started a Pomodoro (`js/timer.js`, `js/audio.js`) | Medium | ✅ Fixed |
+| Z-16 | Reload mid-focus lost the linked task's session credit; hide-save debounced past the freeze window, no `pagehide` save (`js/app.js`, `js/storage.js`) | Medium | ✅ Fixed |
+| Z-17 | WASM model load uncancellable and untimed → Settings stuck on "Loading…"; cancel reported as `LOAD_ABORTED` crash; progress bar jump/freeze; `_resetModule` re-import was a no-op (`js/gen-pipeline.js`, `js/gen.js`, `js/ai.js`) | High | ✅ Fixed — `_watchLoad` (abort + idle watchdog), local abort settle, friendly cancel, byte-monotonic aggregator, cache-busted re-import + env re-apply |
+| Z-18 | `openCmdK` → global `genAbort()` killed unrelated in-flight LLM work; `SET_RECUR` with an unrecognised value wiped the recurrence; `RESCHEDULE` re-fired delivered reminders; destructive confirm lost its chrome; rejected rows `[object Object]`; unbounded total time across passes; no in-thread abort watchdog; unguarded calendar block; `CREATE_FROM_EVENT` unsatisfiable; per-token full re-render (`js/ui.js`, `js/ai.js`, `js/ask.js`, `js/gen.js`) | Medium | ✅ Fixed |
+
+**Not fixed (deliberate)**: stopwatch state is not persisted across reloads (feature-sized change, not a regression); a second tab adopting a running Pomodoro via cross-tab sync renders a frozen countdown until it is touched (only when that tab is pristine).
+
+**Not fixable client-side (documented residual)**: a browser tab that the OS fully freezes or kills (iOS Safari after a few minutes in the background without playing media, aggressive Android battery savers) cannot run JavaScript, so a chime can only be *caught up* on the next wake; only an installed PWA with the keepalive engaged, or a server-driven push, can beat that.
+
+---
+
 ## v75 follow-up wave (2026-07-20)
 
 A third review pass (three parallel deep-reads: data layer, UI/PWA layer, AI/intel layer) targeting what the v74 wave missed. Baseline at review time: 597/597 tests green, all CI checks green. Every confirmed finding below was fixed in the same branch; 644/644 tests green after, browser smoke green (exit 0, zero actionable console errors — it crashed or failed on the pre-fix baseline).

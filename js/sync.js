@@ -393,7 +393,12 @@ function _mergeState(remote, opts){
       // Same normalization the backup-import path applies: a peer's cfg is
       // semi-trusted input, so classification category ids/labels must pass
       // the allow-list rather than land verbatim (AUDIT H-1 defense in depth).
-      if (typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
+      if (typeof normalizeCfg === 'function') normalizeCfg(cfg);
+      else if (typeof ensureClassificationConfig === 'function') ensureClassificationConfig(cfg);
+      // Keep the Settings switches (and the notification diagnostic) in step
+      // with the cfg that just arrived — otherwise a peer that turned
+      // notifications off silently mutes this device behind a green toggle.
+      if (typeof syncCfgToggles === 'function') { try { syncCfgToggles(); } catch (_) {} }
     }
     if (remote.theme && ['dark', 'light'].includes(remote.theme)) theme = remote.theme;
   } else if (re === le && re > 0 && rn === ln) {
