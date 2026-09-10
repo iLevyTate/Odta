@@ -95,6 +95,12 @@ function _syncGenDownloadProgress(v, ev){
   _genChipMsg = pct >= 100 ? initLabel : pct + '% · ' + chipLine;
   const c = _composeChipState();
   _renderHeaderAIChip(c.state, c.msg);
+  // The Ask sheet mirrors the same progress inside the chat bubble that
+  // started the download (the ribbon and chip sit behind the overlay on
+  // phones, so without this the chat looks frozen for the whole fetch).
+  if(typeof cmdkAskOnGenProgress === 'function'){
+    try{ cmdkAskOnGenProgress(pct, pct >= 100 ? initLabel : line); }catch(_){}
+  }
   const ribbon = document.getElementById('genLoadRibbon');
   const ribbonBar = document.getElementById('genLoadRibbonBar');
   const ribbonTrack = document.getElementById('genLoadRibbonTrack');
@@ -138,19 +144,14 @@ function syncGenChip(state, msg){
   }
   const c = _composeChipState();
   _renderHeaderAIChip(c.state, c.msg);
-  // If the LLM just transitioned to ready and the Ask sheet is sitting in the
-  // "need-model" empty state, refresh it so the inline Download button is
-  // replaced with a normal idle prompt the user can submit immediately.
-  // Avoids the "I downloaded the model… now what?" dead end.
-  if(_genChipState === 'ready' && !wasReady && typeof document !== 'undefined'){
-    const reply = document.getElementById('cmdkAskReply');
-    if(reply && reply.querySelector('.cmdk-ask-enable')){
-      reply.textContent = '';
-      const ok = document.createElement('div');
-      ok.className = 'cmdk-ask-done';
-      ok.textContent = 'Local AI is ready — type your request and press Enter.';
-      reply.appendChild(ok);
-    }
+  // If the LLM just transitioned to ready, let the Ask sheet re-render from
+  // its own turn state (footer "Model ready", need-model bubbles refreshed).
+  // This used to overwrite the whole conversation DOM with a static "Local
+  // AI is ready" line, which threw away the question the user had just typed
+  // — the chat now re-runs that question itself (see _cmdkAskAutoLoadThenRun
+  // in js/ui.js), so all that's needed here is a repaint.
+  if(_genChipState === 'ready' && !wasReady && typeof cmdkAskOnGenReady === 'function'){
+    try{ cmdkAskOnGenReady(); }catch(_){}
   }
 }
 
@@ -2740,7 +2741,7 @@ function renderGenSettings(){
   const webgpuApi = typeof navigator !== 'undefined' && navigator.gpu && typeof navigator.gpu.requestAdapter === 'function';
 
   const preset = presets.find(p => p.id === cfg.modelId) || presets[0];
-  const sizeMb = preset ? preset.sizeMb : 230;
+  const sizeLbl = (typeof genPresetSizeLabel === 'function' && preset) ? genPresetSizeLabel(preset) : `~${preset ? preset.sizeMb : 180} MB`;
   const lastErr = typeof getGenLastError === 'function' ? getGenLastError() : null;
 
   let statusText;
@@ -2749,14 +2750,14 @@ function renderGenSettings(){
   else if(loading) statusText = 'Fetching weights, then binding WebGPU or WASM…';
   else if(lastErr) statusText = 'Load failed — see details below.';
   else if(cached) statusText = 'Weights cached — click Load (or wait for auto-restore).';
-  else statusText = `Not downloaded (~${sizeMb} MB one-time fetch).`;
+  else statusText = `Not downloaded (${sizeLbl} one-time fetch; the chat downloads it on first use).`;
 
   let actionLabel;
   if(!cfg.enabled) actionLabel = 'Enable above first';
   else if(loading) actionLabel = 'Loading…';
   else if(readyThisModel) actionLabel = 'Reload model';
   else if(cached) actionLabel = 'Pre-load model';
-  else actionLabel = `Download model (~${sizeMb} MB)`;
+  else actionLabel = `Download model (${sizeLbl})`;
   const actionDisabled = !cfg.enabled || loading;
 
   // Prefer the per-model cached error (hides stale errors after switching presets);
@@ -2777,7 +2778,7 @@ function renderGenSettings(){
         <div class="toggle ${cfg.enabled ? 'on' : ''}" id="genEnableToggle" data-action="toggleGenEnabled" role="switch" aria-checked="${cfg.enabled}"><div class="tknob"></div></div>
       </div>
       <p class="gen-settings-lead">
-        Adds an <strong>Edit</strong> mode to the command palette (<kbd>Ctrl/⌘ + K</kbd>, then prefix <code>?</code>). A tiny instruct-tuned model runs <em>on this device</em>; nothing you type leaves the browser. Choose review-first or auto-apply below; destructive batches always confirm once.
+        Adds an <strong>Edit</strong> mode to the command palette (<kbd>Ctrl/⌘ + K</kbd>, then prefix <code>?</code>). A tiny instruct-tuned model runs <em>on this device</em>; nothing you type leaves the browser. The basic model downloads the first time you ask something the app can't answer on its own ("add a task…" and "what's overdue?" are answered instantly, no model needed). Choose review-first or auto-apply below; destructive batches always confirm once.
       </p>
       ${cfg.enabled ? `
       <div class="gen-settings-row gen-settings-row--apply-mode">
@@ -2794,14 +2795,15 @@ function renderGenSettings(){
           ${presets.map(p => {
             const pCached = typeof isGenDownloaded === 'function' && isGenDownloaded(p.id);
             const tag = pCached ? ' ✓ cached' : '';
-            return `<option value="${esc(p.id)}" ${p.id === cfg.modelId ? 'selected' : ''}>${esc(p.label)} · ${p.sizeMb} MB${esc(tag)}</option>`;
+            const sz = typeof genPresetSizeLabel === 'function' ? genPresetSizeLabel(p) : `${p.sizeMb} MB`;
+            return `<option value="${esc(p.id)}" ${p.id === cfg.modelId ? 'selected' : ''}>${esc(p.label)} · ${esc(sz)}${esc(tag)}</option>`;
           }).join('')}
         </select>
       </div>
       ${preset ? `<div class="gen-settings-note">${esc(preset.note)}</div>` : ''}
       ${cfg.enabled && !loading ? `<div class="gen-settings-note">${webgpuApi ? 'This browser exposes <strong>WebGPU</strong> — the LLM tries it first, then falls back to <strong>WASM</strong> if binding fails.' : 'No <code>navigator.gpu</code> — the LLM will run on <strong>WASM (CPU)</strong> only.'}</div>` : ''}
       ${ramHint === 'low' ? `<div class="gen-settings-warn">Your device reports low RAM. The 135M preset is recommended.</div>` : ''}
-      ${ramHint === 'ios-unknown' && (preset && preset.sizeMb > 150) ? `<div class="gen-settings-warn">On iOS the WASM fallback uses extra RAM. If the tab reloads during generation, switch to the 135M preset.</div>` : ''}
+      ${ramHint === 'ios-unknown' && (preset && preset.sizeMb > 200) ? `<div class="gen-settings-warn">On iOS the WASM fallback uses extra RAM. If the tab reloads during generation, switch to the basic 135M preset.</div>` : ''}
       <div class="gen-settings-row">
         <label for="genTimeout" class="gen-settings-lbl" title="Max time allowed for generating a response">Max generation time (sec)</label>
         <input type="number" id="genTimeout" class="sinput" min="5" max="120" value="${cfg.timeoutSec}" data-onchange="setGenTimeoutFromInput" ${cfg.enabled ? '' : 'disabled'}>
@@ -2893,14 +2895,23 @@ function setGenAskApplyMode(mode){
   renderGenSettings();
 }
 
+/**
+ * Download (or re-load from cache) the selected model, driving the Settings
+ * progress row, the header chip and the footer ribbon. Resolves `true` once
+ * the pipeline is ready, `false` on cancel/error (the error is already shown
+ * in Settings and as a toast) — the Ask sheet uses the return value to run
+ * the question that triggered the download.
+ * @returns {Promise<boolean>}
+ */
 async function genDownloadClick(){
-  if(typeof genLoad !== 'function') return;
+  if(typeof genLoad !== 'function') return false;
   const cfg = getGenCfg();
   if(!cfg.enabled){ cfg.enabled = true; saveGenCfg(cfg); }
   _askLoadError = null;
   if(typeof clearGenLastError === 'function') clearGenLastError();
 
   const targetModelId = cfg.modelId;
+  let loadedOk = false;
 
   // Render once up-front so the Cancel button replaces the Download button
   // and the progress track appears immediately (not after the first chunk).
@@ -2928,6 +2939,7 @@ async function genDownloadClick(){
 
   try{
     await genLoad(targetModelId, cfg.dtype, onProgress);
+    loadedOk = true;
     // gen.js.markGenDownloaded() was already called by genLoad for whichever
     // slug actually resolved (primary or alt), so we just mirror the legacy
     // boolean for any external readers still consulting it.
@@ -2963,6 +2975,7 @@ async function genDownloadClick(){
     _hideGenLoadRibbon();
     renderGenSettings();
   }
+  return loadedOk && typeof isGenReady === 'function' && isGenReady();
 }
 
 /** Called from the Ask palette "Open Settings" fallback so the user lands

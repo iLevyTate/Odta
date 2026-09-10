@@ -483,7 +483,8 @@ function _cmdkAskDockToastLabel(turn){
   if(s==='ops')     return 'Ask proposed changes — tap to review';
   if(s==='answer')  return 'Ask answered your question';
   if(s==='error')   return 'Ask couldn’t finish — tap to view';
-  if(s==='need-model') return 'Ask needs the model loaded';
+  if(s==='need-model') return 'Ask needs the model loaded — tap to retry';
+  if(s==='loading-model') return 'Ask is loading the local AI…';
   return 'Ask finished — tap to view';
 }
 function _cmdkAbortAsk(){
@@ -529,9 +530,12 @@ function _applyCmdkMode(){
   const results=gid('cmdkResults');
   if(panel)panel.classList.toggle('cmdk-panel--ask',cmdkMode==='ask');
   if(input){
+    // Phones get a short placeholder: the row also carries the apply-mode
+    // toggle and the Edit switch, so the long one was clipped mid-word.
+    const narrow=_cmdkTouchOrNarrowUI();
     input.placeholder=cmdkMode==='ask'
-      ?'Describe edits or ask about your tasks — follow-ups stay in context…'
-      :'Search tasks, actions, views… (? for Edit)';
+      ?(narrow?'Ask or describe an edit…':'Describe edits or ask about your tasks — follow-ups stay in context…')
+      :(narrow?'Search tasks & actions…':'Search tasks, actions, views… (? for Edit)');
   }
   if(tog){
     // Hide the Edit toggle entirely when generative Ask is disabled.
@@ -576,10 +580,12 @@ function _cmdkFootAskText(){
   const foot=gid('cmdkFoot');if(!foot)return;
   const mod=/(Mac|iPhone|iPod|iPad)/i.test(navigator.platform||'')?'⌘':'Ctrl';
   const genReady=typeof isGenReady==='function'&&isGenReady();
+  const genLoading=typeof isGenLoading==='function'&&isGenLoading();
+  const state=genReady?'Model ready':(genLoading?'Model loading…':'Model loads on first question');
   if(_cmdkTouchOrNarrowUI()){
-    foot.textContent='Enter = run on-device · toggle Ask to browse actions · '+(genReady?'Model ready':'Model not loaded');
+    foot.textContent='Runs on this device · '+state;
   }else{
-    foot.textContent=mod+'/Ctrl+K · Enter = ask · Esc · '+(genReady?'Model ready':'Model not loaded');
+    foot.textContent=mod+'/Ctrl+K · Enter = ask · Esc · '+state;
   }
 }
 // ---- Multi-turn Ask conversation rendering ----------------------------------
@@ -604,6 +610,9 @@ function _cmdkAskNewTurn(q){
     // need-model carries structured info instead of HTML so the bubble can
     // build the action button safely.
     needModel: null,
+    // loading-model: { pct, line, cached } while the chat downloads / loads
+    // the model on the user's behalf before running this turn's question.
+    progress: null,
   };
   _cmdkAskTurns.push(turn);
   return turn;
@@ -746,15 +755,21 @@ function _cmdkAskNeedModelInfo(){
   const cfg = typeof getGenCfg === 'function' ? getGenCfg() : null;
   const cached = !!(cfg && typeof isGenDownloaded === 'function' && isGenDownloaded(cfg.modelId));
   const loading = typeof isGenLoading === 'function' && isGenLoading();
-  let sizeMb = 230;
+  const ready = typeof isGenReady === 'function' && isGenReady();
+  let sizeMb = 180;
+  let sizeLabel = '';
+  let modelLabel = '';
   try{
     if(cfg && typeof getGenPresets === 'function'){
       const presets = getGenPresets() || [];
       const p = presets.find(x => x && x.id === cfg.modelId);
       if(p && typeof p.sizeMb === 'number') sizeMb = p.sizeMb;
+      if(p && typeof genPresetSizeLabel === 'function') sizeLabel = genPresetSizeLabel(p);
+      if(p && p.label) modelLabel = String(p.label);
     }
   }catch(_){}
-  return { cached, loading, sizeMb };
+  if(!sizeLabel) sizeLabel = '~' + sizeMb + ' MB';
+  return { cached, loading, ready, sizeMb, sizeLabel, modelLabel };
 }
 
 function _renderAskConversation(){
@@ -845,7 +860,9 @@ function _renderAskConversation(){
       aBubble.appendChild(body);
       const foot = document.createElement('div');
       foot.className = 'cmdk-ask-answer-foot';
-      foot.textContent = 'Answered on-device. No changes were applied.';
+      foot.textContent = t.quick
+        ? 'Answered from your task list — no model needed. No changes were applied.'
+        : 'Answered on-device. No changes were applied.';
       aBubble.appendChild(foot);
     } else if(t.status === 'ops'){
       const dn = document.createElement('div');
@@ -899,25 +916,80 @@ function _renderAskConversation(){
       ed.className = 'cmdk-ask-error';
       ed.textContent = t.text || 'Error';
       aBubble.appendChild(ed);
+    } else if(t.status === 'loading-model'){
+      // The chat is fetching / initialising the model for this question.
+      // Same spinner row as a streaming turn, plus a real progress track so
+      // a 180 MB download on a phone doesn't look frozen.
+      const p = t.progress || {};
+      const pct = Math.max(0, Math.min(100, Math.round(Number(p.pct) || 0)));
+      const wrap = document.createElement('div');
+      wrap.className = 'cmdk-ask-loading';
+      const row = document.createElement('div');
+      row.className = 'cmdk-ask-row';
+      const sp = document.createElement('span');
+      sp.className = 'cmdk-ask-spinner';
+      sp.setAttribute('aria-hidden', 'true');
+      const lbl = document.createElement('span');
+      lbl.className = 'cmdk-ask-label';
+      lbl.textContent = p.line || (p.cached ? 'Loading local AI…' : 'Downloading local AI…');
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'cmdk-ask-stop';
+      cancel.textContent = 'Cancel';
+      cancel.dataset.action = 'cmdkAskCancelLoad';
+      cancel.dataset.arg = String(t.id);
+      row.appendChild(sp); row.appendChild(lbl); row.appendChild(cancel);
+      wrap.appendChild(row);
+      const track = document.createElement('div');
+      track.className = 'cmdk-ask-progress' + (pct >= 100 ? ' cmdk-ask-progress--indeterminate' : '');
+      track.setAttribute('role', 'progressbar');
+      track.setAttribute('aria-valuemin', '0');
+      track.setAttribute('aria-valuemax', '100');
+      track.setAttribute('aria-valuenow', String(pct));
+      const bar = document.createElement('div');
+      bar.className = 'cmdk-ask-progress-bar';
+      bar.style.width = (pct >= 100 ? 40 : pct) + '%';
+      track.appendChild(bar);
+      wrap.appendChild(track);
+      const foot = document.createElement('div');
+      foot.className = 'cmdk-ask-answer-foot';
+      foot.textContent = pct >= 100
+        ? 'Almost there — your question runs as soon as the model is ready.'
+        : (pct + '% · one-time download, then it stays on this device. Your question runs automatically when it finishes.');
+      wrap.appendChild(foot);
+      aBubble.appendChild(wrap);
     } else if(t.status === 'need-model'){
       const info = t.needModel || _cmdkAskNeedModelInfo();
       const ed = document.createElement('div');
       ed.className = 'cmdk-ask-error';
+      const lead = document.createElement('span');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-ghost btn-sm cmdk-ask-enable';
+      btn.dataset.arg = String(t.id);
       if(info.loading){
-        ed.textContent = 'Local AI is still loading — give it a moment and try again.';
+        lead.textContent = 'Local AI is still loading — this runs as soon as it is ready. ';
+        btn.textContent = 'Run when ready';
+        btn.dataset.action = 'cmdkAskRetryLoad';
+      } else if(info.ready){
+        // Loaded elsewhere (Settings, auto-restore) after this turn was
+        // parked: the question is one tap from running.
+        lead.textContent = 'Local AI is ready. ';
+        btn.textContent = 'Run this question';
+        btn.dataset.action = 'cmdkAskRerunTurn';
+      } else if(info.error){
+        lead.textContent = 'Local AI could not load: ' + String(info.error) + ' ';
+        btn.textContent = 'Try again';
+        btn.dataset.action = 'cmdkAskRetryLoad';
       } else {
-        const lead = document.createElement('span');
         lead.textContent = info.cached
-          ? 'Local AI is ready but not loaded into memory yet. '
-          : 'This app runs the chat model fully on-device. Nothing leaves your browser. First time needs a one-off ~' + info.sizeMb + ' MB download. ';
-        ed.appendChild(lead);
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn-ghost btn-sm cmdk-ask-enable';
-        btn.dataset.action = 'genDownloadClick';
-        btn.textContent = info.cached ? 'Load now' : 'Download local AI (~' + info.sizeMb + ' MB)';
-        ed.appendChild(btn);
+          ? 'Local AI is downloaded but not loaded into memory yet. '
+          : 'This app runs the chat model fully on-device. Nothing leaves your browser. First time needs a one-off ' + info.sizeLabel + ' download. ';
+        btn.textContent = info.cached ? 'Load and run' : 'Download local AI (' + info.sizeLabel + ')';
+        btn.dataset.action = 'cmdkAskRetryLoad';
       }
+      ed.appendChild(lead);
+      ed.appendChild(btn);
       aBubble.appendChild(ed);
     }
     aWrap.appendChild(aBubble);
@@ -1055,11 +1127,6 @@ async function cmdkAskSubmit(){
     _cmdkAskUpdate(t, { status: 'error', text: 'Ask pipeline unavailable' });
     input.value=''; return;
   }
-  if(typeof isGenReady!=='function'||!isGenReady()){
-    const t = _cmdkAskNewTurn(q);
-    _cmdkAskUpdate(t, { status: 'need-model', needModel: _cmdkAskNeedModelInfo() });
-    input.value=''; return;
-  }
   // Push the new turn FIRST so the user's question appears in the chat
   // immediately. Then clear the input so they can type the follow-up while
   // the assistant is still streaming the previous answer.
@@ -1067,6 +1134,151 @@ async function cmdkAskSubmit(){
   _renderAskConversation();
   input.value='';
   _cmdkAskHistoryIdx=-1;
+  if(typeof isGenReady!=='function'||!isGenReady()){
+    // No model in memory yet. Instant intents ("add a task …", "what is
+    // overdue?") need none, so try those first. Otherwise, instead of
+    // parking the question behind a "Download local AI" button (which then
+    // made the user retype it), the chat fetches the basic model itself,
+    // shows the progress in this bubble, and runs the question the moment
+    // the model is ready.
+    await _cmdkAskRunTurn(turn, { quickOnly: true });
+    if(turn._quickMiss){
+      turn._quickMiss = false;
+      await _cmdkAskAutoLoadThenRun(turn);
+    }
+    return;
+  }
+  await _cmdkAskRunTurn(turn);
+}
+
+/**
+ * Download / load the configured model on behalf of `turn`, then run it.
+ * Progress lands in the turn bubble via cmdkAskOnGenProgress (called from
+ * ai.js while genDownloadClick drives the load). On failure the turn falls
+ * back to the need-model bubble with the error and a "Try again" button.
+ */
+async function _cmdkAskAutoLoadThenRun(turn){
+  if(!turn) return;
+  const info = _cmdkAskNeedModelInfo();
+  if(typeof genDownloadClick !== 'function' || !_askEntryEnabled()){
+    _cmdkAskUpdate(turn, { status: 'need-model', needModel: info });
+    return;
+  }
+  if(info.ready){ await _cmdkAskRunTurn(turn); return; }
+  _cmdkAskUpdate(turn, {
+    status: 'loading-model',
+    progress: { pct: 0, cached: info.cached, line: info.cached ? 'Loading local AI from this device…' : 'Downloading local AI (' + info.sizeLabel + ')…' },
+  });
+  _cmdkFootAskText();
+  const reqId = _cmdkAskReqSeq;
+  _cmdkAskBusy = true;
+  _syncAskDock();
+  let ok = false;
+  try{
+    // A load already in flight (Settings button, auto-restore on boot) is
+    // simply awaited; otherwise the same Settings download path runs, so
+    // the chip, ribbon and Settings row all stay in sync.
+    ok = (typeof isGenLoading === 'function' && isGenLoading())
+      ? await _cmdkAskWaitForGen()
+      : await genDownloadClick();
+  }catch(_){ ok = false; }
+  finally{
+    if(reqId === _cmdkAskReqSeq){ _cmdkAskBusy = false; _syncAskDock(); }
+  }
+  if(reqId !== _cmdkAskReqSeq) return; // closed / new chat / superseded
+  const ready = typeof isGenReady === 'function' && isGenReady();
+  if(!ok || !ready){
+    const err = (typeof getGenLastError === 'function' && getGenLastError()) || null;
+    const next = _cmdkAskNeedModelInfo();
+    next.error = err || 'Download cancelled.';
+    _cmdkAskUpdate(turn, { status: 'need-model', needModel: next, progress: null });
+    _cmdkFootAskText();
+    return;
+  }
+  _cmdkFootAskText();
+  await _cmdkAskRunTurn(turn);
+}
+
+/** Resolve true when a load someone else started finishes with a ready model. */
+function _cmdkAskWaitForGen(){
+  return new Promise(resolve => {
+    const tick = () => {
+      const loading = typeof isGenLoading === 'function' && isGenLoading();
+      if(loading){ setTimeout(tick, 500); return; }
+      resolve(typeof isGenReady === 'function' && isGenReady());
+    };
+    tick();
+  });
+}
+
+/** ai.js → progress for the turn that is waiting on the model download. */
+function cmdkAskOnGenProgress(pct, line){
+  const turn = _cmdkAskTurns.slice().reverse().find(t => t && t.status === 'loading-model');
+  if(!turn) return;
+  const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const txt = String(line || '').trim();
+  const prev = turn.progress || {};
+  // The aggregator fires per chunk; only repaint when something visible moved
+  // (the conversation is rebuilt from state on every update).
+  if(prev.pct === p && prev.line === txt) return;
+  const label = p >= 100
+    ? (txt || 'Initializing model…')
+    : ((prev.cached ? 'Loading local AI' : 'Downloading local AI') + ' · ' + p + '%');
+  _cmdkAskUpdate(turn, { progress: { pct: p, cached: !!prev.cached, line: label } });
+}
+
+/** ai.js → the model became ready (from anywhere). Repaint state-driven UI. */
+function cmdkAskOnGenReady(){
+  if(cmdkMode === 'ask'){
+    _cmdkFootAskText();
+    if(_cmdkAskTurns.some(t => t && t.status === 'need-model')) _renderAskConversation();
+  }
+}
+
+/** "Try again" / "Load and run" on a parked turn. */
+function cmdkAskRetryLoad(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(!turn || _cmdkAskBusy) return;
+  _cmdkAskAutoLoadThenRun(turn);
+}
+
+/** "Run this question" on a turn parked before the model was loaded elsewhere. */
+function cmdkAskRerunTurn(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(!turn || _cmdkAskBusy) return;
+  if(typeof isGenReady !== 'function' || !isGenReady()){ _cmdkAskAutoLoadThenRun(turn); return; }
+  _cmdkAskRunTurn(turn);
+}
+
+/** Cancel the download a turn is waiting on; the turn goes back to need-model. */
+function cmdkAskCancelLoad(turnId){
+  const turn = _cmdkFindAskTurn(turnId);
+  if(typeof genAbortLoad === 'function'){ try{ genAbortLoad(); }catch(_){} }
+  if(turn && turn.status === 'loading-model'){
+    const info = _cmdkAskNeedModelInfo();
+    info.error = 'Download cancelled.';
+    _cmdkAskUpdate(turn, { status: 'need-model', needModel: info, progress: null });
+  }
+}
+
+/**
+ * Run `turn.q` through askRun and render the outcome into `turn`.
+ * @param {{ quickOnly?: boolean }} [runOpts] quickOnly: only the instant
+ *   intents (no model); a miss sets `turn._quickMiss` and renders nothing so
+ *   the caller can fall back to loading the model.
+ */
+async function _cmdkAskRunTurn(turn, runOpts){
+  if(!turn) return;
+  const q = String(turn.q || '');
+  if(!q) return;
+  const quickOnly = !!(runOpts && runOpts.quickOnly);
+  if(_cmdkAskBusy){
+    if(typeof showExportToast==='function') showExportToast('Still thinking — wait for the current answer or press Stop.');
+    return;
+  }
+  if(turn.status !== 'streaming'){
+    _cmdkAskUpdate(turn, { status: 'streaming', text: '', stream: '', progress: null, needModel: null });
+  }
   // Snapshot prior turns before the streaming turn moves to a non-final
   // status — the LLM prompt should see only the *prior* finished context.
   const priorTurns = _cmdkAskPriorTurnsFor(turn);
@@ -1081,6 +1293,7 @@ async function cmdkAskSubmit(){
     const res=await askRun(q,{
       signal:_cmdkAskCtl.signal,
       priorTurns,
+      quickOnly,
       onReadRound:()=>{
         if(reqId !== _cmdkAskReqSeq) return; // superseded — stop touching the abandoned turn
         _cmdkAskUpdate(turn, { text: 'Running read-only tools on-device…' });
@@ -1109,6 +1322,7 @@ async function cmdkAskSubmit(){
     if(!res.ok){
       const reason=res.reason||'Unknown error';
       if(reason==='GEN_NOT_READY'){
+        if(quickOnly){ turn._quickMiss = true; return; }
         _cmdkAskUpdate(turn, { status: 'need-model', needModel: _cmdkAskNeedModelInfo() });
       } else {
         _cmdkAskUpdate(turn, { status: 'error', text: _cmdkAskReasonText(reason) });
@@ -1118,7 +1332,7 @@ async function cmdkAskSubmit(){
     const ops = Array.isArray(res.ops) ? res.ops : [];
     if(!ops.length){
       if(res.chatAnswer){
-        _cmdkAskUpdate(turn, { status: 'answer', text: res.chatAnswer });
+        _cmdkAskUpdate(turn, { status: 'answer', text: res.chatAnswer, quick: !!res.quick });
         return;
       }
       // Ops came back empty but the model proposed changes the validator threw
@@ -1138,7 +1352,8 @@ async function cmdkAskSubmit(){
     }
     const n=res.ops.length;
     const extra=res.rejected&&res.rejected.length?` (${res.rejected.length} rejected)`:'';
-    const rrd=res.readRounds>0?` ${res.readRounds} read step${res.readRounds!==1?'s':''} ·`:'';
+    const rrd=res.readRounds>0?` ${res.readRounds} read step${res.readRounds!==1?'s':''} ·`:(res.quick?' Parsed instantly, no model needed ·':'');
+    turn.quick = !!res.quick;
     turn.ops = res.ops;
     turn.rejected = res.rejected || null;
     turn.destructiveLevel = res.destructiveLevel || 'none';

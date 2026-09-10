@@ -33,6 +33,9 @@ function _askSerializeTask(t){
     priority: t.priority || 'none',
   };
   if(t.dueDate) line.due = t.dueDate;
+  // Small models cannot compare dates reliably; spell the fact out so
+  // "what is overdue?" is a lookup, not arithmetic.
+  if(t.dueDate && t.status !== 'done' && !t.archived && String(t.dueDate) < _askToday()) line.overdue = true;
   if(t.listId != null){ const n = _askListName(t.listId); if(n) line.list = n; }
   if(Array.isArray(t.tags) && t.tags.length) line.tags = t.tags.slice(0, 6).map(x => _askStripCtrl(x));
   if(t.effort) line.effort = t.effort;
@@ -206,6 +209,13 @@ function _askIsImperative(q){
   return /^(remind|add|create|make|schedule|move|archive|unarchive|delete|remove|complete|finish|done|mark|set|tag|untag|star|unstar|rename|update|change|edit|fix|reschedule|snooze|unsnooze|postpone|defer|push|bump|prioriti[sz]e|deprioriti[sz]e|assign|note|cancel|reopen|close|undo|book|plan|put|drop|clean|clear|tidy|organi[sz]e|sort|group|categori[sz]e|classify|label|flag|unflag|pin|unpin|hide|unhide|split|break|breakdown|duplicate|copy|merge|dedupe|deduplicate|block|unblock|link|unlink|start|stop|log|record|track|file|save|turn|get rid)\b/i.test(s);
 }
 
+// True when a write verb appears anywhere in the query — used to keep a
+// question that also asks for an edit ("what's due, then mark rent urgent")
+// on the read-then-write pipeline instead of the prose-first shortcut.
+function _askMentionsWriteVerb(q){
+  return /\b(remind|add|create|make|schedule|move|archive|unarchive|delete|remove|complete|finish|mark|set|tag|untag|star|unstar|rename|update|change|edit|fix|reschedule|snooze|unsnooze|postpone|defer|push|bump|prioriti[sz]e|assign|clean|clear|organi[sz]e|sort|merge|split|duplicate)\b/i.test(String(q || ''));
+}
+
 // Stronger second-pass prompt for imperatives the ops pipeline missed.
 // The original system prompt is conservative ("return [] if ambiguous"); a
 // retry replaces that with an aggressive "you MUST produce a CREATE_TASK or
@@ -251,7 +261,16 @@ function _askSafeCalendarBlock(){
   try{ return (typeof _askCalendarBlock === 'function') ? (_askCalendarBlock() || '') : ''; }catch(_){ return ''; }
 }
 
-function _askUserPrompt(query, contextLines, calendarBlock){
+/**
+ * @param {string} query
+ * @param {string[]} contextLines
+ * @param {string} [calendarBlock]
+ * @param {{ prose?: boolean }} [opts]  prose: end with "Answer:" instead of
+ *   "JSON array:" — the ops cue at the end of a prose-pass prompt nudged the
+ *   small models straight back into emitting JSON.
+ */
+function _askUserPrompt(query, contextLines, calendarBlock, opts){
+  const prose = !!(opts && opts.prose);
   const parts = [];
   const d = _askDateRef();
   parts.push('Today: ' + d.today + (d.weekday ? ' (' + d.weekday + ')' : '')
@@ -262,8 +281,8 @@ function _askUserPrompt(query, contextLines, calendarBlock){
   const calB = (typeof calendarBlock === 'string') ? calendarBlock : _askSafeCalendarBlock();
   if(calB) parts.push(calB);
   if(contextLines.length) parts.push('Context (relevant tasks):\n' + contextLines.join('\n'));
-  parts.push('Request: ' + _askStripCtrl(query).slice(0, 600));
-  parts.push('JSON array:');
+  parts.push((prose ? 'Question: ' : 'Request: ') + _askStripCtrl(query).slice(0, 600));
+  parts.push(prose ? 'Answer (plain English, 1-4 sentences):' : 'JSON array:');
   return parts.join('\n\n');
 }
 
@@ -275,9 +294,139 @@ function _askCtx(){
   return { tasksById, listsById };
 }
 
+// ---- Instant intents: answered from the data, no model ---------------------
+// The two things people type most — "add a task …" / "remind me to …" and
+// "what is overdue / due today?" — have exact answers the app can compute
+// in a millisecond: the quick-add parser (chrono dates, @priority, #tags,
+// "at 9am" reminders) and a filter over the task list. On a phone the model
+// needs 30 s to read the prompt and the 135M one still answers those with a
+// loop, so these are handled before the model is even consulted. Everything
+// else (rewording, multi-step edits, judgement calls) still goes to the LLM.
+// Creation ops pass through validateOps and the preview/apply pipeline like
+// any model-proposed op.
+const ASK_QUICK_REMIND_RX = /^(?:please\s+|pls\s+)?remind me\s+(?:to\s+|that\s+(?:i\s+(?:need|have) to\s+)?|about\s+)?(.+)$/i;
+const ASK_QUICK_CREATE_RX = /^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:add|create|make|new)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:task|todo|to-do|reminder|item|entry)?\s*(?:to|:|-|called|named|for|that says)?\s*(.+)$/i;
+
+function _askCapFirst(s){ const t = String(s || '').trim(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
+
+/**
+ * @param {string} q
+ * @returns {Promise<null | { ops:Array, kind:'create' } | { chatAnswer:string, kind:'lookup' }>}
+ */
+async function askQuickIntent(q){
+  const s = _askStripCtrl(String(q || '')).trim();
+  if(!s || s.length > 400) return null;
+
+  // Creation → CREATE_TASK through the same parser the task input uses.
+  const m = s.match(ASK_QUICK_REMIND_RX) || s.match(ASK_QUICK_CREATE_RX);
+  if(m && m[1] && typeof parseQuickAdd === 'function'){
+    const raw = m[1].replace(/^["“'‘]+|["”'’]+$/g, '').replace(/[.!]+$/, '').trim();
+    // Anything that reads like a second instruction is not a plain create.
+    const compound = /\b(and then|, then|then (?:mark|move|delete|archive)|and (?:mark|move|delete|archive))\b/i.test(raw);
+    if(raw.length >= 2 && raw.length <= 200 && !compound){
+      let parsed = null;
+      try{ parsed = (typeof parseQuickAddAsync === 'function') ? await parseQuickAddAsync(raw) : parseQuickAdd(raw); }catch(_){ parsed = null; }
+      if(parsed && parsed.name && String(parsed.name).trim()){
+        const p = parsed.props || {};
+        const args = { name: _askCapFirst(parsed.name) };
+        for(const k of ['dueDate', 'priority', 'tags', 'remindAt', 'recur', 'starred', 'listId', 'effort', 'energyLevel']){
+          if(p[k] != null && p[k] !== '' && !(Array.isArray(p[k]) && !p[k].length)) args[k] = p[k];
+        }
+        return { ops: [{ name: 'CREATE_TASK', args }], kind: 'create' };
+      }
+    }
+  }
+
+  // Lookups → prose from the data.
+  if(!_askIsQuestionLike(s) || _askMentionsWriteVerb(s)) return null;
+  if(typeof tasks === 'undefined' || !Array.isArray(tasks)) return null;
+  const today = _askToday();
+  const open = tasks.filter(t => t && !t.archived && t.status !== 'done');
+  const byDue = (a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || ''));
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  const list = (arr, withDue) => {
+    const lines = arr.slice(0, 8).map(t => '• ' + _askStripCtrl(t.name).slice(0, 80) + (withDue && t.dueDate ? ' (due ' + t.dueDate + ')' : ''));
+    if(arr.length > 8) lines.push('… and ' + plural(arr.length - 8, 'more'));
+    return lines.join('\n');
+  };
+  const addDays = (n) => { const d = new Date(today + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const answer = (text) => ({ chatAnswer: text, kind: 'lookup' });
+
+  if(/\b(overdue|past due|late|behind on)\b/i.test(s)){
+    const od = open.filter(t => t.dueDate && String(t.dueDate) < today).sort(byDue);
+    return answer(od.length ? plural(od.length, 'task') + ' overdue:\n' + list(od, true) : 'Nothing is overdue.');
+  }
+  if(/\btoday\b/i.test(s) && /\b(due|do|planned|scheduled|on my plate|on the list|what(?:'s| is))\b/i.test(s)){
+    const td = open.filter(t => String(t.dueDate || '') === today);
+    return answer(td.length ? plural(td.length, 'task') + ' due today:\n' + list(td, false) : 'Nothing is due today.');
+  }
+  if(/\btomorrow\b/i.test(s)){
+    const tm = addDays(1);
+    const tt = open.filter(t => String(t.dueDate || '') === tm);
+    return answer(tt.length ? plural(tt.length, 'task') + ' due tomorrow:\n' + list(tt, false) : 'Nothing is due tomorrow.');
+  }
+  if(/\bthis week\b|\bnext (?:7|seven) days\b/i.test(s)){
+    const end = addDays(7);
+    const wk = open.filter(t => t.dueDate && String(t.dueDate) >= today && String(t.dueDate) <= end).sort(byDue);
+    return answer(wk.length ? plural(wk.length, 'task') + ' due in the next 7 days:\n' + list(wk, true) : 'Nothing is due in the next 7 days.');
+  }
+  if(/\bhow many\b.*\b(tasks?|todos?|things)\b/i.test(s)){
+    const done = tasks.filter(t => t && !t.archived && t.status === 'done').length;
+    return answer(plural(open.length, 'open task') + (done ? ', ' + plural(done, 'task') + ' done' : '') + '.');
+  }
+  if(/\b(starred|pinned|important)\b/i.test(s)){
+    const st = open.filter(t => t.starred);
+    return answer(st.length ? plural(st.length, 'starred task') + ':\n' + list(st, true) : 'No starred tasks.');
+  }
+  return null;
+}
+
 // ---- Cognitask: multi-turn read then write (same module so tests can load ask.js alone) ----
 const COGNITASK_MAX_READ_ROUNDS = 3;
 const COGNITASK_MAX_TURNS = COGNITASK_MAX_READ_ROUNDS + 1;
+// Ops turns: an op is ~30 tokens, so 320 covers a ten-op batch with room to
+// spare while capping the worst case (a loop) at a third of the old 512 on
+// a ~1.5 tok/s WASM phone.
+const ASK_OPS_MAX_TOKENS = 320;
+// Mild penalty on already-emitted tokens. Small instruct models decode
+// greedily into repetition loops (the 135M model echoed the task context a
+// dozen times in one reply); 1.1 discourages that without suppressing the
+// structural quote/brace tokens JSON needs.
+const ASK_REPETITION_PENALTY = 1.1;
+
+/**
+ * Repetition-loop detector for a streaming reply. True once a recent
+ * 48-char window has already appeared at least twice earlier in the text
+ * (three copies total). Legit op arrays repeat short keys but not whole
+ * 48-char runs; an echo loop repeats them verbatim.
+ * @param {string} text
+ */
+function _askLooksDegenerate(text){
+  const s = String(text || '');
+  if(s.length < 240) return false;
+  const win = s.slice(-48);
+  if(!win.trim()) return false;
+  let count = 0;
+  let idx = 0;
+  while((idx = s.indexOf(win, idx)) !== -1){
+    count++;
+    if(count >= 3) return true;
+    idx += 1;
+  }
+  // Key spam: the model invents one `"key":"value"` line after another
+  // ("pendingComplement", "pendingComplexx", …) with slight variations that
+  // defeat the verbatim check. A real op array mentions "name"/"args" (or
+  // closes) within any dozen lines; twelve flat key lines with neither is
+  // not a plan.
+  const lines = s.split('\n');
+  if(lines.length >= 14){
+    const tail = lines.slice(-12);
+    const flat = tail.filter(l => /^\s*"[^"]{1,60}"\s*:\s*("[^"]*"|[\w.$-]+)\s*,?\s*$/.test(l)).length;
+    const anchored = tail.some(l => /"name"|"args"|\]|<\/?tool_call/.test(l));
+    if(flat >= 10 && !anchored) return true;
+  }
+  return false;
+}
 
 function _readArgCtx(){
   if(typeof _askCtx === 'function') return _askCtx();
@@ -505,6 +654,7 @@ function _askProseSystemPrompt(){
     'Rules:',
     '- 1-4 sentences, or a short bullet list (max 8 bullets) when listing items.',
     '- Never invent task names, ids, dates, or counts. If the Context is silent on something, say so.',
+    '- A task line with "overdue":true is overdue; one with "status":"done" is finished. Only those lines count for "overdue" or "done" questions.',
     '- Do not output JSON, code fences, tool calls, or any kind of operation. Plain prose only.',
     '- Refer to tasks by name (not by id) so the answer reads naturally.',
   ].join('\n');
@@ -515,11 +665,18 @@ function _askProseSystemPrompt(){
  * wall-clock limit. `timeoutSec` used to bound the whole multi-turn run, so a
  * slow-but-healthy device — a ~1.5k-token prompt prefilling on WASM on a
  * phone takes most of the 30 s mobile default by itself — was killed before
- * its first token. Now: no token for `idleMs` (2× that while waiting for the
- * first token of a turn, i.e. prefill) aborts, and a generous hard cap
- * guards against a stream that trickles forever.
+ * its first token. Now: no token for `idleMs` (ASK_PREFILL_IDLE_MULT× that
+ * while waiting for the first token of a turn, i.e. prefill) aborts, and a
+ * generous hard cap guards against a stream that trickles forever.
+ *
+ * Prefill is the slow phase on phones: single-threaded WASM (no COOP/COEP on
+ * static hosting → no thread pool) measured ~36 s to first token for the
+ * 135M model on a ~1k-token prompt on a desktop core; a mid-range phone is
+ * slower still. 3× the idle budget keeps a healthy device from being cut
+ * off while it is still reading the prompt.
  * @returns {{ touch:()=>void, restart:()=>void, clear:()=>void }}
  */
+const ASK_PREFILL_IDLE_MULT = 3;
 function _askIdleAbort(idleMs, ctl, capMsOverride){
   const capMs = (typeof capMsOverride === 'number' && Number.isFinite(capMsOverride))
     ? Math.max(1000, capMsOverride)
@@ -528,10 +685,10 @@ function _askIdleAbort(idleMs, ctl, capMsOverride){
   const fire = () => { try{ ctl.abort(); }catch(_){} };
   const cap = setTimeout(fire, capMs);
   const arm = (ms) => { clearTimeout(idleTimer); idleTimer = setTimeout(fire, ms); };
-  arm(idleMs * 2);
+  arm(idleMs * ASK_PREFILL_IDLE_MULT);
   return {
     touch:   () => arm(idleMs),
-    restart: () => arm(idleMs * 2),
+    restart: () => arm(idleMs * ASK_PREFILL_IDLE_MULT),
     clear:   () => { clearTimeout(idleTimer); clearTimeout(cap); },
   };
 }
@@ -559,7 +716,7 @@ async function _runAskProsePass(q, contextLines, priorMsgs, cfg, opts){
     const proseMsgs = [
       { role: 'system', content: _askProseSystemPrompt() },
       ...priorMsgs,
-      { role: 'user',   content: _askUserPrompt(q, contextLines) },
+      { role: 'user',   content: _askUserPrompt(q, contextLines, undefined, { prose: true }) },
     ];
     const proseTimeoutMs = Math.max(10000, ((cfg && cfg.timeoutSec) || 30) * 1000);
     const budget = _askRemainingBudget(opts, proseTimeoutMs);
@@ -608,6 +765,26 @@ async function cognitaskRun(query, opts){
   opts = opts || {};
   const q = String(query || '').trim();
   if(!q) return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, reason: 'EMPTY_QUERY' };
+
+  // Instant intents first — they need no model, so they also work while the
+  // weights are still downloading (the sheet asks with quickOnly then).
+  let quick = null;
+  try{ quick = await askQuickIntent(q); }catch(_){ quick = null; }
+  if(quick && quick.chatAnswer){
+    if(typeof pushAskHistory === 'function') pushAskHistory(q);
+    return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, chatAnswer: quick.chatAnswer, quick: quick.kind };
+  }
+  if(quick && Array.isArray(quick.ops) && quick.ops.length && typeof validateOps === 'function'){
+    const qctx = (typeof _askCtx === 'function') ? _askCtx() : { tasksById: new Map(), listsById: new Map() };
+    const qval = validateOps(quick.ops, qctx);
+    if(qval.valid.length){
+      if(typeof pushAskHistory === 'function') pushAskHistory(q);
+      return { ok: true, ops: qval.valid, rejected: qval.rejected, destructiveLevel: qval.destructiveLevel, rawText: JSON.stringify(quick.ops), truncated: false, readRounds: 0, quick: quick.kind };
+    }
+  }
+  if(opts && opts.quickOnly){
+    return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, reason: 'GEN_NOT_READY' };
+  }
   if(typeof isGenReady !== 'function' || !isGenReady()){
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, reason: 'GEN_NOT_READY' };
   }
@@ -688,22 +865,70 @@ async function cognitaskRun(query, opts){
   // Taint from the start whenever that block is non-empty.
   let externalReads = !!calendarBlock;
 
+  // Pure questions ("what is overdue?", "what should I do next?") answer
+  // prose-first. The ops prompt is a schema plus a dozen few-shot examples —
+  // a ~1.5k-token prefill that a 135M model on a WASM phone reads for 30 s
+  // and then answers with `[]` or a loop, after which the prose pass ran
+  // anyway. Going to prose directly halves the wait and hands the small
+  // model the simpler prompt it can actually follow. Anything that mentions
+  // a write verb ("what's on my calendar, then mark rent urgent") keeps the
+  // read-then-write pipeline; an empty prose answer falls through to it too.
+  const pureQuestion = _askIsQuestionLike(q) && !_askIsImperative(q) && !_askMentionsWriteVerb(q);
+  if(pureQuestion){
+    const first = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
+    if(first.chatAnswer){
+      if(typeof pushAskHistory === 'function') pushAskHistory(q);
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: first.proseText, truncated: false, readRounds: 0, chatAnswer: first.chatAnswer, externalContent: externalReads };
+    }
+    if(mergedSignal.aborted){
+      return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: first.proseText || '', truncated: false, readRounds: 0, reason: timeoutCtl.signal.aborted ? 'TIMEOUT' : 'ABORTED' };
+    }
+    allRaw = first.proseText || '';
+  }
+
+  // Set when a turn was cut short by the degeneration guard below: the reply
+  // is a repetition loop, so the corrective retry would only reproduce it.
+  let degenerate = false;
   const runOnce = async (temp) => {
     let rawText = '';
     watch.restart(); // each turn prefills again before its first token
-    const full = await genGenerate({
-      messages,
-      maxTokens: 512,
-      temperature: temp,
-      tools: cognitaskOpenAITools || undefined,
-      onToken: (t) => {
-        rawText += t;
-        watch.touch();
-        if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
-      },
-      signal: mergedSignal,
-    });
-    if(!rawText) rawText = full || '';
+    // Per-turn controller so the degeneration guard can stop *this* turn
+    // without aborting the whole submit (that path reads as "Stopped.").
+    const turnCtl = new AbortController();
+    const bailTurn = () => { try{ turnCtl.abort(); }catch(_){} };
+    if(mergedSignal.aborted) bailTurn();
+    else mergedSignal.addEventListener('abort', bailTurn, { once: true });
+    let cutShort = false;
+    try{
+      const full = await genGenerate({
+        messages,
+        maxTokens: ASK_OPS_MAX_TOKENS,
+        temperature: temp,
+        repetitionPenalty: ASK_REPETITION_PENALTY,
+        tools: cognitaskOpenAITools || undefined,
+        onToken: (t) => {
+          rawText += t;
+          watch.touch();
+          if(typeof opts.onToken === 'function'){ try{ opts.onToken(t); }catch(e){} }
+          if(!cutShort && _askLooksDegenerate(rawText)){
+            // A 135M/360M model on a phone decodes at ~1–2 tok/s; letting a
+            // repetition loop run to max_new_tokens burned the entire budget
+            // (the "Timed out" chat error). Stop the turn and fall through
+            // to the write retry / prose pass with what we have.
+            cutShort = true;
+            degenerate = true;
+            bailTurn();
+          }
+        },
+        signal: turnCtl.signal,
+      });
+      if(!rawText) rawText = full || '';
+    }catch(e){
+      if(!cutShort || mergedSignal.aborted) throw e;
+      // Our own cut: keep the partial text (a truncated array still parses).
+    }finally{
+      mergedSignal.removeEventListener('abort', bailTurn);
+    }
     return rawText;
   };
 
@@ -745,8 +970,13 @@ async function cognitaskRun(query, opts){
       const temp = parseFailures > 0 ? 0.2 : 0;
       const raw = await runOnce(temp);
       allRaw += (allRaw ? '\n' : '') + raw;
-      const parsed = parseReply(raw);
+      // A looping reply is not a plan: whatever the tolerant parser could
+      // lift out of it would be echoed context, not ops. Treat it as no
+      // parse and go straight to the fallbacks (write retry / prose) — a
+      // corrective turn would only reproduce the loop.
+      const parsed = degenerate ? null : parseReply(raw);
       if(!parsed){
+        if(degenerate) break;
         parseFailures++;
         if(parseFailures > COGNITASK_MAX_PARSE_RETRIES) break;
         messages.push({ role: 'assistant', content: String(raw || '').slice(0, 1500) });
@@ -1027,6 +1257,9 @@ if(typeof window !== 'undefined'){
   window._askWriteRetrySystemPrompt = _askWriteRetrySystemPrompt;
   window._askIsQuestionLike = _askIsQuestionLike;
   window._askIsImperative = _askIsImperative;
+  window._askMentionsWriteVerb = _askMentionsWriteVerb;
+  window._askLooksDegenerate = _askLooksDegenerate;
+  window.askQuickIntent = askQuickIntent;
   window._askCtx = _askCtx;
   window._askCalendarBlock = _askCalendarBlock;
   window._askDateRef = _askDateRef;

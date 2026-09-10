@@ -18,24 +18,51 @@ const GEN_HIST_KEY = (_GC.STORAGE_KEYS && _GC.STORAGE_KEYS.GEN_HISTORY) || 'stup
 // originals and onnx-community repacks both ship ONNX weights under onnx/.
 // If one namespace is unreachable, the other usually works — so we surface
 // both as presets and auto-retry the sibling on load failure.
+//
+// Sizes are the real weight files the loader fetches (checked against the
+// Hub, Sept 2026): `sizeMb` is the WASM/CPU file (model_q4.onnx — int4
+// matmuls but fp32 embeddings, so it is the LARGER one), `sizeMbGpu` the
+// WebGPU file (model_q4f16.onnx). The first entry is the "basic" model:
+// the default for every device and the one the chat downloads on its own
+// when a user asks a question before any model is loaded.
 const GEN_MODEL_PRESETS = [
-  { id:'HuggingFaceTB/SmolLM2-360M-Instruct',        dtype:'q4', sizeMb:230, label:'SmolLM2 360M (balanced)',       note:'Recommended for most devices' },
-  { id:'HuggingFaceTB/SmolLM2-135M-Instruct',        dtype:'q4', sizeMb:100, label:'SmolLM2 135M (tiny)',           note:'Lowest RAM — older phones' },
-  { id:'onnx-community/Qwen2.5-0.5B-Instruct',       dtype:'q4', sizeMb:320, label:'Qwen2.5 0.5B (bigger)',         note:'Desktop / WebGPU preferred' },
-  { id:'onnx-community/Qwen2.5-1.5B-Instruct',     dtype:'q4', sizeMb:600, label:'Qwen2.5 1.5B (native tools)',  note:'Cognitask uses tokenizer tools + <tool_call> XML; WebGPU recommended' },
-  { id:'onnx-community/SmolLM2-360M-Instruct',       dtype:'q4', sizeMb:230, label:'SmolLM2 360M (onnx-community)', note:'Use if HuggingFaceTB mirror fails' },
-  { id:'onnx-community/SmolLM2-135M-Instruct-ONNX',  dtype:'q4', sizeMb:100, label:'SmolLM2 135M (onnx-community)', note:'Use if HuggingFaceTB mirror fails' },
+  { id:'HuggingFaceTB/SmolLM2-135M-Instruct',        dtype:'q4', sizeMb:180,  sizeMbGpu:118,  label:'SmolLM2 135M (basic)',                note:'Default. Smallest download, runs on phones. Simple but quick answers.' },
+  { id:'HuggingFaceTB/SmolLM2-360M-Instruct',        dtype:'q4', sizeMb:390,  sizeMbGpu:275,  label:'SmolLM2 360M (better)',               note:'Noticeably better plans; needs a recent phone or a laptop.' },
+  { id:'onnx-community/Qwen2.5-0.5B-Instruct',       dtype:'q4', sizeMb:790,  sizeMbGpu:485,  label:'Qwen2.5 0.5B (desktop)',              note:'Desktop with WebGPU. Too large for phones.' },
+  { id:'onnx-community/Qwen2.5-1.5B-Instruct',       dtype:'q4', sizeMb:1790, sizeMbGpu:1225, label:'Qwen2.5 1.5B (native tools)',         note:'Desktop WebGPU only. Cognitask uses tokenizer tools + <tool_call> XML.' },
+  { id:'onnx-community/SmolLM2-360M-Instruct-ONNX',  dtype:'q4', sizeMb:390,  sizeMbGpu:275,  label:'SmolLM2 360M (onnx-community mirror)', note:'Use if the HuggingFaceTB mirror fails' },
+  { id:'onnx-community/SmolLM2-135M-Instruct-ONNX',  dtype:'q4', sizeMb:180,  sizeMbGpu:118,  label:'SmolLM2 135M (onnx-community mirror)', note:'Use if the HuggingFaceTB mirror fails' },
 ];
 
 // Slugs we'll transparently retry if the primary 401/403/404s.
+// (`onnx-community/SmolLM2-360M-Instruct` without the -ONNX suffix is gated
+// and answers 401 — the -ONNX repack is the public one.)
 const GEN_MODEL_ALT_SLUGS = {
-  'HuggingFaceTB/SmolLM2-360M-Instruct': 'onnx-community/SmolLM2-360M-Instruct',
+  'HuggingFaceTB/SmolLM2-360M-Instruct': 'onnx-community/SmolLM2-360M-Instruct-ONNX',
   'HuggingFaceTB/SmolLM2-135M-Instruct': 'onnx-community/SmolLM2-135M-Instruct-ONNX',
 };
+// Slugs that used to be presets and no longer resolve, mapped to their
+// working replacement so a stored config keeps pointing at real weights.
+const GEN_MODEL_RENAMED_SLUGS = {
+  'onnx-community/SmolLM2-360M-Instruct': 'onnx-community/SmolLM2-360M-Instruct-ONNX',
+};
 
-// Any pre-v27 config that points at the stale Xenova/* slugs gets reset to
-// the current default preset. Keeps existing users from hitting a 401.
-const GEN_CFG_VERSION = 2;
+// Config schema version. v2 moved pre-v27 configs off the stale Xenova/*
+// slugs. v3 (this release): the dead onnx-community 360M slug is renamed,
+// installs that never downloaded the old 360M default move to the basic
+// 135M model, and a stored copy of the old 30 s mobile timeout is lifted to
+// the new default (small models on WASM phones need longer to prefill).
+const GEN_CFG_VERSION = 3;
+const GEN_LEGACY_TIMEOUTS = [30, 60];
+
+/** "~180 MB" or "118–180 MB" (WebGPU–WASM) for a preset. */
+function genPresetSizeLabel(p){
+  if(!p) return '';
+  const wasm = Number(p.sizeMb) || 0;
+  const gpu = Number(p.sizeMbGpu) || 0;
+  if(gpu && gpu !== wasm) return `${Math.min(gpu, wasm)}–${Math.max(gpu, wasm)} MB`;
+  return `~${wasm} MB`;
+}
 
 // ── Pipeline state (mirrored from the worker, or maintained directly on the
 //    main-thread fallback path) ───────────────────────────────────────────────
@@ -59,8 +86,11 @@ let _genReqSeq = 0;
 const _genPending = new Map();  // reqId -> { resolve?, reject?, onToken?, abortTimer? }
 // How long an abort may go unanswered before the worker is declared wedged
 // (stuck in native ONNX code, unable to process the abort message) and
-// recycled. Cooperative aborts answer in well under a second.
-const GEN_ABORT_WATCHDOG_MS = 9000;
+// recycled. Cooperative aborts are checked between tokens, and on a
+// single-threaded WASM phone one token late in a long reply can take several
+// seconds — 9 s tore down a perfectly healthy worker after every timeout,
+// which then forced a model reload before the next question.
+const GEN_ABORT_WATCHDOG_MS = 20000;
 let _genLoadResolvers = null;   // { resolve, reject, onProgress } for the in-flight worker load
 /** Ref-count concurrent genGenerate calls — only clear "busy" when the last in-flight run finishes. */
 let _genGenInFlight = 0;
@@ -174,7 +204,10 @@ function _genTeardownWorker(raw){
 }
 
 function _pickDefaultPresetForDevice(){
-  // Low-RAM devices default to the Tiny preset; otherwise the Balanced one.
+  // Every device starts on the basic 135M model. The old "balanced" 360M
+  // default fetched ~390 MB on the WASM path and ran out of memory or timed
+  // out on phones (iOS never reports deviceMemory, so the low-RAM branch
+  // below never fired there). Users can pick a bigger preset in Settings.
   if(typeof navigator !== 'undefined' && typeof navigator.deviceMemory === 'number' && navigator.deviceMemory < 4){
     const tiny = GEN_MODEL_PRESETS.find(p => /135M/i.test(p.label));
     if(tiny) return tiny;
@@ -204,19 +237,38 @@ function _loadGenCfg(){
     cfg.downloadedIds = (cfg.downloaded === true && cfg.modelId) ? [cfg.modelId] : [];
   }
 
+  // Renamed slugs keep pointing at real weights (and their download record).
+  const renamed = id => GEN_MODEL_RENAMED_SLUGS[id] || id;
+  cfg.modelId = renamed(cfg.modelId);
+  cfg.downloadedIds = cfg.downloadedIds.map(renamed);
+
   // Migrate: old builds wrote Xenova/SmolLM2-* ids that don't exist on HF.
   // Also fall forward to the current default if the stored id isn't in the
   // preset list so users never get stuck on a stale slug. When migrating off
   // a dead slug we purge the downloadedIds cache too — those weights never
   // actually landed in the browser cache.
   const known = GEN_MODEL_PRESETS.some(p => p.id === cfg.modelId);
-  if(!known || cfg.cfgVersion !== GEN_CFG_VERSION){
+  const storedVersion = Number(cfg.cfgVersion) || 0;
+  if(!known || storedVersion < 2){
     const preset = _pickDefaultPresetForDevice();
     cfg.modelId = preset.id;
     cfg.dtype = preset.dtype;
     cfg.downloadedIds = cfg.downloadedIds.filter(id => GEN_MODEL_PRESETS.some(p => p.id === id));
-    cfg.cfgVersion = GEN_CFG_VERSION;
   }
+  if(storedVersion < 3){
+    // The old default (360M) never landed on this device → start on the
+    // basic model instead of a ~390 MB download the phone may not survive.
+    // A 360M that IS downloaded stays: the weights are cached and working.
+    if(cfg.modelId === 'HuggingFaceTB/SmolLM2-360M-Instruct' && !cfg.downloadedIds.includes(cfg.modelId)){
+      const preset = _pickDefaultPresetForDevice();
+      cfg.modelId = preset.id;
+      cfg.dtype = preset.dtype;
+    }
+    // Only a stored copy of an old *default* is lifted; a value the user
+    // typed themselves is kept.
+    if(GEN_LEGACY_TIMEOUTS.includes(cfg.timeoutSec)) cfg.timeoutSec = Math.max(cfg.timeoutSec, _defaultTimeoutSec());
+  }
+  cfg.cfgVersion = GEN_CFG_VERSION;
 
   // Keep the legacy boolean in sync for any external readers.
   cfg.downloaded = cfg.downloadedIds.includes(cfg.modelId);
@@ -246,9 +298,14 @@ function _saveGenCfg(cfg){
 function _defaultTimeoutSec(){
   // Guarded so Node test harnesses without a navigator shim don't blow up
   // (the browser always has one).
-  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
-  return isMobile ? 30 : 60;
+  // This is an *idle* budget (no token for this long aborts; the first token
+  // of a turn gets 3× while the prompt prefills — see _askIdleAbort in
+  // js/ask.js). Phones run the model single-threaded on WASM (GitHub Pages
+  // sends no COOP/COEP headers, so there is no thread pool) and a ~1k-token
+  // prompt on the 135M model measured ~36 s to first token even on a desktop
+  // core — the old 30 s mobile default (60 s prefill allowance) was the
+  // "Timed out" chat users kept hitting. 60 s → 180 s to first token.
+  return 60;
 }
 
 function _mobileRamHint(){
@@ -460,11 +517,17 @@ function _friendlyGenError(msg, modelId){
   if(/NetworkError|Failed to fetch/i.test(m)){
     return 'Network error while downloading model weights. Check connection and retry.';
   }
-  if(/out of memory|OOM|Allocation failed/i.test(m)){
-    return 'Device ran out of memory loading the model. Try the smaller Tiny (135M) preset.';
+  if(/out of memory|OOM|Allocation failed|Array buffer allocation|Out of bounds|Cannot enlarge memory/i.test(m)){
+    return 'Device ran out of memory loading the model. Switch to the basic SmolLM2 135M preset in Settings → Generative AI.';
+  }
+  if(/LOAD_STALLED/i.test(m)){
+    return 'The download stalled (no progress for 90 s). Check the connection and try again.';
+  }
+  if(/TRANSFORMERS_IMPORT_FAILED/i.test(m)){
+    return 'The on-device AI runtime could not be loaded. Reload the page and try again.';
   }
   if(/Aborted\b|RuntimeError/i.test(m)){
-    return 'The ONNX runtime crashed while loading the model. Try clearing site data (Settings → Privacy → Clear browsing data) and reloading, or switch to a smaller model preset.';
+    return 'The ONNX runtime crashed while loading the model. Try clearing site data (Settings → Privacy → Clear browsing data) and reloading, or switch to the basic 135M preset.';
   }
   return 'Load failed: ' + m.slice(0, 180);
 }
@@ -494,6 +557,9 @@ async function genGenerate(opts){
     prompt: o.prompt,
     maxTokens: Math.min(1024, Math.max(16, o.maxTokens || 512)),
     temperature: typeof o.temperature === 'number' ? o.temperature : 0.2,
+    // ≥1; 1 = off. Passed straight through to the library's
+    // RepetitionPenaltyLogitsProcessor.
+    repetitionPenalty: (typeof o.repetitionPenalty === 'number' && o.repetitionPenalty > 1) ? Math.min(2, o.repetitionPenalty) : 1,
     onToken: typeof o.onToken === 'function' ? o.onToken : null,
     signal: o.signal || null,
   };
@@ -542,6 +608,7 @@ function _genGenerateViaWorker(payload){
         type: 'generate', reqId,
         messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
         maxTokens: payload.maxTokens, temperature: payload.temperature,
+        repetitionPenalty: payload.repetitionPenalty,
       });
     }catch(err){
       _settleGen(reqId);
@@ -577,6 +644,7 @@ async function _genGenerateInThread(payload){
         reqId,
         messages: payload.messages, tools: payload.tools, prompt: payload.prompt,
         maxTokens: payload.maxTokens, temperature: payload.temperature,
+        repetitionPenalty: payload.repetitionPenalty,
         signal: ctl.signal,
       }),
       abortGuard,
@@ -1019,6 +1087,7 @@ if(typeof window !== 'undefined'){
   window.GEN_MODEL_PRESETS = GEN_MODEL_PRESETS;
   window.GEN_MODEL_ALT_SLUGS = GEN_MODEL_ALT_SLUGS;
   window.getGenPresets = getGenPresets;
+  window.genPresetSizeLabel = genPresetSizeLabel;
   window.getGenCfg = getGenCfg;
   window.saveGenCfg = saveGenCfg;
   window.genLoad = genLoad;

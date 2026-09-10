@@ -32,8 +32,9 @@ test('gen cfg: fresh user gets HuggingFaceTB default with cfgVersion stamped', (
   const { win, storage } = loadGen();
   const cfg = win.getGenCfg();
   assert.equal(cfg.enabled, false);
-  assert.match(cfg.modelId, /^HuggingFaceTB\/SmolLM2-/);
-  assert.equal(cfg.cfgVersion, 2);
+  assert.match(cfg.modelId, /^HuggingFaceTB\/SmolLM2-135M/, 'the basic 135M model is the default for every device');
+  assert.equal(cfg.cfgVersion, 3);
+  assert.equal(cfg.timeoutSec, 60);
 });
 
 test('gen cfg: stale Xenova id is migrated to current default', () => {
@@ -49,7 +50,49 @@ test('gen cfg: stale Xenova id is migrated to current default', () => {
   const cfg = win.getGenCfg();
   assert.match(cfg.modelId, /^HuggingFaceTB\//);
   assert.equal(cfg.downloaded, false, 'migration must force a re-download check');
-  assert.equal(cfg.cfgVersion, 2);
+  assert.equal(cfg.cfgVersion, 3);
+});
+
+test('gen cfg v3: a never-downloaded 360M default moves to the basic 135M model', () => {
+  const { win } = loadGen({
+    stupind_gen_cfg: JSON.stringify({ enabled: true, modelId: 'HuggingFaceTB/SmolLM2-360M-Instruct', dtype: 'q4', cfgVersion: 2, downloadedIds: [], timeoutSec: 30 }),
+  });
+  const cfg = win.getGenCfg();
+  assert.equal(cfg.modelId, 'HuggingFaceTB/SmolLM2-135M-Instruct');
+  assert.equal(cfg.cfgVersion, 3);
+  assert.equal(cfg.timeoutSec, 60, 'a stored copy of the old 30 s mobile default is lifted');
+});
+
+test('gen cfg v3: a downloaded 360M stays put and a hand-set timeout is kept', () => {
+  const { win } = loadGen({
+    stupind_gen_cfg: JSON.stringify({ enabled: true, modelId: 'HuggingFaceTB/SmolLM2-360M-Instruct', dtype: 'q4', cfgVersion: 2, downloadedIds: ['HuggingFaceTB/SmolLM2-360M-Instruct'], timeoutSec: 45 }),
+  });
+  const cfg = win.getGenCfg();
+  assert.equal(cfg.modelId, 'HuggingFaceTB/SmolLM2-360M-Instruct', 'cached weights keep working — do not force a re-download');
+  assert.equal(cfg.downloaded, true);
+  assert.equal(cfg.timeoutSec, 45);
+});
+
+test('gen cfg v3: the gated onnx-community 360M slug is renamed to the public -ONNX repack', () => {
+  const { win } = loadGen({
+    stupind_gen_cfg: JSON.stringify({ enabled: true, modelId: 'onnx-community/SmolLM2-360M-Instruct', dtype: 'q4', cfgVersion: 2, downloadedIds: ['onnx-community/SmolLM2-360M-Instruct'] }),
+  });
+  const cfg = win.getGenCfg();
+  assert.equal(cfg.modelId, 'onnx-community/SmolLM2-360M-Instruct-ONNX');
+  assert.deepEqual(cfg.downloadedIds, ['onnx-community/SmolLM2-360M-Instruct-ONNX']);
+  assert.ok(!win.getGenPresets().some(p => p.id === 'onnx-community/SmolLM2-360M-Instruct'), 'the 401-ing slug is no longer offered as a preset');
+});
+
+test('gen presets: sizes are the real weight files and the size label covers both backends', () => {
+  const { win } = loadGen();
+  const presets = win.getGenPresets();
+  const basic = presets[0];
+  assert.match(basic.id, /SmolLM2-135M/);
+  assert.equal(basic.sizeMb, 180, 'model_q4.onnx (WASM) is 182 MB on the Hub');
+  assert.equal(basic.sizeMbGpu, 118, 'model_q4f16.onnx (WebGPU) is 118 MB on the Hub');
+  assert.equal(win.genPresetSizeLabel(basic), '118–180 MB');
+  assert.equal(win.genPresetSizeLabel({ sizeMb: 50 }), '~50 MB');
+  for (const p of presets) assert.ok(p.sizeMbGpu <= p.sizeMb, 'the WASM file is the larger one for ' + p.id);
 });
 
 test('gen cfg: valid modern id passes through untouched', () => {

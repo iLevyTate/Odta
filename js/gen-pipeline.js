@@ -40,6 +40,11 @@ function _withTimeout(promise, ms, label){
 // wedged (stalled fetch, hung WASM instantiation). Progress events reset it,
 // so a slow-but-alive 300 MB download on a poor connection is never cut off.
 const GEN_LOAD_IDLE_TIMEOUT_MS = 90000;
+// After the last file reports `done` there are no events until the pipeline
+// is `ready`: the WASM runtime parses a ~180 MB graph and allocates the
+// session in silence. A phone needs minutes for that, and the 90 s download
+// budget was declaring the load stalled mid-initialisation.
+const GEN_LOAD_INIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Race a load against (a) the caller's abort signal and (b) an idle watchdog
@@ -53,10 +58,14 @@ function _watchLoad(promise, { signal, idleMs } = {}){
   let idleTimer = null;
   let settle;
   const guard = new Promise((_, reject) => { settle = reject; });
-  const arm = () => {
-    if(!idleMs) return;
+  // `touch(ms)` may pass a longer window: once every file has downloaded the
+  // library goes quiet while it parses the model and builds the session,
+  // which on a slow phone takes well over the download idle budget.
+  const arm = (ms) => {
+    const win = (typeof ms === 'number' && ms > 0) ? ms : idleMs;
+    if(!win) return;
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => settle(new Error('LOAD_STALLED: no progress for ' + Math.round(idleMs / 1000) + 's')), idleMs);
+    idleTimer = setTimeout(() => settle(new Error('LOAD_STALLED: no progress for ' + Math.round(win / 1000) + 's')), win);
   };
   const onAbort = () => settle(new Error('LOAD_ABORTED'));
   if(signal){
@@ -204,7 +213,12 @@ export function createGenEngine(cfg){
       if(signal && signal.aborted) throw new Error('LOAD_ABORTED');
       try{ onProgress({ status: 'Loading with WASM (CPU)', file: slug, progress: undefined }); }catch(_){}
       let watch = null;
-      const progressTouch = (ev) => { if(watch) watch.touch(); onProgress(ev); };
+      const progressTouch = (ev) => {
+        // A file finishing may be the last event before `ready`; give the
+        // silent initialisation phase its own, longer window.
+        if(watch) watch.touch(ev && ev.status === 'done' ? GEN_LOAD_INIT_TIMEOUT_MS : undefined);
+        onProgress(ev);
+      };
       watch = _watchLoad(
         pipeline('text-generation', slug, {
           device: 'wasm',
@@ -238,7 +252,7 @@ export function createGenEngine(cfg){
    * Generate text for one request. Streams tokens via onToken(reqId, text).
    * @returns {Promise<string>} full generated text (prompt excluded)
    */
-  async function generate({ reqId, messages, tools, prompt, maxTokens, temperature, signal } = {}){
+  async function generate({ reqId, messages, tools, prompt, maxTokens, temperature, repetitionPenalty, signal } = {}){
     if(!pipe) throw new Error('GEN_NOT_READY');
     const m = await _import();
     const tokenizer = pipe.tokenizer;
@@ -294,6 +308,9 @@ export function createGenEngine(cfg){
       return_full_text: false,
       streamer,
     };
+    // Discourage the repetition loops small greedy models fall into (a value
+    // of 1 is the library default and means "off").
+    if(typeof repetitionPenalty === 'number' && repetitionPenalty > 1) generateOpts.repetition_penalty = repetitionPenalty;
     if(stopping) generateOpts.stopping_criteria = stopping;
 
     try{

@@ -74,7 +74,7 @@ Calendar view supports `cfg.calMode`: `month` (grid + agenda), `week` (seven ful
 | Pipeline | File | Model | Purpose | When it loads |
 |---|---|---|---|---|
 | Embedding | [`js/intel.js`](js/intel.js) | `Xenova/bge-small-en-v1.5` (384‑dim, ~33 MB quantized) on both WebGPU and WASM | Semantic search, smart‑add, harmonize, auto‑organize, duplicates, category centroids, list routing, due‑date kNN, values alignment | Automatically on first idle (`requestIdleCallback`) after page load |
-| Generative Ask | [`js/gen.js`](js/gen.js), [`js/ask.js`](js/ask.js) | SmolLM2 / Qwen2.5 ONNX via Transformers.js (~135–230 MB) | Cmd+K Ask chat → JSON ops; parse wand; breakdown; optional LLM rationales on batch features | User opt-in: Settings → Generative AI → Download; auto-rehydrates from HTTP cache on reload |
+| Generative Ask | [`js/gen.js`](js/gen.js), [`js/ask.js`](js/ask.js) | SmolLM2 / Qwen2.5 ONNX via Transformers.js (basic 135M: 118 MB q4f16 on WebGPU, 180 MB q4 on WASM; 360M: 275–390 MB; Qwen 0.5B / 1.5B: 485 MB–1.8 GB) | Cmd+K Ask chat → JSON ops; parse wand; breakdown; optional LLM rationales on batch features | User opt-in: Settings → Generative AI. The chat downloads the basic model on the first question (progress in the bubble) or Settings → Download; auto-rehydrates from HTTP cache on reload |
 
 Uses **WebGPU when available, WASM fallback everywhere else** — same model, different backend. Weights are cached by the browser's HTTP cache (the service worker explicitly does **not** precache the CDN model URL, to avoid exhausting the PWA cache quota on mobile).
 

@@ -67,6 +67,7 @@ self.onmessage = async (e) => {
           prompt: msg.prompt,
           maxTokens: msg.maxTokens,
           temperature: msg.temperature,
+          repetitionPenalty: msg.repetitionPenalty,
           signal: ctl.signal,
         });
         post({ type: 'result', reqId: msg.reqId, text });
