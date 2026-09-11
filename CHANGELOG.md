@@ -1,5 +1,10 @@
 # Changelog
 
+## v78 — 2026-09-11
+
+- **Fix (board / drag and drop)**: dropping a card onto the middle of another card, or onto the "Drop tasks here" placeholder of an empty column, did nothing and the card snapped back — which on a phone, where the neighbouring column is only a sliver wide, was every cross-column drop. The SortableJS setup used `swapThreshold: 0.65` with `invertSwap: true`, leaving the centre 65% of each card as a dead zone, and the placeholder counted as a sortable item. Cards are now the only items (`draggable: '.board-card'`), the whole card is the swap zone, the placeholder is hidden while a drag is in flight, and the column body keeps a minimum height so an empty column stays a target. Verified with real mouse and touch events in headless Chromium across the status, list and priority groupings, nesting, and repeated drops; the v76 build fails the same probe at those spots. `tests/board-drop-zones.test.mjs` pins the configuration.
+- Service worker cache rotated to `odtaulai-v78`.
+
 ## v77 — 2026-09-10
 
 The chat (Cmd/Ctrl+K → Edit / Ask) kept ending in an error on phones. Reproduced in a 390×844 headless Chromium with the real Transformers.js runtime on the WASM path: the 135M model took 36 s to its first token, then looped on the task context for five minutes until the time budget ran out ("Timed out — try a shorter request…"); the abort that followed went unanswered for 9 s, the worker was torn down, and the next question showed "Download local AI" again. This wave makes the basic model the default, lets the chat load it by itself, and stops the loop from eating the budget.

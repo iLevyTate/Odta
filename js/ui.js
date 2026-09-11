@@ -2774,6 +2774,12 @@ function _initBoardSortables(){
     // target (nested Sortable) and must not itself initiate a drag on the
     // parent card — otherwise grabbing a subtask would drag its parent.
     handle: '.board-card-header',
+    // Only cards are items. Without this the "Drop tasks here" placeholder in
+    // an empty column counted as a sortable item: hovering it never produced
+    // a move (see swapThreshold below), so a card dropped onto an empty
+    // column snapped back — on phones, where the neighbouring column is only
+    // a sliver wide, that was every cross-column drop.
+    draggable: '.board-card',
     filter: 'button,a,input,select,textarea,[data-action],.board-subs-toggle',
     preventOnFilter: false,
     // Force fallback so mouse + touch share one synthetic-drag code path —
@@ -2785,10 +2791,14 @@ function _initBoardSortables(){
     // and keeps tap-to-open responsive.
     delay: 200,
     delayOnTouchOnly: true,
-    // Nested-sortables guidance from SortableJS docs: drop center-of-card to
-    // nest, off-center to reorder.
-    swapThreshold: 0.65,
-    invertSwap: true,
+    // Whole card is the swap zone. The previous 0.65 threshold with the
+    // inverted swap zone left the middle 65% of every card (and of the empty
+    // placeholder) as a dead zone where hovering did nothing, so most drops
+    // — people aim for the middle — snapped back. Nesting does not need the
+    // dead zone: the .board-card-children strip is its own drop target
+    // (given a visible height by body.board--dragging in the CSS).
+    swapThreshold: 1,
+    invertSwap: false,
     scroll: true,
     scrollSensitivity: 80,
     scrollSpeed: 14,
