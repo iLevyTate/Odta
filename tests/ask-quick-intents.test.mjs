@@ -150,3 +150,40 @@ test('quick intent: without the quick-add parser present, creation falls through
   await win.askRun('add a task to buy milk', {});
   assert.ok(calls.length >= 1, 'no parser → model path (keeps the older sandboxes honest)');
 });
+
+test('quick intent: edits phrased with "add"/"make" are NOT turned into new tasks', async () => {
+  const { win, calls } = mkSandbox({ tasks: TASKS });
+  for (const q of ['make task 12 urgent', 'add #work to task 3', 'add buy milk to my Shopping list', 'add a high priority task to renew the passport', 'make the bed']) {
+    calls.length = 0;
+    const res = await win.askRun(q, {});
+    assert.notEqual(res.quick, 'create', q + ' must not be an instant create');
+    assert.ok(calls.length >= 1 || res.ok, q + ' reaches the model');
+  }
+});
+
+test('quick intent: "clean up my overdue tasks" proposes one RESCHEDULE per overdue task, to today or tomorrow', async () => {
+  const { win, calls } = mkSandbox({ tasks: TASKS });
+  let res = await win.askRun('Clean up my overdue tasks', {});
+  assert.equal(calls.length, 0);
+  assert.equal(res.quick, 'overdue');
+  assert.deepEqual(res.ops.map((o) => [o.name, o.args.id, o.args.dueDate]), [['RESCHEDULE', 1, TODAY]]);
+  res = await win.askRun('push overdue to tomorrow', {});
+  assert.deepEqual(res.ops.map((o) => o.args.dueDate), ['2026-09-11']);
+  const { win: w2 } = mkSandbox({ tasks: TASKS.filter((t) => t.id !== 1) });
+  res = await w2.askRun('clean up overdue tasks', {});
+  assert.match(res.chatAnswer, /Nothing is overdue/);
+});
+
+test('quick intent: retrospective questions go to the model, not the open-task lookups', async () => {
+  const { win, calls } = mkSandbox({ tasks: TASKS });
+  const res = await win.askRun('what did I finish yesterday?', {});
+  assert.notEqual(res.quick, 'lookup');
+  assert.ok(calls.length >= 1);
+});
+
+test('_askAddDaysIso: month and year boundaries without timezone drift', () => {
+  const { win } = mkSandbox({ tasks: [] });
+  assert.equal(win._askAddDaysIso('2026-09-30', 1), '2026-10-01');
+  assert.equal(win._askAddDaysIso('2026-12-31', 1), '2027-01-01');
+  assert.equal(win._askAddDaysIso('2026-03-01', -1), '2026-02-28');
+});

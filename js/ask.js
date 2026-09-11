@@ -305,9 +305,23 @@ function _askCtx(){
 // Creation ops pass through validateOps and the preview/apply pipeline like
 // any model-proposed op.
 const ASK_QUICK_REMIND_RX = /^(?:please\s+|pls\s+)?remind me\s+(?:to\s+|that\s+(?:i\s+(?:need|have) to\s+)?|about\s+)?(.+)$/i;
-const ASK_QUICK_CREATE_RX = /^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:add|create|make|new)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:task|todo|to-do|reminder|item|entry)?\s*(?:to|:|-|called|named|for|that says)?\s*(.+)$/i;
+// "make" is deliberately not a create verb: "make task 12 urgent" is an edit.
+const ASK_QUICK_CREATE_RX = /^(?:please\s+|pls\s+|can you\s+|could you\s+)?(?:add|create|new)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:task|todo|to-do|reminder|item|entry)?\s*(?:to|:|-|called|named|for|that says)?\s*(.+)$/i;
+// A "create" whose remainder talks about an existing task, a list, or an
+// attribute change is an edit in disguise ("add #work to task 3", "add buy
+// milk to my Shopping list", "add a high priority task …") — the model
+// resolves ids and lists; the parser would create a task named after it.
+const ASK_QUICK_CREATE_REJECT_RX = /^\d|\btasks?\s+#?\d+\b|\bpriority\b|\b(?:done|completed?)\b|\blist\b|\b(?:in|to|into)\s+(?:my|the)\s+\w+\s*$/i;
+// "clean up / clear / reschedule / push (all|my) overdue [tasks] [to today|tomorrow]"
+const ASK_QUICK_OVERDUE_RX = /^(?:please\s+|pls\s+)?(?:clean\s*up|clear|reschedule|move|push|bump)\s+(?:all\s+|my\s+|the\s+)?(?:overdue|late|past[- ]due)(?:\s+(?:tasks?|items?|stuff|things))?(?:\s+to\s+(today|tomorrow))?\s*[.!]?$/i;
 
 function _askCapFirst(s){ const t = String(s || '').trim(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
+/** ISO date `n` days after `iso` (local calendar arithmetic, no TZ drift). */
+function _askAddDaysIso(iso, n){
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, (d || 1) + n);
+  return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+}
 
 /**
  * @param {string} q
@@ -323,7 +337,7 @@ async function askQuickIntent(q){
     const raw = m[1].replace(/^["“'‘]+|["”'’]+$/g, '').replace(/[.!]+$/, '').trim();
     // Anything that reads like a second instruction is not a plain create.
     const compound = /\b(and then|, then|then (?:mark|move|delete|archive)|and (?:mark|move|delete|archive))\b/i.test(raw);
-    if(raw.length >= 2 && raw.length <= 200 && !compound){
+    if(raw.length >= 2 && raw.length <= 200 && !compound && !ASK_QUICK_CREATE_REJECT_RX.test(raw)){
       let parsed = null;
       try{ parsed = (typeof parseQuickAddAsync === 'function') ? await parseQuickAddAsync(raw) : parseQuickAdd(raw); }catch(_){ parsed = null; }
       if(parsed && parsed.name && String(parsed.name).trim()){
@@ -337,11 +351,26 @@ async function askQuickIntent(q){
     }
   }
 
-  // Lookups → prose from the data.
-  if(!_askIsQuestionLike(s) || _askMentionsWriteVerb(s)) return null;
   if(typeof tasks === 'undefined' || !Array.isArray(tasks)) return null;
   const today = _askToday();
   const open = tasks.filter(t => t && !t.archived && t.status !== 'done');
+
+  // "Clean up my overdue tasks" (the first starter chip) → one RESCHEDULE
+  // per overdue task to today (or tomorrow), exactly what the ops prompt's
+  // own example asks the model to produce — previewed and applied like any
+  // proposal, so nothing moves without the user's say-so.
+  const od = s.match(ASK_QUICK_OVERDUE_RX);
+  if(od){
+    const overdue = open.filter(t => t.dueDate && String(t.dueDate) < today);
+    if(!overdue.length) return { chatAnswer: 'Nothing is overdue — there is nothing to clean up.', kind: 'lookup' };
+    const target = od[1] && /tomorrow/i.test(od[1]) ? _askAddDaysIso(today, 1) : today;
+    return { ops: overdue.map(t => ({ name: 'RESCHEDULE', args: { id: t.id, dueDate: target } })), kind: 'overdue' };
+  }
+
+  // Lookups → prose from the data. Anything retrospective ("what did I
+  // finish yesterday?") is left to the model, which sees done/archived
+  // tasks in its context for those.
+  if(!_askIsQuestionLike(s) || _askMentionsWriteVerb(s) || _askIsRetrospective(s)) return null;
   const byDue = (a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || ''));
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   const list = (arr, withDue) => {
@@ -349,7 +378,7 @@ async function askQuickIntent(q){
     if(arr.length > 8) lines.push('… and ' + plural(arr.length - 8, 'more'));
     return lines.join('\n');
   };
-  const addDays = (n) => { const d = new Date(today + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const addDays = (n) => _askAddDaysIso(today, n);
   const answer = (text) => ({ chatAnswer: text, kind: 'lookup' });
 
   if(/\b(overdue|past due|late|behind on)\b/i.test(s)){
@@ -1260,6 +1289,7 @@ if(typeof window !== 'undefined'){
   window._askMentionsWriteVerb = _askMentionsWriteVerb;
   window._askLooksDegenerate = _askLooksDegenerate;
   window.askQuickIntent = askQuickIntent;
+  window._askAddDaysIso = _askAddDaysIso;
   window._askCtx = _askCtx;
   window._askCalendarBlock = _askCalendarBlock;
   window._askDateRef = _askDateRef;

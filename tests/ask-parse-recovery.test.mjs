@@ -106,7 +106,7 @@ test('askRun: two unparseable ops turns on a command fall through to the write-o
       return '[,';
     },
   });
-  const res = await win.askRun('Clean up overdue tasks', {});
+  const res = await win.askRun('Sort out the overdue tasks', {});
   assert.ok(res.ok, JSON.stringify(res));
   assert.notEqual(String(res.reason || ''), 'PARSE_FAILED');
   assert.equal(res.ops.length, 1);
@@ -164,7 +164,7 @@ test('runReadOp QUERY_TASKS: overdue / dueBefore / dueAfter / status / priority 
   assert.ok(rel.tasks.length >= 1);
 });
 
-test('askRun: "clean up overdue tasks" reads with overdue:true, then writes against the returned ids', async () => {
+test('askRun: "organise the overdue tasks" reads with overdue:true, then writes against the returned ids', async () => {
   const { win, calls } = mkSandbox({
     tasks: TASKS,
     reply: (n, messages) => {
@@ -175,7 +175,7 @@ test('askRun: "clean up overdue tasks" reads with overdue:true, then writes agai
       return JSON.stringify(ids.map((id) => ({ name: 'RESCHEDULE', args: { id, dueDate: TODAY } })));
     },
   });
-  const res = await win.askRun('clean up my overdue tasks', {});
+  const res = await win.askRun('organise the overdue tasks', {});
   assert.ok(res.ok, JSON.stringify(res));
   assert.equal(res.readRounds, 1);
   assert.deepEqual(res.ops.map((o) => o.args.id), [1, 3]);

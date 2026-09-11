@@ -356,13 +356,16 @@ function parseQuickAdd(raw){
     props.dueDate=todayISOs;
     text=text.replace(/\beod\b/i,'');
   }else{
-    const dayMatch=text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
+    // The qualifier in front of the weekday ("next monday", "on friday", "by
+    // thu") is consumed with it — it used to survive in the title, so "call
+    // dentist next monday" became the task "call dentist next".
+    const dayMatch=text.match(/(?:\b(?:next|this|coming|on|by|for|until|till|due|before)\s+)?\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|tues|thurs|sun|mon|tue|wed|thu|fri|sat)\b(?!['’])/i);
     if(dayMatch){
       const target=days[dayMatch[1].toLowerCase().slice(0,3)];
       const today=_qaDayOfWeek(todayISOs);
       let diff=(target-today+7)%7;if(diff===0)diff=7;
       props.dueDate=_qaShiftISO(todayISOs,diff);
-      text=text.replace(dayMatch[0],'');
+      text=text.replace(dayMatch[0],' ');
     }
   }
   text = _applyQuickAddTime(text, props);
