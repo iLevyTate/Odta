@@ -448,13 +448,13 @@ test('askRun: imperative with NOOP retry surfaces the missing-info reason', asyn
   assert.ok(res.chatAnswer && /dentist appointment/i.test(res.chatAnswer));
 });
 
-test('askRun: question-like query with ops=[] runs prose pass and returns chatAnswer', async () => {
+test('askRun: a pure question answers prose-first (one call, the grounded prose prompt)', async () => {
   // Regression guard: the ops-only system prompt teaches the LLM to answer
   // "what's overdue?" with `[]`, which was correct for the ops pipeline but
-  // left the user staring at "No actionable changes." cognitaskRun now does
-  // a second prose pass for question-shaped queries so a real answer comes
-  // back. The sequence below mirrors the runtime: first call returns `[]`
-  // (ops pipeline), second call returns plain prose (the prose pass).
+  // left the user staring at "No actionable changes." A pure question now
+  // goes straight to the grounded prose pass (the ops prompt is a ~1.5k-token
+  // prefill a 135M model on a WASM phone spent 30 s on before returning `[]`
+  // anyway). The first call must therefore carry the prose system prompt.
   const tasks = [
     { id: 1, name: 'Pay electric bill', status: 'open', priority: 'urgent', archived: false, lastModified: 1 },
     { id: 2, name: 'Buy milk',          status: 'open', priority: 'normal', archived: false, lastModified: 2 },
@@ -478,9 +478,9 @@ test('askRun: question-like query with ops=[] runs prose pass and returns chatAn
     getActiveCategories: () => [],
     intelLoad: async () => {},
     findTask: (id) => tasks.find((t) => t.id === id) || null,
-    genGenerate: async () => {
+    genGenerate: async ({ messages }) => {
       call += 1;
-      if (call === 1) return '[]';
+      assert.match(messages[0].content, /concise on-device assistant/i, 'first call uses the prose prompt');
       return 'The most urgent open task is "Pay electric bill". Nothing else is overdue.';
     },
   };
@@ -490,11 +490,53 @@ test('askRun: question-like query with ops=[] runs prose pass and returns chatAn
   ctx.parseOpsJson = win.parseOpsJson;
   ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
   new Function(...Object.keys(ctx), askSrc2)(...Object.values(ctx));
-  const res = await win.askRun('what is overdue?', {});
+  // (Not "what is overdue?" — that is an instant lookup answered from the
+  // data before any model runs; see ask-quick-intents.test.mjs.)
+  const res = await win.askRun('what should I focus on first?', {});
   assert.ok(res.ok, JSON.stringify(res));
   assert.equal(res.ops.length, 0);
-  assert.equal(call, 2, 'expected ops pass + prose pass');
+  assert.equal(call, 1, 'prose-first: no ops pass for a pure question');
   assert.ok(res.chatAnswer && /electric bill/i.test(res.chatAnswer), 'chatAnswer must contain the answer prose: ' + res.chatAnswer);
+});
+
+test('askRun: an empty prose-first answer falls through to the ops pipeline (reads still ground bigger models)', async () => {
+  const tasks = [
+    { id: 1, name: 'Pay electric bill', status: 'open', priority: 'urgent', dueDate: '2020-01-01', archived: false, lastModified: 1 },
+  ];
+  const schemaSrc2 = readFileSync(join(root, 'js', 'tool-schema.js'), 'utf8');
+  const askSrc2 = readFileSync(join(root, 'js', 'ask.js'), 'utf8');
+  const win = {};
+  const prompts = [];
+  const ctx = {
+    window: win, console, tasks, lists: [],
+    isIntelReady: () => true, embedText: async () => new Float32Array(8), semanticSearch: async () => [],
+    isGenReady: () => true, pushAskHistory: () => {}, getGenCfg: () => ({ timeoutSec: 30 }),
+    getUpcomingEvents: () => [], getActiveCategories: () => [], intelLoad: async () => {},
+    findTask: (id) => tasks.find((t) => t.id === id) || null,
+    genGenerate: async ({ messages }) => {
+      const sys = messages[0].content;
+      prompts.push(/concise on-device assistant/i.test(sys) ? 'prose' : 'ops');
+      if (prompts.length === 1) return '';                                   // prose-first: nothing usable
+      if (prompts.length === 2) return '[{"name":"QUERY_TASKS","args":{"overdue":true}}]'; // ops: read
+      if (prompts.length === 3) return '[]';                                 // ops: no writes
+      return 'Only the electric bill is overdue.';                            // trailing prose pass
+    },
+  };
+  new Function(...Object.keys(ctx), schemaSrc2)(...Object.values(ctx));
+  ctx.TOOL_SCHEMA = win.TOOL_SCHEMA; ctx.validateOps = win.validateOps; ctx.parseOpsJson = win.parseOpsJson; ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
+  new Function(...Object.keys(ctx), askSrc2)(...Object.values(ctx));
+  const res = await win.askRun('what should I focus on first?', {});
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.deepEqual(prompts, ['prose', 'ops', 'ops', 'prose']);
+  assert.equal(res.readRounds, 1, 'the read round still runs when prose-first came back empty');
+  assert.match(res.chatAnswer || '', /electric bill/);
+});
+
+test('_askMentionsWriteVerb keeps mixed read-then-write questions off the prose shortcut', () => {
+  const { win } = mkSandbox({ tasks: [] });
+  assert.equal(win._askMentionsWriteVerb('what is on my calendar, then mark rent urgent'), true);
+  assert.equal(win._askMentionsWriteVerb('what should I do next?'), false);
+  assert.equal(win._askMentionsWriteVerb('how many tasks are overdue?'), false);
 });
 
 test('askRun: non-question with ops=[] does NOT trigger a second pass', async () => {

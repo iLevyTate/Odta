@@ -28,6 +28,7 @@ const TODAY = '2026-09-06';
 function mkSandbox({ tasks = [], lists = [], reply } = {}) {
   const win = {};
   const calls = [];
+  let genOverride = null;
   const ctx = {
     window: win,
     console,
@@ -46,6 +47,7 @@ function mkSandbox({ tasks = [], lists = [], reply } = {}) {
     findTask: (id) => tasks.find((t) => t.id === id) || null,
     genGenerate: async (o) => {
       calls.push(o);
+      if (genOverride) return genOverride(o, calls.length);
       const text = reply(calls.length, o.messages, o);
       if (o.onToken) for (const c of text) o.onToken(c);
       return text;
@@ -58,7 +60,7 @@ function mkSandbox({ tasks = [], lists = [], reply } = {}) {
   ctx.normalizeProposedOps = win.normalizeProposedOps;
   ctx.toolSchemaPromptBlock = win.toolSchemaPromptBlock;
   new Function(...Object.keys(ctx), askSrc)(...Object.values(ctx));
-  return { win, calls };
+  return { win, calls, setGen: (fn) => { genOverride = fn; } };
 }
 
 const TASKS = [
@@ -104,7 +106,7 @@ test('askRun: two unparseable ops turns on a command fall through to the write-o
       return '[,';
     },
   });
-  const res = await win.askRun('Clean up overdue tasks', {});
+  const res = await win.askRun('Sort out the overdue tasks', {});
   assert.ok(res.ok, JSON.stringify(res));
   assert.notEqual(String(res.reason || ''), 'PARSE_FAILED');
   assert.equal(res.ops.length, 1);
@@ -162,7 +164,7 @@ test('runReadOp QUERY_TASKS: overdue / dueBefore / dueAfter / status / priority 
   assert.ok(rel.tasks.length >= 1);
 });
 
-test('askRun: "clean up overdue tasks" reads with overdue:true, then writes against the returned ids', async () => {
+test('askRun: "organise the overdue tasks" reads with overdue:true, then writes against the returned ids', async () => {
   const { win, calls } = mkSandbox({
     tasks: TASKS,
     reply: (n, messages) => {
@@ -173,7 +175,7 @@ test('askRun: "clean up overdue tasks" reads with overdue:true, then writes agai
       return JSON.stringify(ids.map((id) => ({ name: 'RESCHEDULE', args: { id, dueDate: TODAY } })));
     },
   });
-  const res = await win.askRun('clean up my overdue tasks', {});
+  const res = await win.askRun('organise the overdue tasks', {});
   assert.ok(res.ok, JSON.stringify(res));
   assert.equal(res.readRounds, 1);
   assert.deepEqual(res.ops.map((o) => o.args.id), [1, 3]);
@@ -211,18 +213,67 @@ test('_askIdleAbort: streaming progress keeps a slow generation alive; silence a
   for (let i = 0; i < 12; i++) { await sleep(10); w1.touch(); }
   assert.equal(live.signal.aborted, false, 'progress must not be cut off at the old wall-clock limit');
   w1.clear();
-  // First-token window is 2× idle (prefill), then a silent stream aborts.
+  // First-token window is 3× idle (prefill), then a silent stream aborts.
   const stuck = new AbortController();
   const w2 = win._askIdleAbort(40, stuck);
-  await sleep(50);
-  assert.equal(stuck.signal.aborted, false, 'prefill gets 2× the idle budget');
-  await sleep(60);
+  await sleep(90);
+  assert.equal(stuck.signal.aborted, false, 'prefill gets 3× the idle budget');
+  await sleep(80);
   assert.equal(stuck.signal.aborted, true, 'no tokens for the idle budget → abort');
   w2.clear();
+  // After the first token the plain idle budget applies.
+  const trickle = new AbortController();
+  const w4 = win._askIdleAbort(40, trickle);
+  w4.touch();
+  await sleep(70);
+  assert.equal(trickle.signal.aborted, true, 'post-first-token silence aborts at 1× idle');
+  w4.clear();
   // clear() disarms everything.
   const cleared = new AbortController();
   const w3 = win._askIdleAbort(20, cleared);
   w3.clear();
   await sleep(80);
   assert.equal(cleared.signal.aborted, false);
+});
+
+test('_askLooksDegenerate: flags a verbatim loop, not a legitimate op array', () => {
+  const { win } = mkSandbox({ tasks: TASKS, reply: () => '[]' });
+  const loop = '{"id":1,"name":"Call dentist next","status":"open","list":"Home & Errands"},\n'.repeat(4);
+  assert.equal(win._askLooksDegenerate(loop), true, 'four verbatim copies of a 48-char window is a loop');
+  const ops = '[' + [1, 2, 3, 4, 5, 6, 7, 8].map((id) => `{"name":"RESCHEDULE","args":{"id":${id},"dueDate":"${TODAY}"}}`).join(',\n') + ']';
+  assert.equal(win._askLooksDegenerate(ops), false, 'eight distinct ops share keys but not 48-char runs');
+  assert.equal(win._askLooksDegenerate('short'), false, 'nothing to judge below the length floor');
+});
+
+test('askRun: the degeneration guard aborts only its own turn and skips the corrective retry', async () => {
+  const loop = '{"id":1,"name":"Call dentist next","status":"open","list":"Home & Errands"},\n'.repeat(12);
+  let opsTurns = 0;
+  let sawAbort = false;
+  const { win, setGen } = mkSandbox({ tasks: TASKS, reply: () => '[]' });
+  // A generator that honours the per-turn signal the way the real engine does
+  // (checked between tokens; rejects with GEN_ABORTED once interrupted).
+  setGen((o) => {
+    if (/concise on-device assistant/i.test(o.messages[0].content)) {
+      const prose = 'The electric bill and the passport renewal are overdue.';
+      if (o.onToken) for (const c of prose) o.onToken(c);
+      return prose;
+    }
+    opsTurns++;
+    let out = '';
+    for (const ch of loop.match(/.{1,8}/gs)) {
+      if (o.signal && o.signal.aborted) { sawAbort = true; throw new Error('GEN_ABORTED'); }
+      out += ch;
+      if (o.onToken) o.onToken(ch);
+    }
+    return out;
+  });
+  // Not question-shaped (that would take the prose-first shortcut) and not
+  // imperative: the ops loop runs, loops, is cut, and prose is the fallback.
+  const res = await win.askRun('overdue stuff', {});
+  assert.ok(sawAbort, 'the looping turn was cut short via its own signal');
+  assert.equal(opsTurns, 1, 'no corrective retry for a loop — it would only reproduce it');
+  assert.ok(res.ok, JSON.stringify(res));
+  assert.notEqual(res.reason, 'ABORTED', 'our own cut must not read as the user pressing Stop');
+  assert.match(res.chatAnswer || '', /overdue/, 'falls through to the grounded prose pass');
+  assert.ok(!/"id":1/.test(res.chatAnswer || ''), 'the echoed context is never shown as an answer');
 });
