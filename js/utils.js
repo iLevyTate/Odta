@@ -161,8 +161,9 @@ window.announce=announce;
   if(typeof window === 'undefined' || !window.visualViewport) return;
   const vv = window.visualViewport;
   const root = document.documentElement;
-  let lastInset = -1, lastVvH = -1, lastClass = false;
-  const update = () => {
+  let lastInset = -1, lastVvH = -1, lastClass = false, pendingFrame = 0;
+  const commit = () => {
+    pendingFrame = 0;
     // offsetTop is non-zero when the page scrolls inside the visual viewport
     // (e.g. iOS pinch-zoom). Including it ensures kb-inset reflects ONLY the
     // keyboard region, not the address-bar / zoomed-pan area.
@@ -174,11 +175,22 @@ window.announce=announce;
     if(vvH !== lastVvH){     root.style.setProperty('--vv-height', vvH + 'px'); lastVvH = vvH; }
     if(open !== lastClass){  root.classList.toggle('kb-open', open); lastClass = open; }
   };
+  // `resize` and `scroll` both fire while the soft keyboard animates, often
+  // twice in the same frame. Writing the custom properties from each one made
+  // every --kb-inset / --vv-height consumer (the overlay padding, the sheet's
+  // max-height, the modal body's max-height) reflow more than once per frame,
+  // which reads as a stutter in an open bottom sheet. Coalesce to one write
+  // per animation frame — the values still track the keyboard 1:1.
+  const update = () => {
+    if(pendingFrame) return;
+    pendingFrame = requestAnimationFrame(commit);
+  };
   vv.addEventListener('resize', update);
   vv.addEventListener('scroll', update);
   // Initial values so CSS doesn't see an undefined custom property and fall
   // back to the keyword default (which often isn't what the rule expects).
-  update();
+  // Synchronous (not via update) so first paint already has real numbers.
+  commit();
 
   // When an input gains focus inside an overlay, the browser sometimes
   // doesn't scroll it into view above the keyboard (Safari especially when
@@ -192,7 +204,22 @@ window.announce=announce;
     // on desktop where focusin fires for normal tab navigation.
     setTimeout(() => {
       if(!root.classList.contains('kb-open')) return;
-      try{ el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }catch(_){}
+      let rect;
+      try{ rect = el.getBoundingClientRect(); }catch(_){ return; }
+      // Only scroll a field the keyboard actually covers. An overlay's
+      // --kb-inset padding usually clears it already (the quick-add input sits
+      // right above the keyboard), and scrolling anyway layered a third
+      // animation — this smooth scroll — on top of the sheet's slide-in and
+      // the keyboard's own resize. That pile-up was the open-sheet jitter.
+      // getBoundingClientRect is in layout-viewport coordinates, so the
+      // visible band is [offsetTop, offsetTop + height] of the visual viewport.
+      const top = vv.offsetTop, bottom = vv.offsetTop + vv.height;
+      if(rect.top >= top && rect.bottom <= bottom) return;
+      // Inside a fixed overlay the sheet may still be settling; jump instantly
+      // rather than animating against it. In normal page flow keep it smooth.
+      const inOverlay = typeof el.closest === 'function'
+        && !!el.closest('.modal-overlay, .cmdk-overlay, .what-next-overlay');
+      try{ el.scrollIntoView({ block: 'center', behavior: inOverlay ? 'auto' : 'smooth' }); }catch(_){}
     }, 160);
   });
 })();
