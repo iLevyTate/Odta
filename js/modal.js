@@ -12,7 +12,11 @@
  *
  * opts (all optional):
  *   variant:        'sheet' | 'dialog' | 'palette'  (default inferred from class)
- *   focus:          selector|Element            (focus after open transition; overrides default trap focus)
+ *   focus:          selector|Element            (overrides default trap focus)
+ *   select:         true to also .select() the focused field
+ *   deferFocus:     force/suppress "focus only once the open transition ends".
+ *                   Defaults to true for the `sheet` variant, false otherwise
+ *                   — see the focus timing note in open() below.
  *   onOpen(el):     callback fired AFTER the opacity transition completes
  *   onClose(el, r): callback fired when close() is invoked
  *   onRequestClose(): user-requested-close hook (ESC). If provided, the
@@ -56,6 +60,12 @@
   function _lockBody(){
     _lockCount++;
     if(_lockCount > 1) return;
+    // A smooth window scroll may still be in flight — showTab() nudges the tab
+    // nav into view, and the quick-add FAB calls it immediately before opening
+    // the sheet. position:fixed freezes the page mid-flight while the browser
+    // keeps running the scroll underneath, so it lands somewhere else on
+    // unlock. An instant scroll to where we already are cancels it.
+    try { window.scrollTo({ top: window.scrollY, left: window.scrollX, behavior: 'auto' }); } catch(_){}
     _scrollY = window.scrollY || window.pageYOffset || 0;
     document.body.classList.add('modal-locked');
     // position:fixed on body keeps the scroll position visible without
@@ -86,6 +96,18 @@
     const variant = opts.variant || _inferVariant(el);
     const v = VARIANTS[variant] || VARIANTS.dialog;
 
+    // Focus timing. Focusing a text field starts the soft keyboard, whose own
+    // resize animation then drives --kb-inset / --vv-height — which the mobile
+    // sheet rules use for its padding and max-height. Do that one frame into
+    // the slide-up and the sheet is being re-laid-out while it is still
+    // transforming: the "jitter" when the quick-add sheet or task modal opens.
+    // Sheets therefore wait for the transition to finish, so the sheet settles
+    // first and the keyboard lifts it afterwards — one motion, then another.
+    // Dialogs and the Cmd+K palette keep the immediate focus: they fade rather
+    // than slide, and the palette must catch keystrokes typed right after the
+    // shortcut.
+    const deferFocus = (opts.deferFocus !== undefined) ? !!opts.deferFocus : (variant === 'sheet');
+
     _state.set(id, { variant, onClose: opts.onClose, onRequestClose: opts.onRequestClose, locked: v.scrollLock });
     _stack.push(id);
     if(v.scrollLock) _lockBody();
@@ -102,13 +124,18 @@
       } else if(typeof openFocusTrap === 'function'){
         openFocusTrap(el, { skipInitialFocus: !!opts.skipInitialFocus });
       }
-      if(opts.focus){
-        const t = (typeof opts.focus === 'string') ? el.querySelector(opts.focus) : opts.focus;
-        if(t && typeof t.focus === 'function'){
-          try { t.focus({ preventScroll: true }); } catch(_){ try { t.focus(); } catch(_){} }
-        }
-      }
+      if(!deferFocus) applyFocus();
     });
+
+    function applyFocus(){
+      if(!opts.focus) return;
+      // Closed again (or reopened elsewhere) while we waited — don't yank focus.
+      if(!el.classList.contains('open')) return;
+      const t = (typeof opts.focus === 'string') ? el.querySelector(opts.focus) : opts.focus;
+      if(!t || typeof t.focus !== 'function') return;
+      try { t.focus({ preventScroll: true }); } catch(_){ try { t.focus(); } catch(_){} }
+      if(opts.select && typeof t.select === 'function'){ try { t.select(); } catch(_){} }
+    }
 
     if(v.swipe && typeof bindSheetSwipe === 'function'){
       bindSheetSwipe(el, function(){
@@ -125,30 +152,28 @@
     // .backdrop-ready trigger so callers can rely on the modal being fully
     // visible when onOpen fires.
     return new Promise(function(resolve){
-      let done = false;
-      const onEnd = function(e){
+      let done = false, timer = 0;
+      const settle = function(){
         if(done) return;
-        if(e.target !== el || e.propertyName !== 'opacity') return;
         done = true;
         el.removeEventListener('transitionend', onEnd);
+        if(timer) clearTimeout(timer);
+        if(deferFocus) applyFocus();
         if(typeof opts.onOpen === 'function'){
           try { opts.onOpen(el); } catch(err){ console.warn('[modal] onOpen', err); }
         }
         resolve(true);
       };
+      const onEnd = function(e){
+        if(done) return;
+        if(e.target !== el || e.propertyName !== 'opacity') return;
+        settle();
+      };
       el.addEventListener('transitionend', onEnd);
       // Safety net — if transitionend never fires (reduced-motion, browser
-      // bug, element removed), still resolve and run onOpen.
+      // bug, element removed), still resolve, focus and run onOpen.
       // 400ms covers --dur-modal (240) and --dur-fast (120) with margin.
-      setTimeout(function(){
-        if(done) return;
-        done = true;
-        el.removeEventListener('transitionend', onEnd);
-        if(typeof opts.onOpen === 'function'){
-          try { opts.onOpen(el); } catch(err){ /* swallow */ }
-        }
-        resolve(true);
-      }, 400);
+      timer = setTimeout(settle, 400);
     });
   }
 

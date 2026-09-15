@@ -2286,7 +2286,12 @@ function renderTaskItem(t,depth){
   if(window._lastAddedTaskId===t.id){
     d.classList.add('task-item--enter');
     window._lastAddedTaskId=null;
-    requestAnimationFrame(()=>{try{d.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_){}});
+    // Skip the reveal scroll while a sheet or modal covers the list — adding
+    // from the mobile quick-add sheet is the common case. The row is hidden
+    // behind the backdrop, the page is scroll-locked so the scroll can't even
+    // land, and the smooth animation just judders the open sheet.
+    const covered = !!document.querySelector('.modal-overlay.open, .cmdk-overlay.open');
+    if(!covered) requestAnimationFrame(()=>{try{d.scrollIntoView({block:'nearest',behavior:'smooth'})}catch(_){}});
   }
   // A keyboard reorder/indent rebuilds the list and drops focus. Restore it to
   // the moved row so arrow/Tab sequences chain without re-grabbing the mouse.
@@ -3726,15 +3731,19 @@ window._initTaskModalSwipeDismiss=_initTaskModalSwipeDismiss;
 // ── Generic filter/options sheet open-close ─────────────────────────────────
 // Reuses the .modal-overlay.open bottom-sheet styling. Esc closes the topmost
 // open sheet; backdrop taps close via each overlay's data-action.
-function openSheet(id){
+function openSheet(id, opts){
   const ov=document.getElementById(id);
   if(!ov) return;
+  opts = opts || {};
   // 'sheet' variant: body scroll lock + bottom-sheet swipe (bindSheetSwipe).
   // onRequestClose ensures ESC routes through closeSheet so sheet-specific
   // cleanup (e.g. _restoreQuickAddHost) always runs.
+  // Modal.open focuses sheets only once the slide-up transition has finished,
+  // so a text field's soft keyboard doesn't resize the sheet mid-slide.
   Modal.open(id, {
     variant: 'sheet',
-    focus: '.modal-close,button,select,input,a[href]',
+    focus: opts.focus || '.modal-close,button,select,input,a[href]',
+    select: !!opts.select,
     skipInitialFocus: true,
     onRequestClose: ()=>closeSheet(id)
   });
@@ -3743,7 +3752,14 @@ function closeSheet(id){
   Modal.close(id);
   // The quick-add sheet borrows the inline add-task cluster — put it back so
   // the DOM is left as found (and the inline copy reappears on desktop).
-  if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function') _restoreQuickAddHost();
+  // Wait out the fade-out first: the anchor is display:none on mobile, so
+  // restoring immediately empties the sheet in the middle of its own close
+  // animation. 280ms clears --dur-modal (240) with margin. The isOpen guard
+  // covers a reopen inside that window — openQuickAddSheet has re-adopted the
+  // host by then and must not have it pulled back out.
+  if(id==='quickAddSheet' && typeof _restoreQuickAddHost==='function'){
+    setTimeout(()=>{ if(!Modal.isOpen('quickAddSheet')) _restoreQuickAddHost(); }, 280);
+  }
 }
 window.openSheet=openSheet;
 window.closeSheet=closeSheet;
@@ -4763,13 +4779,13 @@ function openQuickAddSheet(){
   const host=document.getElementById('quickAddHost');
   const slot=document.getElementById('quickAddSheetSlot');
   if(host&&slot&&host.parentElement!==slot) slot.appendChild(host);
-  openSheet('quickAddSheet');
-  const inp=document.getElementById('taskInput');
-  if(inp) requestAnimationFrame(()=>{
-    try{ inp.focus(); inp.select&&inp.select(); }catch(_){}
-    if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
-    if(typeof showVoiceButtonIfSupported === 'function') showVoiceButtonIfSupported();
-  });
+  // Reveal the optional input-row buttons BEFORE the sheet opens. Toggling
+  // them afterwards re-flows the input row while the sheet is sliding up.
+  if(typeof maybeShowEnhanceBtn === 'function') maybeShowEnhanceBtn();
+  if(typeof showVoiceButtonIfSupported === 'function') showVoiceButtonIfSupported();
+  // Focus is applied by Modal.open once the slide finishes — the sheet lands,
+  // then the keyboard lifts it, instead of both animating at once.
+  openSheet('quickAddSheet', { focus:'#taskInput', select:true });
 }
 // Move the cluster back to its inline anchor so closeSheet leaves the DOM as it
 // found it (the anchor is CSS-hidden on mobile, visible on desktop).
@@ -4793,7 +4809,11 @@ function quickAddFabClick(){
   const inp = document.getElementById('taskInput');
   if(!inp) return;
   requestAnimationFrame(() => {
-    try{ inp.focus(); inp.select && inp.select(); }catch(_){}
+    // preventScroll matters: a bare focus() jumps the input into view itself,
+    // and the smooth scrollIntoView below would then animate away from that
+    // jump — two scrolls fighting over one input.
+    try{ inp.focus({ preventScroll:true }); inp.select && inp.select(); }
+    catch(_){ try{ inp.focus(); }catch(_){} }
     inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 }
