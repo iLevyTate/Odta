@@ -51,6 +51,18 @@ function _chronoHasDate(r0){
   return r0.start.isCertain('day') || r0.start.isCertain('month') || r0.start.isCertain('year');
 }
 
+/* A bare day-part word that opens the title is part of the name, not a date
+   the user meant to strip: "Morning run" must not become "run", "Night shift
+   prep" must not become "shift prep". The time it implies is still applied —
+   only the deletion is skipped. */
+const _VAGUE_DAYPART = /^(?:this |the )?(?:morning|afternoon|evening|night|tonight|midnight|noon|midday)$/i;
+
+/* Words whose only job is gluing a date phrase to a title. Once chrono removes
+   the phrase they dangle: "Take meds every", "Review PR by". Phrasal-verb
+   particles (on / in / up) are deliberately absent — "Check in" and "Follow up"
+   are real task names and must survive. */
+const _ORPHAN_CONNECTOR = /(?:^|\s)(?:every|each|at|by|due|starting|around|from|before|after)$/i;
+
 function _applyChronoResult(base, r0){
   if(!r0 || !r0.start) return;
   const start = r0.start.date();
@@ -72,9 +84,14 @@ function _applyChronoResult(base, r0){
   }
 
   if(r0.text != null && typeof r0.index === 'number' && base.name){
-    const before = base.name.slice(0, r0.index).trim();
+    if(r0.index === 0 && _VAGUE_DAYPART.test(String(r0.text).trim())) return;
+    let before = base.name.slice(0, r0.index).trim();
     const after = base.name.slice(r0.index + r0.text.length).trim();
-    base.name = (before + (before && after ? ' ' : '') + after).replace(/\s+/g, ' ').trim();
+    if(!after) before = before.replace(_ORPHAN_CONNECTOR, '').trim();
+    const name = (before + (before && after ? ' ' : '') + after).replace(/\s+/g, ' ').trim();
+    // Never trade a named task for an empty row — if the date phrase was the
+    // whole title, keep the original text.
+    if(name) base.name = name;
   }
 }
 

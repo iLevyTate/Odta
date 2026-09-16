@@ -209,13 +209,19 @@ function _renderHeaderAIChip(state, msg){
   }else if(state === 'ready' || state === 'ok'){
     desc = (msg && String(msg).trim()) ? String(msg).slice(0, 120) : 'Embeddings ready';
   }else if(state === 'error'){
-    desc = (msg && String(msg).trim()) ? String(msg).slice(0, 100) + '. Tap to retry.' : 'Model load failed. Tap to retry.';
+    // The message already tells the user what to do (see friendlyModelError);
+    // only append the retry hint when it doesn't.
+    const m = (msg && String(msg).trim()) || '';
+    desc = m ? (/retry/i.test(m) ? m : m + '. Tap to retry.') : 'Model load failed. Tap to retry.';
   }
   chip.setAttribute('aria-label', desc);
   const live = document.getElementById('aiChipLive');
   if(live) live.textContent = desc;
   if(state === 'error'){
-    chip.title = (msg && String(msg).trim()) ? String(msg).slice(0, 72) + ' — tap to retry' : 'Model load failed — tap to retry';
+    // Hover/long-press carries the engine's own words for bug reports; the
+    // visible chip stays plain-language.
+    const detail = (typeof window !== 'undefined' && window._intelLoadErrorDetail) || '';
+    chip.title = desc + (detail ? '\n\n' + detail : '');
   }else if(busy){
     chip.title = (msg && String(msg).length < 80) ? String(msg) : 'Loading embedding model…';
   }else if(state === 'ready' || state === 'ok'){
@@ -1834,7 +1840,7 @@ function renderAIPanel(){
   const isLoading = _embedChipState === 'loading' || _embedChipState === 'working' || _embedChipState === 'syncing';
   const statusText = ready
     ? 'Ready · ' + (dev || 'CPU')
-    : failed ? (_embedChipMsg ? String(_embedChipMsg).slice(0, 64) : 'Could not load model')
+    : failed ? (_embedChipMsg ? String(_embedChipMsg) : 'Could not load model')
     : isLoading ? 'Loading model…'
     : '~33 MB · loads on first AI feature';
   const disabledSub = ready ? '' : failed ? 'Model unavailable — tap Retry above'
@@ -1850,7 +1856,7 @@ function renderAIPanel(){
           <span class="intel-card-badge">On device</span>
         </div>
         <div id="intelStatus" class="intel-status intel-status-chip intel-status--${statusKind}" role="status">
-          ${statusText}
+          ${esc(statusText)}
         </div>
       </div>
       <div class="intel-card-body">

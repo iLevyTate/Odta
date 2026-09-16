@@ -369,6 +369,11 @@ function parseQuickAdd(raw){
     }
   }
   text = _applyQuickAddTime(text, props);
+  // Consuming a date/time phrase can take the noun and leave the preposition
+  // that pointed at it: "Review PR by 5pm today" became the task "Review PR by".
+  // Only trim when this parse actually removed something, and never trim
+  // phrasal-verb particles (on / in / up) — "Check in" is a real task name.
+  if(text !== raw) text = text.replace(/(?:^|\s)(?:every|each|at|by|due|starting|around|from|before|after)\s*$/i, '');
   return{name:text.replace(/\s+/g,' ').trim(),props};
 }
 
@@ -3604,6 +3609,10 @@ function renderTaskList(){
       addBlock('task-empty-tip', 'Or type any task with "daily" / "every weekday" / "weekly" — the parser will set recurrence automatically.');
     } else {
       const mod = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform||'') ? '⌘' : 'Ctrl';
+      // On a phone the inline add-task form is hidden behind the + button, so
+      // copy that says "type above" / "press Ctrl+K" describes UI the reader
+      // cannot see. Ask the same question the FAB handler asks.
+      const touchUI = typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches;
       empty.appendChild(buildIcon('sparkles'));
       addBlock('task-empty-title', 'No tasks yet');
       // First-run welcome card (only on truly first launch — once we've ever
@@ -3621,8 +3630,10 @@ function renderTaskList(){
           const ul = document.createElement('ul');
           ul.className = 'task-empty-welcome-list';
           [
-            ['Type a task above. Words like "tomorrow", "@urgent", "#tag", "!star" parse automatically.'],
-            [`Press ${mod}+K for the command palette — search, jump, run actions, all fully offline.`],
+            [(touchUI ? 'Tap + to add a task.' : 'Type a task above.') + ' Words like "tomorrow", "@urgent", "#tag", "!star" parse automatically.'],
+            [touchUI
+              ? 'Tap the search icon up top for the command palette — search, jump, run actions, all fully offline.'
+              : `Press ${mod}+K for the command palette — search, jump, run actions, all fully offline.`],
             ['Click chips inside a task (priority, effort, category…) — they save instantly, no Save button needed.'],
             ['Embeddings load automatically in the background — semantic search, smart-add, and duplicate detection just work.'],
           ].forEach(([t]) => { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
@@ -3643,19 +3654,26 @@ function renderTaskList(){
       btn.type = 'button';
       btn.className = 'first-task-btn';
       btn.textContent = '+ Add your first task';
+      // Route through the FAB handler: on a phone #taskInput lives inside the
+      // quick-add sheet and is display:none until the sheet opens, so focusing
+      // it directly made this button a no-op — the one button a first-run user
+      // is most likely to press.
       btn.onclick = () => {
+        if(typeof quickAddFabClick === 'function'){ quickAddFabClick(); return; }
         const i = gid('taskInput');
         if(i){ i.focus(); i.select(); }
       };
       empty.appendChild(btn);
-      const cmdkLine = document.createElement('div');
-      cmdkLine.className = 'task-empty-help';
-      cmdkLine.append('Or press ');
-      const kbd = document.createElement('strong');
-      kbd.textContent = mod + '+K';
-      cmdkLine.append(kbd);
-      cmdkLine.append(' to open the command palette.');
-      empty.appendChild(cmdkLine);
+      if(!touchUI){
+        const cmdkLine = document.createElement('div');
+        cmdkLine.className = 'task-empty-help';
+        cmdkLine.append('Or press ');
+        const kbd = document.createElement('strong');
+        kbd.textContent = mod + '+K';
+        cmdkLine.append(kbd);
+        cmdkLine.append(' to open the command palette.');
+        empty.appendChild(cmdkLine);
+      }
       addBlock('task-empty-tip', 'The Filters button sets sort, group, and status — smart-view chips are quick lenses on top.');
       // Inline syntax example.
       const ex = document.createElement('div');

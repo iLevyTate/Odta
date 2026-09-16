@@ -4,10 +4,18 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Point nlparse at the vendored chrono bundle by file URL so the async path
+ *  (not just the sync quick-add parser) is actually exercised in Node. */
+function useVendoredChrono() {
+  globalThis.ODTAULAI_CONFIG = {
+    CHRONO_URL: pathToFileURL(join(root, 'js', 'vendor', 'chrono-node.min.mjs')).href,
+  };
+}
 
 function loadAsyncParser(fixedTodayISO) {
   const tasksSrc = readFileSync(join(root, 'js', 'tasks.js'), 'utf8');
@@ -52,4 +60,43 @@ test('quick add consumes the qualifier in front of a weekday ("next monday", "on
   assert.equal(r2.props.priority, 'high');
   const r3 = await parseQuickAddAsync('submit expenses on friday');
   assert.equal(r3.name, 'submit expenses');
+});
+
+test('a leading day-part word belongs to the title, not to the date phrase', async () => {
+  useVendoredChrono();
+  const parseQuickAddAsync = loadAsyncParser('2026-09-16');
+  // Seen in the wild: "Morning run daily" saved the task as "run", and
+  // "Night shift prep friday" saved it as "shift prep".
+  const r1 = await parseQuickAddAsync('Morning run daily #health');
+  assert.equal(r1.name, 'Morning run');
+  assert.equal(r1.props.recur, 'daily');
+  assert.deepEqual(r1.props.tags, ['health']);
+
+  const r2 = await parseQuickAddAsync('Evening walk with dog');
+  assert.equal(r2.name, 'Evening walk with dog');
+
+  const r3 = await parseQuickAddAsync('Night shift prep friday');
+  assert.equal(r3.name, 'Night shift prep');
+  assert.ok(r3.props.dueDate, 'the weekday is still parsed: ' + r3.props.dueDate);
+});
+
+test('the preposition pointing at a consumed date phrase is consumed with it', async () => {
+  useVendoredChrono();
+  const parseQuickAddAsync = loadAsyncParser('2026-09-16');
+  // "Take meds every night" used to save as "Take meds every".
+  assert.equal((await parseQuickAddAsync('Take meds every night')).name, 'Take meds');
+  assert.equal((await parseQuickAddAsync('Water the plants every evening')).name, 'Water the plants');
+  assert.equal((await parseQuickAddAsync('Gym every morning')).name, 'Gym');
+  assert.equal((await parseQuickAddAsync('Review PR by 5pm today')).name, 'Review PR');
+});
+
+test('phrasal-verb particles survive the date strip', async () => {
+  useVendoredChrono();
+  const parseQuickAddAsync = loadAsyncParser('2026-09-16');
+  // The trim must never turn "Check in" into "Check" or "Follow up" into "Follow".
+  assert.equal((await parseQuickAddAsync('Check in tomorrow')).name, 'Check in');
+  assert.equal((await parseQuickAddAsync('Follow up on friday')).name, 'Follow up');
+  assert.equal((await parseQuickAddAsync('Turn on heating tomorrow')).name, 'Turn on heating');
+  // No date consumed at all → nothing is trimmed.
+  assert.equal((await parseQuickAddAsync('Read before bed')).name, 'Read before bed');
 });

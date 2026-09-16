@@ -971,11 +971,15 @@ function _bootIntelLoad(){
     // "Load failed" string with no diagnostic. Surface the real message so
     // users (and the next debugger) can see which layer broke.
     console.error('[intel] load failed', err);
-    const short = String((err && err.message) || err || '').slice(0, 120) || 'Load failed';
+    const raw = String((err && err.message) || err || '').slice(0, 200) || 'Load failed';
+    // Users get a sentence they can act on; the engine text stays in the
+    // console and on the status chip's title for bug reports.
+    const short = (typeof friendlyModelError === 'function') ? friendlyModelError(err) : raw;
+    window._intelLoadErrorDetail = raw;
     if(w) w.hidden = true;
     if(retry) retry.hidden = false;
     if(typeof syncHeaderAIChip === 'function') syncHeaderAIChip('error', short);
-    if(typeof showExportToast === 'function') showExportToast('Embedding model failed to load: ' + short);
+    if(typeof showExportToast === 'function') showExportToast(short);
     if(typeof renderAIPanel === 'function') renderAIPanel();
     else if(typeof syncSemanticSearchUi === 'function') syncSemanticSearchUi();
   });

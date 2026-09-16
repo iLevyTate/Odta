@@ -55,6 +55,30 @@ function showExportToast(msg){
   t._tm=setTimeout(()=>t.classList.remove('show'),2800);
 }
 
+/**
+ * Turn a model/runtime load failure into something a person can act on.
+ * The raw text ("no available backend found. ERR: [webgpu] Error: Failed to
+ * get GPU adapter. You may need to enable flag …") used to be sliced to 64–120
+ * chars and shown in the header chip, a toast, and the Tools banner — so users
+ * read a half-sentence of engine internals with no idea what to do. The raw
+ * string still goes to console.error and stays available for the title
+ * attribute; this is only what we put in front of someone.
+ */
+function friendlyModelError(err){
+  const raw = String((err && err.message) || err || '').trim();
+  const t = raw.toLowerCase();
+  if(!raw) return 'The on-device model could not load. Tap to retry.';
+  if(/no available backend|webgpu|gpu adapter|wasm|webassembly/.test(t))
+    return 'This browser could not start the on-device engine. Try Chrome or Edge, or tap to retry.';
+  if(/quota|storage|disk|space/.test(t))
+    return 'Not enough storage to cache the model. Free some space, then retry.';
+  if(/404|not found/.test(t))
+    return 'Model files are missing from this install. Tap to retry.';
+  if(/network|fetch|offline|cors|timed? ?out|abort/.test(t))
+    return 'Could not download the model — check your connection, then retry.';
+  return 'The on-device model could not load. Tap to retry.';
+}
+
 /** Allow only simple hex colors for inline styles from user data */
 function sanitizeListColor(c){
   const s=String(c||'').trim();
@@ -71,7 +95,15 @@ function prettyDate(iso){const d=new Date(iso+'T12:00:00');return d.toLocaleDate
 
 /** Render today's date into the header. Called from app.js init so this
  *  module no longer mutates the DOM at script-evaluation time. */
-function setHeaderDate(){const el=gid('headerDate');if(el) el.textContent=dateStr();}
+function setHeaderDate(){
+  const el=gid('headerDate');if(!el)return;
+  // "Wednesday, September 16, 2026" wraps onto a second line inside a 390px
+  // header and pushes the whole top bar taller. Phones get the short form.
+  const narrow=typeof matchMedia==='function'&&matchMedia('(max-width:480px)').matches;
+  el.textContent=narrow
+    ?new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})
+    :dateStr();
+}
 window.setHeaderDate=setHeaderDate;
 
 function timeNowFull(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
@@ -301,11 +333,15 @@ function showActionToast(label, actionLabel, actionFn, ms){
   hdr.appendChild(dismiss);
   host.appendChild(hdr);
 
-  // Ctrl+Z hint (only if undo button exists)
-  if(actionLabel && typeof actionFn === 'function'){
+  // Keyboard hint (only if undo button exists, and only where there IS a
+  // keyboard). On a phone it advertised a shortcut nobody can press and
+  // stretched the top-anchored pill over the whole app header.
+  const _coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  if(actionLabel && typeof actionFn === 'function' && !_coarse){
     const kbdHint = document.createElement('span');
     kbdHint.className = 'action-toast-kbd-hint';
-    kbdHint.textContent = 'Also: Ctrl+Z';
+    const apple = /(Mac|iPhone|iPod|iPad)/i.test((typeof navigator !== 'undefined' && navigator.platform) || '');
+    kbdHint.textContent = apple ? 'Also: \u2318Z' : 'Also: Ctrl+Z';
     host.appendChild(kbdHint);
   }
 

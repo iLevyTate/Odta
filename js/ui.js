@@ -3262,7 +3262,14 @@ function openTaskDetail(id){
   gid('mdTracked').textContent=fmtHMS(getRolledUpTime(id))+' · '+getRolledUpSessions(id)+' sessions';
   const path=getTaskPath(id);
   const pathStr=path.length>1?path.slice(0,-1).join(' › ')+' › ':'';
-  gid('mdStats').innerHTML='<span><b>Path:</b> '+esc(pathStr)+'<b class="md-name-strong">'+esc(t.name)+'</b></span> · <span>Created '+esc(t.created||'—')+'</span>'+(t.completedAt?' · <span>Done '+esc(String(t.completedAt))+'</span>':'');
+  // .modal-stat is a flex row, so a literal " · " between the spans became its
+  // own flex item and could wrap alone to the end of a line. Separators are
+  // drawn by CSS on each span after the first instead. The Path span only
+  // earns its place when the task actually sits under a parent — for a root
+  // task it just repeated the title from the field right above it.
+  gid('mdStats').innerHTML=(pathStr?'<span><b>Path:</b> '+esc(pathStr)+'<b class="md-name-strong">'+esc(t.name)+'</b></span>':'')
+    +'<span>Created '+esc(t.created||'—')+'</span>'
+    +(t.completedAt?'<span>Done '+esc(String(t.completedAt))+'</span>':'');
   // List selector — populate the hidden shadow <select> (saveTaskDetail
   // reads its .value) and set the visible trigger's label to the current
   // list's name. The Dropdown utility builds its option list from the
@@ -5593,7 +5600,8 @@ function renderTaskIdBadge(t){
     badge.className = 'md-task-id';
     stats.appendChild(badge);
   }
-  badge.textContent = ' · #' + (t.id != null ? t.id : '?');
+  // Separator comes from .modal-stat's CSS rule, same as the other stat spans.
+  badge.textContent = '#' + (t.id != null ? t.id : '?');
   badge.title = 'Task ID — use in task references';
 }
 window.renderTaskIdBadge = renderTaskIdBadge;
