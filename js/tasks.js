@@ -2915,7 +2915,16 @@ function updateTaskFilters(){
   const clr=gid('taskSearchClear');
   if(clr) clr.hidden = !(gid('taskSearch').value.trim());
   const semPill=gid('taskSearchSemanticPill');
-  if(semPill) semPill.hidden = !((gid('taskSearchSemantic')&&gid('taskSearchSemantic').checked));
+  if(semPill){
+    // The pill and the labelled "Semantic" checkbox sat side by side saying
+    // the same word twice, and on a 390px row the pair left the query field
+    // about 200px. The pill is the indicator for layouts where the labelled
+    // control isn't on screen; when the label is visible it is pure noise.
+    const semBox=gid('taskSearchSemantic');
+    const lab=semBox&&semBox.closest('.task-search-semantic');
+    const labelVisible=!!(lab&&lab.offsetParent!==null);
+    semPill.hidden = labelVisible || !(semBox&&semBox.checked);
+  }
   // Render the parsed operator chips so the user sees what matched.
   if(typeof renderSearchOpPills === 'function') renderSearchOpPills();
   if(window._taskSearchSemantic && taskFilters.search && typeof semanticSearch === 'function' && typeof isIntelReady === 'function' && isIntelReady()){

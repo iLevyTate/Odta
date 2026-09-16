@@ -41,6 +41,25 @@ function getEmbedDim(){ return EMBED_DIM; }
 function getActiveEmbedModelId(){ return EMBED_MODEL; }
 
 /**
+ * True only when WebGPU can actually produce an adapter and a device.
+ * Mirrors `_probeWebGPU` in js/gen-pipeline.js; kept local so the embedding
+ * core carries no dependency on the optional generative module.
+ */
+async function _probeIntelWebGPU(){
+  try{
+    if(typeof navigator === 'undefined' || !navigator.gpu) return false;
+    const adapter = await navigator.gpu.requestAdapter();
+    if(!adapter) return false;
+    const device = await adapter.requestDevice();
+    if(!device) return false;
+    device.destroy();
+    return true;
+  }catch(_){
+    return false;
+  }
+}
+
+/**
  * @param {(progress: { progress?: number, status?: string }) => void} [onProgress]
  */
 async function intelLoad(onProgress){
@@ -74,7 +93,17 @@ async function intelLoad(onProgress){
     }
 
     const cb = typeof onProgress === 'function' ? onProgress : () => {};
-    const tryWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+    // `navigator.gpu` existing is not the same as WebGPU working. Chrome and
+    // Edge expose it on machines with no usable adapter — VMs, remote
+    // desktops, blocklisted drivers, hardware acceleration switched off —
+    // where requestAdapter() resolves null. Attempting the WebGPU pipeline
+    // there doesn't merely fail: it leaves the shared ONNX Runtime instance
+    // wedged, so the WASM fallback in the catch below fails too, reporting
+    // the *WebGPU* error. Embeddings were therefore dead on those machines
+    // until a reload, and every Retry repeated the same poisoned sequence.
+    // Probe the adapter first — same guard the generative path already uses
+    // (`_probeWebGPU` in js/gen-pipeline.js).
+    const tryWebGPU = await _probeIntelWebGPU();
 
     try{
       if(tryWebGPU){

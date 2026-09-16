@@ -158,3 +158,12 @@ test('the task detail meta row draws separators in CSS so they cannot orphan', (
   assert.match(block, /pathStr\s*\?/, 'the Path line only renders when there is a parent path');
   assert.doesNotMatch(uiSrc, /badge\.textContent = ' · #'/, 'the id badge relies on the CSS separator too');
 });
+
+test('the search row does not say "Semantic" twice', () => {
+  const i = tasksSrc.indexOf("const semPill=gid('taskSearchSemanticPill')");
+  assert.ok(i > 0, 'the pill is still wired');
+  const block = tasksSrc.slice(i, i + 700);
+  assert.match(block, /offsetParent/, 'visibility of the labelled control decides');
+  assert.match(block, /semPill\.hidden = labelVisible \|\|/,
+    'the pill only stands in for a label that is off screen');
+});
