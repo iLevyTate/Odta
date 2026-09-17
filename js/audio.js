@@ -25,6 +25,11 @@ function getAudioCtx(){if(!_audioCtx||_audioCtx.state==='closed')_audioCtx=new(w
         x.resume().catch(()=>{});
       }
     }catch(_){}
+    // A keepalive element whose autoplay was refused before any gesture gets
+    // its second chance here — same reasoning as the AudioContext resume.
+    try{
+      if(_keepaliveEl && _keepaliveEl.paused) _keepaliveEl.play().catch(()=>{});
+    }catch(_){}
   };
   document.addEventListener('pointerdown', prime, true);
   document.addEventListener('keydown',     prime, true);
@@ -47,6 +52,85 @@ let _keepaliveNode=null,_keepaliveGain=null;
 // all and headphones sit far below the hearing threshold at that level.
 const KEEPALIVE_GAIN=0.004;
 const KEEPALIVE_FREQ_HZ=20;
+// ── Media-element keepalive ───────────────────────────────────────────────
+// The oscillator above signals "this tab makes sound" to Chrome's audio
+// stream monitor, which is enough to dodge desktop tab throttling. It is NOT
+// enough on mobile: what keeps an app alive in the background there is an
+// active *media session*, and only a real media element creates one. iOS in
+// particular suspends a bare AudioContext the moment the app backgrounds and
+// refuses resume() outside user activation, which is why the chime "works
+// periodically" today.
+//
+// So we also loop a genuine (near-silent) WAV through an <audio> element.
+// That gives the OS something to hold an audio focus on, keeps the page off
+// the freeze list far longer, and makes the MediaMetadata set below actually
+// appear on the lock screen. It is belt-and-braces with the alarm scheduler
+// in js/alarms.js — that one is what guarantees delivery; this one keeps the
+// in-app chime and tick running for as long as the OS will allow.
+let _keepaliveEl = null;
+
+/**
+ * A 1-second mono 8 kHz WAV at a very low DC-free amplitude. Built at runtime
+ * so no binary asset has to ship (and so it can't go missing from the
+ * precache). Amplitude matches KEEPALIVE_GAIN's reasoning: above Chrome's
+ * -72.25 dBFS silence threshold, far below audibility.
+ */
+function _buildKeepaliveWavUrl(){
+  const rate = 8000, seconds = 1, n = rate * seconds;
+  const bytes = 44 + n * 2;
+  const buf = new ArrayBuffer(bytes);
+  const v = new DataView(buf);
+  const ascii = (off, str) => { for(let i=0;i<str.length;i++) v.setUint8(off+i, str.charCodeAt(i)); };
+  ascii(0,'RIFF');  v.setUint32(4, bytes-8, true);
+  ascii(8,'WAVE');  ascii(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ascii(36,'data'); v.setUint32(40, n*2, true);
+  // 20 Hz sine at ~-51 dBFS, same as the oscillator. A pure DC offset or a
+  // run of zeros would read as silence and defeat the whole point.
+  const amp = Math.round(32767 * KEEPALIVE_GAIN);
+  for(let i=0;i<n;i++){
+    v.setInt16(44 + i*2, Math.round(amp * Math.sin(2*Math.PI*KEEPALIVE_FREQ_HZ*i/rate)), true);
+  }
+  const blob = new Blob([buf], { type: 'audio/wav' });
+  return URL.createObjectURL(blob);
+}
+
+function _startMediaKeepalive(){
+  if(_keepaliveEl) { try{ _keepaliveEl.play().catch(()=>{}); }catch(_){} return; }
+  try{
+    const el = document.createElement('audio');
+    el.loop = true;
+    el.preload = 'auto';
+    // playsinline + muted=false: a muted element does NOT take an audio focus,
+    // which is exactly the property we need, so it must stay unmuted.
+    el.setAttribute('playsinline', '');
+    el.volume = 1;
+    el.src = _buildKeepaliveWavUrl();
+    // Keep it out of the a11y tree and off screen; it is pure plumbing.
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none';
+    document.body.appendChild(el);
+    _keepaliveEl = el;
+    const p = el.play();
+    if(p && p.catch) p.catch(()=>{
+      // Autoplay refused (no user activation yet). The gesture primer at the
+      // top of this file re-primes the AudioContext; retry playback there too.
+    });
+  }catch(e){ _keepaliveEl = null; }
+}
+
+function _stopMediaKeepalive(){
+  if(!_keepaliveEl) return;
+  try{
+    _keepaliveEl.pause();
+    if(_keepaliveEl.src && _keepaliveEl.src.startsWith('blob:')) URL.revokeObjectURL(_keepaliveEl.src);
+    _keepaliveEl.remove();
+  }catch(_){}
+  _keepaliveEl = null;
+}
+
 function startKeepalive(){
   if(_keepaliveNode)return;
   try{
@@ -60,6 +144,7 @@ function startKeepalive(){
     _keepaliveGain.connect(x.destination);
     _keepaliveNode.start();
   }catch(e){}
+  _startMediaKeepalive();
   _acquireWakeLock();
   if('mediaSession' in navigator){
     try{
@@ -88,6 +173,7 @@ function startKeepalive(){
 }
 function stopKeepalive(){
   try{if(_keepaliveNode){_keepaliveNode.stop();_keepaliveNode=null;_keepaliveGain=null}}catch(e){}
+  _stopMediaKeepalive();
   _wakeLockWanted=false;
   if(_wakeLock){try{_wakeLock.release()}catch(e){}_wakeLock=null}
   if('mediaSession' in navigator){
@@ -103,7 +189,10 @@ function stopKeepalive(){
 function updateBgAudioStatus(){
   const el=gid('bgAudioStatus');if(!el)return;
   if(_keepaliveNode){
-    el.textContent='● Active — background OK (tab shows a speaker icon while a timer runs)';
+    const media = _keepaliveEl && !_keepaliveEl.paused;
+    const scheduled = (window.OdtaAlarms && window.OdtaAlarms.supportsTriggers())
+      ? ' · alarms scheduled with the OS' : ' · alarms delivered by the service worker';
+    el.textContent = '● Active — background OK' + (media ? '' : ' (media keepalive blocked — tap anywhere once)') + scheduled;
     el.style.color='var(--success)';
   }else{
     el.textContent='○ Idle — starts with timer';

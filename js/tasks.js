@@ -1755,6 +1755,59 @@ const REMINDER_DUE_STALE_MS = 24 * 60 * 60 * 1000;
 // notification instead of one sticky alert each.
 const REMINDER_BURST_MAX = 3;
 
+// ========== ALARM SOURCE: task reminders ==========
+// Mirrors the selection logic in checkReminders() below, but projects the
+// FUTURE reminders instead of firing the past-due ones — js/alarms.js hands
+// these to the browser and the service worker so a reminder lands even if
+// this page is frozen or gone when it comes due.
+//
+// Deliberately bounded: parking hundreds of triggers would be abusive and
+// browsers cap them anyway. The nearest few days are what matters; anything
+// further out will be re-projected long before it arrives, because rebuild()
+// runs on every visibility change.
+const REMINDER_ALARM_HORIZON_MS = 3 * 24 * 60 * 60 * 1000;
+const REMINDER_ALARM_MAX = 24;
+function _taskReminderAlarms(){
+  if(typeof tasks === 'undefined' || !Array.isArray(tasks)) return [];
+  const now = Date.now();
+  const dueNotify = !(typeof cfg !== 'undefined' && cfg && cfg.dueNotify === false);
+  const out = [];
+  tasks.forEach(t => {
+    if(!t || t.reminderFired || t.archived || t.status === 'done') return;
+    let remindTime = null, src = null;
+    if(t.remindAt){
+      const rt = new Date(t.remindAt).getTime();
+      if(Number.isFinite(rt)){ remindTime = rt; src = 'remindAt'; }
+    }
+    if(src === null && dueNotify && t.dueDate){
+      const rt = new Date(String(t.dueDate) + 'T09:00:00').getTime();
+      if(Number.isFinite(rt)){ remindTime = rt; src = 'dueDate'; }
+    }
+    if(src === null || remindTime === null) return;
+    if(remindTime <= now) return;                       // checkReminders' job
+    if(remindTime - now > REMINDER_ALARM_HORIZON_MS) return;
+    let body = t.dueDate ? ('Due ' + (typeof fmtDue === 'function' ? fmtDue(t.dueDate) : t.dueDate)) : 'No due date';
+    if(t.category && typeof getCategoryDef === 'function'){
+      const catDef = getCategoryDef(t.category);
+      if(catDef && catDef.label) body = 'Life area: ' + catDef.label + ' \u00b7 ' + body;
+    }
+    out.push({
+      id: 'task:' + t.id,
+      at: remindTime,
+      title: (src === 'dueDate' ? 'Due now: ' : 'Task reminder: ') + t.name,
+      body: body,
+      tag: 'task-' + t.id,
+      requireInteraction: true,
+      data: { action: 'openTask', taskId: t.id, category: t.category || null, url: './?tab=tasks&task=' + t.id },
+    });
+  });
+  out.sort((a, b) => a.at - b.at);
+  return out.slice(0, REMINDER_ALARM_MAX);
+}
+if(typeof window !== 'undefined' && window.OdtaAlarms){
+  window.OdtaAlarms.addSource(_taskReminderAlarms);
+}
+
 function checkReminders(){
   const now=Date.now();
   let fired=false;
@@ -1809,8 +1862,17 @@ function checkReminders(){
     return body;
   };
   const send = (title, body, opts) => {
+    // Already delivered while we were backgrounded — by the service worker's
+    // alarm flush or by a TimestampTrigger. Re-announcing it here is the
+    // duplicate-notification bug; the in-app state below still updates.
+    const alarmId = (opts && opts.alarmId) || null;
+    if(alarmId && typeof window!=='undefined' && window.OdtaAlarms && window.OdtaAlarms.wasFired(alarmId)){
+      window.OdtaAlarms.consume(alarmId);
+      return;
+    }
     if(canNotify && typeof notify === 'function'){
       try{ notify(title, body, opts); }catch(e){ console.warn('[tasks] Notification failed', e); }
+      if(alarmId && typeof window!=='undefined' && window.OdtaAlarms) window.OdtaAlarms.markFiredLocally(alarmId);
     } else if(cfg.sound && typeof playChime === 'function'){
       // Notifications off / not permitted: the chime is the reminder.
       try{ playChime('bell'); }catch(e){}
@@ -1830,6 +1892,7 @@ function checkReminders(){
       const title=(late?'Missed: ':(reminderSrc === 'dueDate' ? 'Due now: ' : 'Task reminder: '))+t.name;
       send(title, describe(t), {
         tag: 'task-'+t.id,
+        alarmId: 'task:'+t.id,
         requireInteraction: true,
         // `url` is what the service worker opens when the app is closed at
         // tap time; `action`/`taskId` serve the already-open-window path.
@@ -1837,7 +1900,11 @@ function checkReminders(){
       });
     });
   }
-  if(fired)saveState('auto')
+  if(fired){
+    saveState('auto');
+    // Reminders just consumed (or newly invalidated) change the pending set.
+    if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
+  }
 }
 
 // Nudge the user once when they create a remindAt / dueDate but the browser

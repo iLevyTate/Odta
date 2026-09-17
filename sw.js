@@ -1,8 +1,12 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v77';
+let CACHE_NAME = 'odtaulai-v78';
 try {
   importScripts('./js/version.js');
+  // The alarm store is the one piece of state the page and this worker share.
+  // It has to load here, not just on the page, because the whole point is that
+  // this worker can fire a notification when no page is alive to ask it to.
+  importScripts('./js/alarm-store.js');
   if (self.ODTAULAI_RELEASE && self.ODTAULAI_RELEASE.swCache) {
     CACHE_NAME = self.ODTAULAI_RELEASE.swCache;
   }
@@ -24,9 +28,11 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v77',
+  './css/main.css?v=v78',
   './js/version.js',
   './js/event-delegation.js',
+  './js/alarm-store.js',
+  './js/alarms.js',
   './js/pwa.js',
   './js/config.js',
   './js/icons.js',
@@ -116,6 +122,10 @@ self.addEventListener('activate', e => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+      // An update that activates while the app was away is a wake like any
+      // other: anything overdue goes out now rather than waiting for the user
+      // to reopen the app.
+      .then(() => serviceAlarms())
   );
 });
 
@@ -128,6 +138,16 @@ self.addEventListener('fetch', e => {
   // their own network. The previous Hugging Face / jsDelivr passthrough is
   // no longer needed.
   if(url.origin !== self.location.origin) return;
+
+  // Any fetch means this worker is awake. Use the opportunity to deliver
+  // anything overdue — throttled so a burst of asset requests doesn't hammer
+  // IndexedDB. This is the path that saves a phone which froze the page: the
+  // next time anything touches the scope, the notification goes out.
+  const nowTs = Date.now();
+  if(nowTs - _lastFetchFlush > ALARM_FETCH_THROTTLE_MS){
+    _lastFetchFlush = nowTs;
+    e.waitUntil(serviceAlarms());
+  }
 
   const isNavigation = e.request.mode === 'navigate' || e.request.destination === 'document' ||
     url.pathname === '/' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('index.html');
@@ -160,8 +180,120 @@ self.addEventListener('fetch', e => {
   );
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// ALARM ENGINE — the worker decides WHEN, not just what to draw
+// ══════════════════════════════════════════════════════════════════════════
+// Before this, every notification was emitted by the page at the moment the
+// page noticed a deadline had passed, and this worker only ever rendered what
+// it was told (SHOW_NOTIFICATION, below). That made delivery conditional on
+// the page still running — which a backgrounded PWA is not: the browser
+// throttles its timers, then freezes it (suspending its Web Workers too),
+// then discards it. The result was a timer that only reliably rang while the
+// app was on screen.
+//
+// Now js/alarms.js writes every pending deadline into the shared IndexedDB
+// store, and this worker flushes whatever is overdue on ANY wake it gets —
+// a navigation, a fetch, a message, a periodicsync, a notification click.
+// Combined with the Notification Triggers the page arms where supported,
+// delivery no longer depends on a live page.
+//
+// Note on lifetime: a service worker is killed after a few seconds idle, so
+// the setTimeout below is an optimisation for the case where we happen to
+// still be alive at the deadline — never the mechanism we rely on. The flush
+// on wake is what actually makes this work.
+
+const ALARM_TIMER_HORIZON_MS = 60 * 1000; // only bother arming within a minute
+const ALARM_FETCH_THROTTLE_MS = 20 * 1000;
+let _alarmTimer = null;
+let _lastFetchFlush = 0;
+
+function _alarmStore(){
+  return self.OdtaAlarmStore || null;
+}
+
+/**
+ * Show every alarm whose deadline has passed and that nobody has delivered
+ * yet, then stamp them so the page doesn't announce them a second time when
+ * it comes back.
+ */
+async function flushDueAlarms(){
+  const store = _alarmStore();
+  if(!store) return 0;
+  let rows;
+  try { rows = await store.pending(); } catch(_) { return 0; }
+  const now = Date.now();
+  const due = rows.filter(r => r && r.at <= now);
+  if(!due.length) return 0;
+
+  for(const a of due){
+    try {
+      await self.registration.showNotification(a.title || 'Odta', {
+        body:               a.body || '',
+        tag:                a.tag || a.id,
+        renotify:           true,
+        icon:               './icons/icon-192.png',
+        badge:              './icons/icon-192.png',
+        requireInteraction: !!a.requireInteraction,
+        data:               Object.assign({}, a.data || {}, { odtaAlarmId: a.id, odtaAt: a.at }),
+      });
+    } catch(err) {
+      console.warn('[sw] alarm show failed', a.id, err && err.message);
+      continue; // leave it pending so a later wake retries
+    }
+    try { await store.markFired(a.id, now); } catch(_) {}
+    // Tell any live page so it drops its own duplicate of this one.
+    try {
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      clients.forEach(c => { try { c.postMessage({ type: 'ALARM_FIRED', id: a.id, firedAt: now }); } catch(_){} });
+    } catch(_) {}
+  }
+  return due.length;
+}
+
+/** Re-arm the in-worker timer for the soonest deadline, if it is close. */
+async function armNextAlarm(){
+  const store = _alarmStore();
+  if(!store) return;
+  if(_alarmTimer){ clearTimeout(_alarmTimer); _alarmTimer = null; }
+  let rows;
+  try { rows = await store.pending(); } catch(_) { return; }
+  if(!rows.length) return;
+  const now = Date.now();
+  const next = rows.reduce((min, r) => (r.at < min ? r.at : min), Infinity);
+  if(!Number.isFinite(next)) return;
+  const delay = next - now;
+  if(delay <= 0){ await flushDueAlarms(); return; }
+  if(delay > ALARM_TIMER_HORIZON_MS) return; // too far out to outlive; the wake-flush covers it
+  _alarmTimer = setTimeout(() => {
+    _alarmTimer = null;
+    flushDueAlarms().then(armNextAlarm).catch(() => {});
+  }, delay);
+}
+
+/** One call for every wake path: deliver what is overdue, then re-arm. */
+function serviceAlarms(){
+  return flushDueAlarms().then(armNextAlarm).catch(err => {
+    console.warn('[sw] serviceAlarms failed', err && err.message);
+  });
+}
+
+// Periodic Background Sync: granted sparingly and with an hours-long minimum
+// interval, so it is no use for a 25-minute phase — but it is a free extra
+// wake for day-scale reminders, and it costs nothing to honour.
+self.addEventListener('periodicsync', e => {
+  if(e.tag === 'odta-alarms') e.waitUntil(serviceAlarms());
+});
+
+// One-off background sync, if the page ever registers it.
+self.addEventListener('sync', e => {
+  if(e.tag === 'odta-alarms') e.waitUntil(serviceAlarms());
+});
+
 self.addEventListener('message', e => {
   if(e.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  // The page rewrote the alarm set (a phase started, a timer was cancelled,
+  // a reminder moved). Re-read it and re-arm.
+  if(e.data?.type === 'ALARMS_UPDATED') e.waitUntil(serviceAlarms());
   // ── Persistent notification from main thread ──
   // ServiceWorker.showNotification() fires even when the page tab is frozen
   // or backgrounded on mobile — unlike `new Notification()` from the main
@@ -187,6 +319,13 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   const data = e.notification.data || {};
   const target = data.url || './';
+  // A tapped alarm is delivered; stamp it so the page doesn't re-announce it,
+  // and take the wake as a chance to flush any sibling that is also overdue.
+  if(data.odtaAlarmId && self.OdtaAlarmStore){
+    e.waitUntil(
+      self.OdtaAlarmStore.markFired(data.odtaAlarmId).then(() => flushDueAlarms()).catch(() => {})
+    );
+  }
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
       // If the app is already open, focus it and forward the notification data
@@ -200,4 +339,13 @@ self.addEventListener('notificationclick', e => {
       if(self.clients.openWindow) return self.clients.openWindow(target);
     })
   );
+});
+
+self.addEventListener('notificationclose', e => {
+  // A triggered notification the user swiped away has still been delivered —
+  // record that so the page doesn't replay it as a "missed" alert on return.
+  const data = (e.notification && e.notification.data) || {};
+  if(data.odtaAlarmId && self.OdtaAlarmStore){
+    e.waitUntil(self.OdtaAlarmStore.markFired(data.odtaAlarmId).catch(() => {}));
+  }
 });
