@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies (tests + Puppeteer smoke)
         run: npm ci
       - name: Syntax check all JS
-        run: node --check js/ai.js js/app.js js/audio.js js/calfeeds.js js/embed-store.js js/event-delegation.js js/icons.js js/intel-features.js js/intel.js js/nlparse.js js/pwa.js js/storage.js js/sync.js js/tasks.js js/timer.js js/tool-schema.js js/ui-flip.js js/ui.js js/utils.js js/version.js scripts/run-tests.mjs scripts/smoke-console-utils.mjs scripts/smoke-check.mjs scripts/smoke-deep.mjs scripts/smoke-exhaustive.mjs scripts/verify-handlers.mjs sw.js
+        run: node --check js/ai.js js/alarm-store.js js/alarms.js js/app.js js/audio.js js/calfeeds.js js/embed-store.js js/event-delegation.js js/icons.js js/intel-features.js js/intel.js js/nlparse.js js/pwa.js js/storage.js js/sync.js js/tasks.js js/timer.js js/tool-schema.js js/ui-flip.js js/ui.js js/utils.js js/version.js scripts/run-tests.mjs scripts/smoke-console-utils.mjs scripts/smoke-check.mjs scripts/smoke-deep.mjs scripts/smoke-exhaustive.mjs scripts/verify-handlers.mjs sw.js
       - name: Version sync (version.js ↔ sw.js ↔ pwa.js)
         run: node scripts/check-version-sync.mjs
       - name: Asset references
