@@ -135,9 +135,9 @@ function _syncRingState(){
 // beyond persistence, that marks this tab dirty (window._stateDirty) so a
 // cross-tab storage event merges (LWW) instead of wholesale _applyState(),
 // which would silently reset the running timer from the other tab's snapshot.
-function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
-function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();}
+function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
+function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
+function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
 function tick(){
   if(!running)return;
   const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));remaining=Math.max(0,pausedRemaining-el);
@@ -150,6 +150,21 @@ function tick(){
   if(typeof updateTimerDock==='function') updateTimerDock();
   if(remaining<=0){running=false;finished=true;clearInterval(tickId);onPhaseComplete()}
 }
+/**
+ * notify(), but suppressed when the service worker or a TimestampTrigger
+ * already delivered this exact alarm while the page was backgrounded.
+ * Without this, a phase that ended with the app away announced itself twice:
+ * once from the alarm, once from the catch-up tick on return.
+ */
+function notifyAlarm(alarmId, title, body, opts){
+  if(alarmId && typeof window!=='undefined' && window.OdtaAlarms && window.OdtaAlarms.wasFired(alarmId)){
+    window.OdtaAlarms.consume(alarmId);
+    return;
+  }
+  notify(title, body, opts);
+  if(alarmId && typeof window!=='undefined' && window.OdtaAlarms) window.OdtaAlarms.markFiredLocally(alarmId);
+}
+
 function onPhaseComplete(){
   let completedTaskIdForNote = null;
   if(phase==='work'){pomosInCycle++;totalPomos++;totalFocusSec+=totalDuration;sessionHistory.push({type:'work'});
@@ -177,7 +192,7 @@ function onPhaseComplete(){
   if(cfg.sound&&(!audioScheduled||_audioLost()))(phase==='work'?playTransition:playBreakEnd)();
   audioScheduled=false;scheduledAudio=[];
   // System notification for backgrounded tabs
-  notify(getPL(phase)+' Complete',phase==='work'?'Great work! Time for a break.':'Break over — back to focus.',{tag:'pomo-phase',data:{action:'openTimer',url:'./?tab=focus'}});
+  notifyAlarm('pomo',getPL(phase)+' Complete',phase==='work'?'Great work! Time for a break.':'Break over — back to focus.',{tag:'pomo-phase',data:{action:'openTimer',url:'./?tab=focus'}});
   // Show in-app summary toast after work phase completes
   if(phase==='work'&&typeof window.showPomodoroSummary==='function')window.showPomodoroSummary();
   gid('display').className='ring-time done';gid('display').textContent='00:00';gid('phaseLabel').textContent=getPL(phase)+' Complete';
@@ -187,6 +202,7 @@ function onPhaseComplete(){
   // (silent tone, wake lock, background worker) instead of holding it forever.
   const willAutoAdvance=(phase==='work'&&cfg.autoBreak)||(phase!=='work'&&cfg.autoWork);
   if(!willAutoAdvance) maybeStopKeepalive();
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 // Single-pending-timer guard. Without this, rapid Skip → Skip queues two
 // 1500ms autoAdvances; both fire startTimer 300ms later and the
@@ -429,7 +445,8 @@ function toggleQuickTimer(id){
     qt.running=true;qt.startedAt=Date.now();
     if(cfg.notif!==false)reqNotifPerm().then(()=>{if(typeof renderNotifStatus==='function')renderNotifStatus()});scheduleQtAudio(qt);startKeepalive();
   }
-  ensureQuickTick();renderQuickTimers();saveState('user')
+  ensureQuickTick();renderQuickTimers();saveState('user');
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 
 // Only stop keepalive if nothing is running
@@ -445,6 +462,7 @@ function resetQuickTimer(id){
   if(!qt)return;
   cancelQtAudio(qt);
   qt.running=false;qt.finished=false;qt.remaining=qt.totalSec;qt.pausedRem=qt.totalSec;qt.flashUntil=0;qt._fireCounts={};
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
   // If this was the last thing keeping audio/keepalive alive, let it go —
   // otherwise the silent oscillator + wake lock keep burning battery (#17).
   maybeStopKeepalive();
@@ -576,7 +594,7 @@ function ensureQuickTick(){
         // Scheduled audio already played; fall back to manual play only if scheduling failed
         if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
         qt._audioScheduled=false;qt._nodes=[];
-        notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
+        notifyAlarm('qt:'+qt.id,'Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
         qt.flashUntil=Date.now()+2000;
         addLog(qt.label,qt.totalSec,'quick');
         needsRender=true;saveState('auto');
@@ -720,7 +738,7 @@ function _bgQuickTick(){
       qt.running=false;qt.finished=true;qt.pausedRem=0;
       if(cfg.sound&&(!qt._audioScheduled||_audioLost()))playChime(qt.sound);
       qt._audioScheduled=false;qt._nodes=[];
-      notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
+      notifyAlarm('qt:'+qt.id,'Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
       qt.flashUntil=Date.now()+2000;
       addLog(qt.label,qt.totalSec,'quick');
       needsRender=true;saveState('auto');
@@ -777,7 +795,55 @@ function _reconcileTimerAfterWake(opts){
   if(!document.hidden){
     try{renderQuickTimers()}catch(e){}
   }
+  // Whatever survived the wake defines the new set of pending deadlines.
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
+// ========== ALARM SOURCES ==========
+// Hand the Pomodoro and quick-timer deadlines to js/alarms.js so the browser
+// and the service worker can fire them without this page's cooperation. See
+// the header of js/alarms.js for why the old page-only path was unreliable.
+//
+// These are read-only projections of live state: OdtaAlarms.rebuild() calls
+// them and replaces the whole stored set, so nothing here has to track
+// add/remove — cancelling a timer simply stops contributing its alarm.
+function _pomodoroAlarms(){
+  if(!running || !Number.isFinite(startedAt)) return [];
+  const el = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const left = Math.max(0, pausedRemaining - el);
+  if(left <= 0) return [];
+  return [{
+    id: 'pomo',
+    at: Date.now() + left * 1000,
+    title: getPL(phase) + ' Complete',
+    body: phase === 'work' ? 'Great work! Time for a break.' : 'Break over — back to focus.',
+    tag: 'pomo-phase',
+    requireInteraction: false,
+    data: { action: 'openTimer', url: './?tab=focus' },
+  }];
+}
+function _quickTimerAlarms(){
+  if(typeof quickTimers === 'undefined' || !Array.isArray(quickTimers)) return [];
+  const now = Date.now();
+  return quickTimers.filter(qt => qt && qt.running && !qt.finished).map(qt => {
+    const el = Math.max(0, Math.floor((now - qt.startedAt) / 1000));
+    const left = Math.max(0, qt.pausedRem - el);
+    if(left <= 0) return null;
+    return {
+      id: 'qt:' + qt.id,
+      at: now + left * 1000,
+      title: 'Timer done',
+      body: qt.label || '',
+      tag: 'quick-' + qt.id,
+      requireInteraction: false,
+      data: { action: 'openTimer', url: './?tab=focus' },
+    };
+  }).filter(Boolean);
+}
+if(typeof window !== 'undefined' && window.OdtaAlarms){
+  window.OdtaAlarms.addSource(_pomodoroAlarms);
+  window.OdtaAlarms.addSource(_quickTimerAlarms);
+}
+
 window._reconcileTimerAfterWake=_reconcileTimerAfterWake;
 
 // Expose tick and swTick so the background Worker in audio.js can call them

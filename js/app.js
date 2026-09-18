@@ -986,6 +986,31 @@ if(typeof requestIdleCallback === 'function'){
   setTimeout(_bootIntelLoad, 1000);
 }
 
+// ========== ALARM SCHEDULER BOOT ==========
+// Build the initial alarm set once the restored state is on the page, then
+// let js/alarms.js keep it current (it rebuilds on every visibility change,
+// and timer.js / tasks.js push on each transition).
+//
+// refreshFired() runs FIRST: if the service worker delivered a phase-end or a
+// reminder while this page was away or closed, the page needs to know that
+// before its own catch-up pass runs, or the user gets the same alert twice.
+(function bootAlarms(){
+  if(typeof window === 'undefined' || !window.OdtaAlarms) return;
+  const start = () => {
+    window.OdtaAlarms.refreshFired()
+      .then(() => window.OdtaAlarms.rebuild({ force: true }))
+      .catch(err => console.warn('[app] alarm boot', err));
+    window.OdtaAlarms.registerPeriodicSync();
+  };
+  // Wait for the SW to control the page — before that, postMessage has no
+  // target and a TimestampTrigger has no registration to attach to.
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.ready.then(start).catch(start);
+  } else {
+    start();
+  }
+})();
+
 /** Desktop palette shortcut label only — mobile shows just the icon via CSS. */
 (function syncCmdKKbdText(){
   const kbd = document.querySelector('#cmdKBtn .cmdk-btn-kbd');

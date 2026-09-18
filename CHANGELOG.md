@@ -1,5 +1,50 @@
 # Changelog
 
+## v78 — 2026-09-17
+
+Two complaints, both traced to a root cause and fixed there: **notifications only fire while the app is on screen**, and **the Settings filter box is a stub**. The layered-surface sweep that came out of the second found two more surfaces stacking wrong.
+
+### Notifications: the page was deciding when, and a backgrounded page doesn't run
+
+Delivery was entirely page-driven. `onPhaseComplete()` and `checkReminders()` called `notify()` at the moment the **main thread** noticed a deadline had passed; the service worker only ever *rendered* what it was handed (`SHOW_NOTIFICATION`). That makes every notification conditional on the page being alive and ticking at the deadline — and a backgrounded PWA is not. The browser throttles its timers, then freezes the page (which suspends its dedicated Workers, so `audio.js`'s 1 s backstop tick stops too), then discards it. The silent-oscillator keepalive holds that off on desktop Chrome, sometimes on Android, and not at all on iOS, where WebKit suspends the `AudioContext` on background and refuses `resume()` outside user activation. Hence "the sound may work periodically" and "you have to have the app pulled up all the time".
+
+The decision now lives off the page, in three independent layers that share one dedupe key:
+
+- **`js/alarm-store.js` (new)** — an IndexedDB store both contexts can read. localStorage, which the rest of the app uses, is invisible to a service worker, and the whole point is that the worker can act with no page at all. Loaded as a `<script>` on the page and via `importScripts()` in `sw.js`, so it stays a classic script that touches only `self`.
+- **`js/alarms.js` (new)** — collects every pending deadline from registered sources and pushes it down. Where the platform has **Notification Triggers**, each alarm is parked on a `TimestampTrigger`, which fires at the OS level with the page closed, discarded, or the browser not running. Feature-detected; a rejected trigger falls through to the next layer rather than breaking the rebuild, and triggers for cancelled timers are retired on the next rebuild.
+- **`sw.js`** — an alarm engine that flushes everything overdue on **any** wake it gets: `activate`, `message`, a throttled hook on `fetch`, `periodicsync`, `sync`, and `notificationclick`. This is what rescues a phone that froze the page mid-phase — the next time anything touches the scope, the notification goes out. The in-worker `setTimeout` is capped at a 60 s horizon and is strictly an optimisation: a service worker is killed after seconds of idle, so it could never hold a 25-minute phase.
+
+Supporting changes:
+
+- **Sources project live state.** `timer.js` contributes the Pomodoro phase and each running quick timer; `tasks.js` contributes upcoming `remindAt` / due-date reminders (bounded to 3 days and 24 entries — parking hundreds of OS triggers is abusive and browsers cap it anyway). `rebuild()` replaces the whole stored set, so a paused or cancelled timer simply stops contributing and cannot leave an alarm ringing.
+- **No double-announcing.** The worker stamps `firedAt` on delivery and broadcasts `ALARM_FIRED`; the page reads that set *before* its own catch-up pass runs (`refreshFired()` precedes `rebuild()` at boot and on every return to the foreground), and `notifyAlarm()` / the reminder `send()` skip anything already delivered. A rescheduled deadline clears the flag, so it still rings.
+- **Pushed on the way out.** The alarm set is rewritten on `visibilitychange`, `pagehide` and `freeze` — the last two are what actually fire when a mobile OS takes the app away — so the worker is never left holding a stale deadline.
+- **Media-element keepalive.** The 20 Hz oscillator only tells Chrome's audio stream monitor the tab makes sound. What keeps an app alive in the background is an active *media session*, and only a real media element creates one. A looped, runtime-generated near-silent WAV (same amplitude reasoning as `KEEPALIVE_GAIN`, so it clears the −72.25 dBFS silence threshold) now plays alongside it, unmuted — a muted element takes no audio focus. Started and stopped in lockstep with the oscillator, blob URL released, and retried on the next gesture if autoplay was refused.
+- **Periodic Background Sync** is registered when the browser offers it. Its minimum interval is hours, so it is useless for a 25-minute phase, but it is a free extra wake for day-scale reminders and is never depended on.
+
+### Settings filter
+
+Measured in a headless Chromium before the fix: **220×28 px on desktop and tablet, 72×44 px on a phone**, with its text centred.
+
+- The input carried `class="sinput set-nav-filter-input"`. `.sinput` is the 56 px, centre-aligned stepper behind the Focus/Short/Long/Cycle duration fields, and its mobile rule is `width:72px!important` — which beat `.set-nav-filter-input{width:100%}` on every phone. It now has its own styling and no longer borrows the stepper's.
+- The wrapper was `flex:0 0 220px` while `.set-nav-jump` was `flex:1`, so all 1014 px of slack in a desktop settings pane went to empty space between five pills. Reversed: the pills size to content, the field takes the remainder (587 px at 1440, 532 at 900, full width on a phone), at 40 px tall to match the pills, 44 px and 16 px font on mobile so iOS doesn't zoom on focus.
+- At phone width `.set-nav` is a **column** flex container that was also `flex-wrap:wrap`. A wrapped flex line takes the cross size of its widest item, so the jump strip's ~394 px of nowrap pills widened the line past the 314 px panel and put the whole Settings page into a 38 px horizontal scroll — the strip's own `overflow-x:auto` never engaged because the element grew instead of shrinking. `flex-wrap:nowrap` + `min-width:0` + `max-width:100%` fixes both. Settings was the only tab with horizontal overflow; it now has none.
+- The clear **×** is a 30 px (34 px mobile) target instead of a bare glyph, and the **Allow notifications** CTA — the most consequential button in Settings — goes from 22 px to 32 px tall.
+
+### Layered surfaces
+
+- **Fix (dropdowns behind the task modal)**: `.dropdown-popover` sat at `--z-popover` (100) while `.modal-overlay` sits at `--z-modal` (1000), and `ui.js` anchors these to `#mdPillStatus` / `#mdPillPriority` / `#mdPillDue` — pills **inside** the task detail modal. On desktop the Status, Priority and Due pickers rendered behind the modal: invisible and unclickable (`elementFromPoint` at the popover's centre returned the modal's own tab strip). The mobile `.dropdown-sheet` variant only worked because it tied `--z-modal` and won on DOM order. Both now sit on a new `--z-dropdown` layer above every surface they can be opened from, and below `--z-dialog` so a confirm still interrupts.
+- **Fix (banners over modals)**: `.offline-indicator`, `.update-banner`, `.quota-warning` and `.sync-incoming-bar` sat at hardcoded 5000–8500 and painted over any open modal, covering its header, close button and sticky footer. They move to a new `--z-banner` layer — above the FAB and bottom nav, below `--z-modal`.
+- **Fix (syntax cheatsheet)**: `.task-syntax-popover` used `var(--z-popover,1200)`; the 1200 fallback was dead code (the token is 100) and read as the effective value. Since `openQuickAddSheet()` reparents `#quickAddHost` — which owns the "?" trigger — into the sheet, the cheatsheet was rendering behind the very sheet that launched it.
+- **Fix (toast lift that lowered)**: `body:has(.cmdk-overlay.open) #exportToast` set `z-index:calc(var(--z-cmdk) + 1)` = 1501, *below* the rule's own base of 9000. Removed; the base already clears the palette.
+- Every remaining hardcoded four-digit z-index is now a `--z-*` token, and `tests/z-layers.test.mjs` fails the build if one comes back.
+
+### Tests
+
+737 → 767. New: `tests/alarm-scheduling.test.mjs` (14) pins the alarm contract — the store's dual-context constraints, script order, SW wake paths, the bounded arming horizon, the dedupe, the bounded reminder projection, trigger feature-detection, keepalive shape. `tests/z-layers.test.mjs` (6) pins the stacking order by resolving the token table rather than scraping literals. `tests/settings-filter-layout.test.mjs` (8) pins the filter metrics and the overflow fix. `tests/app-confirm-overlay.test.mjs` now resolves tokens too, so a layer expressed as `calc()` no longer reads as "missing".
+
+Service worker cache rotated to `odtaulai-v78`.
+
 ## v77 — 2026-09-10
 
 The chat (Cmd/Ctrl+K → Edit / Ask) kept ending in an error on phones. Reproduced in a 390×844 headless Chromium with the real Transformers.js runtime on the WASM path: the 135M model took 36 s to its first token, then looped on the task context for five minutes until the time budget ran out ("Timed out — try a shorter request…"); the abort that followed went unanswered for 9 s, the worker was torn down, and the next question showed "Download local AI" again. This wave makes the basic model the default, lets the chat load it by itself, and stops the loop from eating the budget.

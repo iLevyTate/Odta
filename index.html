@@ -58,12 +58,19 @@
      rendered or clicked. Replaces inline onclick/onchange/etc., enabling
      CSP without script-src 'unsafe-inline'. -->
 <script src="js/event-delegation.js"></script>
+<!-- Alarm scheduling. alarm-store.js is the IndexedDB the page and sw.js
+     share; alarms.js hands every pending deadline to the browser ahead of
+     time (Notification Triggers) and to the service worker, so a timer or
+     reminder fires without this page being alive. Both must load before
+     timer.js / tasks.js, which register themselves as alarm sources. -->
+<script src="js/alarm-store.js"></script>
+<script src="js/alarms.js"></script>
 <!-- PWA bootstrap (SW registration, install prompt, file:// fallback) -->
 <script src="js/pwa.js"></script>
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v77">
+<link rel="stylesheet" href="css/main.css?v=v78">
 
 </head>
 <body>
@@ -599,7 +606,7 @@
         <button type="button" class="set-nav-btn" data-action="jumpToSettingsSection" data-arg="set-about">About</button>
       </div>
       <div class="set-nav-filter">
-        <input type="search" id="settingsFilter" class="sinput set-nav-filter-input" placeholder="Filter settings… (e.g. notif, theme, sync)" aria-label="Filter settings" data-oninput="filterSettingsRows" autocomplete="off">
+        <input type="search" id="settingsFilter" class="set-nav-filter-input" placeholder="Filter settings… (e.g. notif, theme, sync)" aria-label="Filter settings" data-oninput="filterSettingsRows" autocomplete="off">
         <button type="button" class="set-nav-filter-clear" id="settingsFilterClear" data-action="clearSettingsFilter" hidden aria-label="Clear filter">×</button>
       </div>
     </div>
