@@ -25,6 +25,29 @@ User report: the chat (Cmd/Ctrl+K → Edit) "still comes back with an error" on 
 
 ---
 
+## Phone surface pass (2026-09-16)
+
+Follow-up to the v77 wave, driving the built app in headless Chromium at 390×844 (touch, `isMobile`) and reading each first-run surface as a visitor sees it rather than as the desktop layout implies. Every finding below was measured in the running app, not read off the source. Baseline 737/737 green; 759/759 after.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| AB-1 | "+ Add your first task" (the first-run empty state's primary CTA) focused `#taskInput`; on a phone that input lives in the quick-add sheet and is `display:none` until the sheet opens — measured `0×0`, `offsetParent:null`, so the tap moved focus nowhere and nothing opened (`js/tasks.js`) | High | ✅ Fixed — the button calls `quickAddFabClick()`, which already branches sheet-vs-inline on `(max-width:640px)` |
+| AB-2 | Same card's copy described desktop-only UI: "Type a task above" (no visible input above on a phone) and "Press Ctrl+K" / "Or press Ctrl+K to open the command palette" (no keyboard) (`js/tasks.js`) | Medium | ✅ Fixed — touch copy points at the + button and the header search icon; the keyboard line is desktop-only |
+| AB-3 | Task row at 390 px: grip 34 + checkbox + date chip 76 + two action buttons are all `flex-shrink:0`, leaving `.task-name` **67 px** — "Ship the v78 release notes" wrapped to four lines next to a half-empty row (`css/main.css`) | High | ✅ Fixed — `.task-main` wraps and `.task-signals` takes `flex:1 0 100%` on ≤640 px; name measures 170 px. `.task-name` uses `flex:1 1 0` so the pin star stays on the title's line |
+| AB-4 | The last `@media (max-width:640px)` block set `.task-row-primary .task-checkbox` to 20 px, overriding the 24 px earlier in the same file whose own comment cites WCAG 2.5.5 — on the row's primary action (`css/main.css:2699`) | Medium | ✅ Fixed — 24 px with `min-height` |
+| AB-5 | A browser without WebGPU/WASM support saw the raw engine error in three places: `showExportToast('Embedding model failed to load: ' + err.slice(0,120))`, the header chip's `title` (`slice(0,72) + ' — tap to retry'`, cutting "You may need ."), and the Tools banner (`slice(0,64)`, ending "Failed to get G") (`js/app.js:974`, `js/ai.js`) | High | ✅ Fixed — `friendlyModelError()` in `js/utils.js` maps failure class → one actionable sentence; raw text kept in `console.error` + `window._intelLoadErrorDetail` (chip `title`); `statusText` now escaped before `innerHTML` |
+| AB-6 | Quick add dropped words from task names: "Morning run daily" → **run**, "Night shift prep friday" → **shift prep** (chrono's match at index 0 was a bare day-part word); "Take meds every night" → **Take meds every**, "Review PR by 5pm today" → **Review PR by** (the preposition pointing at the consumed phrase survived) (`js/nlparse.js`, `js/tasks.js`) | High | ✅ Fixed — leading day-part words stay in the title (the time is still applied); an orphaned connector is consumed with the date. Phrasal-verb particles excluded, so "Check in tomorrow" → "Check in" |
+| AB-6b | `intelLoad` set `tryWebGPU = !!navigator.gpu`; where the API exists but `requestAdapter()` resolves null (headless Chromium here, plus Chrome/Edge on VMs, remote desktops, blocklisted drivers, acceleration off) the WebGPU attempt wedged the shared ORT instance, so the `device:'wasm'` fallback on the next line failed too with the WebGPU message — embeddings permanently unavailable, Retry included (`js/intel.js:77`) | High | ✅ Fixed — `_probeIntelWebGPU()` (adapter + device, mirroring `_probeWebGPU` in js/gen-pipeline.js) decides the device. Measured after: model ready on WASM in ~1.6 s, chip ✓, `semanticSearch('money')` ranks "Review Q3 budget" 1st (0.62 similarity for "buy milk" vs "pick up groceries") |
+| AB-6c | `#taskSearchSemanticPill` was shown whenever the semantic checkbox was checked — directly beside that checkbox's own "Semantic" label, duplicating it and leaving the query input ~200 px on a phone (`js/tasks.js`) | Low | ✅ Fixed — the pill renders only when the labelled control has no layout box |
+| AB-7 | `.header-date` rendered "Wednesday, September 16, 2026" into a 390 px top bar, wrapping to a second line and growing the header (`js/utils.js`) | Low | ✅ Fixed — `weekday:'short'` form under 480 px |
+| AB-8 | The undo toast appended "Also: Ctrl+Z" on every device, keyboard or not (and Ctrl+Z on Macs); the extra line is also what pushed the top-anchored pill over the whole header (`js/utils.js`) | Low | ✅ Fixed — hint skipped on `(pointer: coarse)`, ⌘Z on Apple platforms |
+| AB-9 | `#fbSearch` used a colour emoji 🔍 among four monochrome glyphs, against the "no emoji in the UI" rule stated at the top of `js/icons.js` (`index.html:302`) | Low | ✅ Fixed — `data-icon="search"` from the shared set |
+| AB-10 | `.modal-stat` is a flex row, so the literal `" · "` text nodes between its spans were flex items in their own right and wrapped alone to the end of a line; the "Path:" span repeated the task title on root tasks (`js/ui.js`) | Low | ✅ Fixed — separators via `span + span::before`, Path only when a parent path exists, `#` id badge no longer carries its own separator |
+
+**Not changed (deliberate)**: the action toast stays top-centre on phones (documented decision in `css/main.css`, pinned by `tests/toast-position.test.mjs`) — only the keyboard hint inside it was removed. The drag grip keeps its 34 px touch target on phones: it is the only manual reorder affordance there, so the row's width was found elsewhere.
+
+---
+
 ## v76 wave (2026-09-06)
 
 Targeted root-cause pass on two user reports: generative Ask failing with "Couldn't parse a valid plan" (screenshot: `Clean up overdue tasks` → parse error with the model reported ready), and timer chimes / notifications going silent once the app is backgrounded. Baseline 652/652 green; 684/684 after.

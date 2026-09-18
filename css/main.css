@@ -678,6 +678,10 @@
   .tag-input{padding:3px 8px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-md);color:var(--text-2);font-size:10px;font-family:inherit;outline:0;width:80px}
   .modal-stat{display:flex;gap:12px;padding:10px 14px;background:var(--bg-0);border-radius:var(--r-sm);margin-bottom:14px;font-size:10px;color:var(--text-3);letter-spacing:.5px}
   .modal-stat b{color:var(--text-2);font-weight:700}
+  /* Separator rides with the item that follows it, so it can never orphan at
+     the end of a wrapped line (the markup used to carry literal " · " nodes,
+     which flex laid out as items of their own). */
+  .modal-stat > span + span::before{content:'· ';color:var(--text-4)}
   .modal-foot{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border-subtle);justify-content:flex-end}
   .mfoot-btn{padding:7px 16px;border-radius:var(--r-sm);font-size:10px;font-weight:700;letter-spacing:1px;border:none;cursor:pointer;font-family:inherit}
   .mfoot-save{background:var(--accent);color:var(--text-on-accent)}
@@ -2718,7 +2722,19 @@
     .task-item:hover{background:var(--bg-2)}
     .task-row-primary{padding:12px 14px;gap:12px;min-height:48px}
     .task-main .task-name{font-size:15px;font-weight:500;line-height:1.3}
-    .task-row-primary .task-checkbox{width:20px;height:20px;min-width:20px}
+    /* At 390px the row's fixed furniture (grip 34 + checkbox + two 32px action
+       buttons + padding) left the title ~67px, so a six-word task name wrapped
+       into four lines beside a half-empty row. Let the date/recurrence chips
+       drop to their own line under the name; the name then gets the whole
+       content column. */
+    .task-main{flex-wrap:wrap;row-gap:4px}
+    /* basis 0, not auto: with an auto basis the name's own text width pushed
+       it off the pin star's line and the star sat alone on a row of its own. */
+    .task-main .task-name{flex:1 1 0}
+    .task-main .task-signals{flex:1 0 100%;min-width:0}
+    /* 20px undercut the 24px WCAG 2.5.5 target this file's own earlier mobile
+       block called out — and this is the row's primary action. */
+    .task-row-primary .task-checkbox{width:24px;height:24px;min-width:24px;min-height:24px}
     /* On mobile: always show actions because no hover */
     .task-row-actions{opacity:.5!important;gap:0!important}
     .task-row-actions:hover{opacity:1!important}
