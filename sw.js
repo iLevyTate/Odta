@@ -1,6 +1,6 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v78';
+let CACHE_NAME = 'odtaulai-v79';
 try {
   importScripts('./js/version.js');
   // The alarm store is the one piece of state the page and this worker share.
@@ -28,7 +28,7 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v78',
+  './css/main.css?v=v79',
   './js/version.js',
   './js/event-delegation.js',
   './js/alarm-store.js',
@@ -155,13 +155,20 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(e.request)
         .then(res => {
-          if(res && res.status === 200 && res.type === 'basic'){
+          const scopePath = new URL(self.registration.scope).pathname;
+          const isShell = url.pathname === scopePath || url.pathname === scopePath + 'index.html';
+          if(isShell && res && res.status === 200 && res.type === 'basic'){
             const clone = res.clone();
-            caches.open(CACHE_NAME).then(c => c.put(e.request, clone).catch(() => {}));
+            // One key for every shell navigation. Keyed by e.request, each launch
+            // URL (?tab=…&task=…, ?share=1&share_text=…) kept its own copy of
+            // the shell until the next version bump, and a share-target
+            // launch left the shared text in Cache Storage after app.js had
+            // scrubbed it from the address bar.
+            caches.open(CACHE_NAME).then(c => c.put('./index.html', clone).catch(() => {}));
           }
           return res;
         })
-        .catch(() => caches.match('./index.html').then(r => r || caches.match(e.request)))
+        .catch(() => caches.match('./index.html', { ignoreSearch: true }))
     );
     return;
   }
@@ -294,31 +301,20 @@ self.addEventListener('message', e => {
   // The page rewrote the alarm set (a phase started, a timer was cancelled,
   // a reminder moved). Re-read it and re-arm.
   if(e.data?.type === 'ALARMS_UPDATED') e.waitUntil(serviceAlarms());
-  // ── Persistent notification from main thread ──
-  // ServiceWorker.showNotification() fires even when the page tab is frozen
-  // or backgrounded on mobile — unlike `new Notification()` from the main
-  // thread which requires the page to be active.
-  if(e.data?.type === 'SHOW_NOTIFICATION'){
-    const d = e.data;
-    e.waitUntil(
-      self.registration.showNotification(d.title || 'Odta', {
-        body:               d.body || '',
-        tag:                d.tag || 'odtaulai',
-        renotify:           d.renotify !== false,
-        icon:               './icons/icon-192.png',
-        badge:              './icons/icon-192.png',
-        silent:             !!d.silent,
-        requireInteraction: !!d.requireInteraction,
-        data:               d.data || {},
-      })
-    );
-  }
+  // (SHOW_NOTIFICATION was removed: nothing posted it, since audio.js calls
+  // reg.showNotification() itself, and it rendered whatever it was sent.)
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const data = e.notification.data || {};
-  const target = data.url || './';
+  // Only ever launch into this app. Every url the app sets is a relative
+  // ./?… path; anything resolving off-origin is dropped for the scope root.
+  let target = './';
+  try{
+    const u = new URL(data.url || './', self.registration.scope);
+    if(u.origin === self.location.origin) target = u.href;
+  }catch(_){}
   // A tapped alarm is delivered; stamp it so the page doesn't re-announce it,
   // and take the wake as a chance to flush any sibling that is also overdue.
   if(data.odtaAlarmId && self.OdtaAlarmStore){

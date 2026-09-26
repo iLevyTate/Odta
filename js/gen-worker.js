@@ -17,6 +17,17 @@ const genCtls = new Map();          // reqId -> AbortController for each generat
 
 function post(msg){ self.postMessage(msg); }
 
+// The runtime and its WASM are vendored, so both URLs must stay on this
+// origin. A worker loaded from a URL gets its CSP from response headers only
+// and static hosting sends none, so the page's meta CSP doesn't cover this
+// import(); refuse anything else rather than execute it.
+function sameOriginUrl(u){
+  try{
+    const x = new URL(String(u || ''), self.location.href);
+    return x.origin === self.location.origin ? x.href : null;
+  }catch(_){ return null; }
+}
+
 self.onmessage = async (e) => {
   const msg = e.data || {};
   switch(msg.type){
@@ -25,9 +36,12 @@ self.onmessage = async (e) => {
       // presets doesn't leak the old pipeline's weights (WASM heap / WebGPU
       // buffers). createGenEngine itself allocates nothing heavy until load().
       if(engine){ try{ engine.dispose(); }catch(_){} engine = null; }
+      const transformersUrl = sameOriginUrl(msg.transformersUrl);
+      const wasmDir = sameOriginUrl(msg.wasmDir);
+      if(!transformersUrl || !wasmDir){ post({ type: 'load-error', message: 'Refused a non-local runtime URL' }); break; }
       engine = createGenEngine({
-        transformersUrl: msg.transformersUrl,
-        wasmDir: msg.wasmDir,
+        transformersUrl,
+        wasmDir,
         onProgress: (ev) => post({ type: 'progress', ev }),
         onToken: (reqId, text) => post({ type: 'token', reqId, text }),
       });

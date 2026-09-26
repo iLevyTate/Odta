@@ -41,8 +41,12 @@
          bool toggles instead of style.display.
      connect-src uses http:/https: broadly because calfeeds.js allows
      user-configured CORS proxy URLs.
-     wss: entries are required for PeerJS WebRTC signalling. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
+     wss: entries are required for PeerJS WebRTC signalling.
+     media-src blob: is required: the background-audio keepalive
+     (audio.js) and voice-note playback both play blob: URLs, and without
+     it media fell back to default-src 'self' and every one was refused.
+     form-action 'none': the app has no <form> that submits anywhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; form-action 'none'; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
 
 <!-- Icons -->
 <link rel="manifest" href="manifest.json" id="pwa-manifest">
@@ -70,7 +74,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v78">
+<link rel="stylesheet" href="css/main.css?v=v79">
 
 </head>
 <body>
