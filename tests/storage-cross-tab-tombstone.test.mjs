@@ -21,6 +21,14 @@ function makeMergeRun() {
   const j = src.indexOf('\nfunction _onStorageFromOtherTab(', i);
   assert.ok(j > i, 'slice _mergeRemoteStateLww');
   const mergeFn = src.slice(i, j);
+  // The merge now routes ids and lists through storage.js's ingress repair
+  // helpers; load the real ones (plus the _str they use) rather than stubs.
+  const storageSrc = readFileSync(join(root, 'js', 'storage.js'), 'utf8');
+  const iR = storageSrc.indexOf('// ── Ingress repair: id counters, lists ──');
+  const jR = storageSrc.indexOf('// ── end ingress repair ──', iR);
+  assert.ok(iR >= 0 && jR > iR, 'slice ingress repair helpers');
+  const strLine = storageSrc.match(/^const _str\s*=.*$/m)[0];
+  const ingressRepair = strLine + '\n' + storageSrc.slice(iR, jR);
 
   return new Function(`
     var tasks, lists, goals, taskIdCtr, listIdCtr, goalIdCtr;
@@ -48,6 +56,7 @@ function makeMergeRun() {
     function rebuildTaskIdIndex(){}
     function repairOrphanedTaskParents(){}
     function findTask(id){ return tasks.find(t => t.id === id) || null; }
+    ${ingressRepair}
     ${mergeFn}
     return function run(init, remote){
       tasks = init.tasks || [];

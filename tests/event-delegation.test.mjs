@@ -49,6 +49,7 @@ function loadDispatcher(){
 test('event-delegation: click dispatches to window[data-action] with parsed args', () => {
   const { handlers, win } = loadDispatcher();
   let received = null;
+  win.registerDelegatedHandler('testHandler');
   win.testHandler = function(...args){ received = args; };
   const el = makeEl({ dataset: { action: 'testHandler', args: '["hello", 42]' } });
   handlers.click[0]({ target: el });
@@ -62,6 +63,7 @@ test('event-delegation: click dispatches to window[data-action] with parsed args
 test('event-delegation: malformed data-args JSON is silently dropped to []', () => {
   const { handlers, win } = loadDispatcher();
   let received = null;
+  win.registerDelegatedHandler('argsHandler');
   win.argsHandler = function(...args){ received = args; };
   const el = makeEl({ dataset: { action: 'argsHandler', args: '{this is not json' } });
   handlers.click[0]({ target: el });
@@ -72,6 +74,7 @@ test('event-delegation: malformed data-args JSON is silently dropped to []', () 
 test('event-delegation: data-arg (single) takes precedence when data-args is absent', () => {
   const { handlers, win } = loadDispatcher();
   let received = null;
+  win.registerDelegatedHandler('singleArgHandler');
   win.singleArgHandler = function(...args){ received = args; };
   const el = makeEl({ dataset: { action: 'singleArgHandler', arg: '7' } });
   handlers.click[0]({ target: el });
@@ -86,6 +89,7 @@ test('event-delegation: missing window[data-action] is a silent no-op', () => {
 
 test('event-delegation: keyboard Enter on role=button non-button synthesizes click', () => {
   const { handlers, win } = loadDispatcher();
+  win.registerDelegatedHandler('kbHandler');
   win.kbHandler = function(){};
   const el = makeEl({ tag: 'DIV', role: 'button', dataset: { action: 'kbHandler' } });
   let prevented = false;
@@ -114,6 +118,7 @@ test('event-delegation: a thrown handler is caught and logged, not propagated', 
   let logged = false;
   console.error = () => { logged = true; };
   try {
+    win.registerDelegatedHandler('boomHandler');
     win.boomHandler = function(){ throw new Error('boom'); };
     const el = makeEl({ dataset: { action: 'boomHandler' } });
     handlers.click[0]({ target: el });
@@ -143,4 +148,18 @@ test('event-delegation: non-bubbling events (toggle/focus/blur) register in capt
   for (const type of ['change', 'input', 'submit']) {
     assert.ok(byType[type] && byType[type].every(c => !c), `${type} listener stays bubble-phase`);
   }
+});
+
+test('event-delegation: a global that is not an app handler is never called from markup', () => {
+  // The gadget class the allowlist closes: an injected element naming any
+  // top-level function (syncConnect, _applyState, …) used to run it.
+  const { handlers, win } = loadDispatcher();
+  let called = false;
+  win.syncConnect = function(){ called = true; };
+  handlers.click[0]({ target: makeEl({ dataset: { action: 'syncConnect', args: '["ABCDEF"]' } }) });
+  assert.strictEqual(called, false, 'unlisted global must not be dispatched');
+  // …and markup can't widen the set by calling the registration hook itself.
+  handlers.click[0]({ target: makeEl({ dataset: { action: 'registerDelegatedHandler', args: '["syncConnect"]' } }) });
+  handlers.click[0]({ target: makeEl({ dataset: { action: 'syncConnect', args: '["ABCDEF"]' } }) });
+  assert.strictEqual(called, false, 'registerDelegatedHandler is not reachable from data-action');
 });

@@ -4,9 +4,15 @@ function gid(id){return document.getElementById(id)}
  * HTML-escape a string for safe insertion into innerHTML.
  * SECURITY: This is the primary XSS boundary. All user-supplied
  * data rendered via innerHTML MUST pass through esc() first.
- * Uses DOM textContent encoding — handles &, <, >, ", ' correctly.
+ * Escapes & < > " ' so the result is safe in text AND quoted attributes.
+ * (It used to round-trip through textContent → innerHTML, which serialises
+ * a text node's & < > only: every attr="${esc(x)}" could be broken out of
+ * with a quote, e.g. a life-area label or an ICS SUMMARY.)
  */
-function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function esc(s){
+  if(s==null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 /** Escape for HTML double-quoted attributes (title=, etc.). */
 function escAttr(s){
   if(s==null)return '';

@@ -4121,7 +4121,7 @@ function renderTaskNotes(taskId){
   const list=document.getElementById('noteList');
   (t.notes||[]).forEach(n=>{
     const d=document.createElement('div');d.className='note-item';
-    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args='[${taskId},${n.id}]' aria-label="Remove note" title="Remove">×</button>`;
+    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args='${escAttr(JSON.stringify([taskId,n.id]))}' aria-label="Remove note" title="Remove">×</button>`;
     list.appendChild(d);
   });
 }
