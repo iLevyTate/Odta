@@ -330,8 +330,22 @@ function validateOps(raw, ctx){
     }
     for(const k of schema.optional){
       if(rawArgs[k] === undefined) continue;
+      // SET_RECUR: an explicit null / '' / 'none' is the one way to CLEAR a
+      // recurrence. The coercer maps those to null, which used to be dropped
+      // here — so the op reached executeIntelOp without `recur`, was refused
+      // as "unknown", and no recurrence could ever be cleared through ops.
+      // (An unrecognised string like "yearly" is still dropped: it must not
+      // silently wipe an existing recurrence.)
+      if(name === 'SET_RECUR' && k === 'recur'){
+        const rv = rawArgs[k];
+        const cleared = rv === null || rv === '' || (typeof rv === 'string' && /^(none|null|never|off)$/i.test(rv.trim()));
+        if(cleared){ args.recur = null; continue; }
+      }
       const v = _coerceArg(k, rawArgs[k], ctx);
       if(v == null) continue;
+      // An empty name would blank the task's title on apply; treat it like an
+      // omitted field.
+      if(k === 'name' && typeof v === 'string' && !v.trim()) continue;
       args[k] = v;
     }
 
@@ -352,7 +366,10 @@ function validateOps(raw, ctx){
       out.rejected.push({ op: rawOp, reason: 'UNKNOWN_PARENT_ID:' + args.parentId });
       continue;
     }
-    if(name === 'MOVE_TASK' && args.newParentId != null && _descendantIdsForBatchSim(args.id, simTasksById).includes(args.newParentId)){
+    if(name === 'MOVE_TASK' && args.newParentId != null &&
+       (args.newParentId === args.id || _descendantIdsForBatchSim(args.id, simTasksById).includes(args.newParentId))){
+      // Self-parenting is the degenerate cycle: renderNode recursed forever on
+      // parentId === id and the Tasks tab was unrenderable until reload.
       out.rejected.push({ op: rawOp, reason: 'MOVE_WOULD_CYCLE' });
       continue;
     }
@@ -431,23 +448,30 @@ function toolSchemaPromptBlock(){
 // only finds ops the model actually emitted. validateOps stays authoritative.
 
 /** Best-effort fixups for almost-JSON; applied only after strict parsing fails. */
+// Run `fn` over the parts of `t` that are OUTSIDE double-quoted string
+// literals, leaving the literals themselves untouched. The repair rewrites
+// below (Python literals, trailing commas, unquoted keys) must never reach
+// into task text: a near-JSON reply for "Read None of This Is True" used to
+// come back as "Read null of This Is true" and be applied that way.
+function _outsideStrings(t, fn){
+  return t.replace(/"(?:[^"\\]|\\.)*"|[^"]+/g, (m) => (m[0] === '"' && m.length > 1 && m[m.length - 1] === '"' ? m : fn(m)));
+}
 function _repairJson(s){
   let t = String(s || '');
   t = t.replace(/[“”″]/g, '"').replace(/[‘’′]/g, "'");
-  // Python literals (outside of obvious string context is hard to know; these
-  // tokens essentially never appear bare inside our arg strings).
-  t = t.replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null');
   // Single-quoted keys/strings → double-quoted, but only when the text has no
   // double quotes at all (otherwise the apostrophe in "mom's" would be mangled).
   if(t.indexOf('"') < 0 && t.indexOf("'") >= 0){
     t = t.replace(/'((?:[^'\\]|\\.)*)'/g, (_, inner) => '"' + inner.replace(/"/g, '\\"') + '"');
   }
+  // Python literals — only outside string values.
+  t = _outsideStrings(t, seg => seg.replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null'));
   // Line comments the model sometimes appends after an op.
   t = t.replace(/^\s*\/\/[^\n]*$/gm, '');
-  // Trailing commas before a closer.
-  t = t.replace(/,\s*([\]}])/g, '$1');
-  // Unquoted keys: {name: "X"} → {"name": "X"}
-  t = t.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  // Trailing commas before a closer (outside strings).
+  t = _outsideStrings(t, seg => seg.replace(/,\s*([\]}])/g, '$1'));
+  // Unquoted keys: {name: "X"} → {"name": "X"} (outside strings).
+  t = _outsideStrings(t, seg => seg.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3'));
   return t;
 }
 
@@ -547,8 +571,9 @@ function normalizeProposedOp(raw){
     if(raw.type === 'function') delete src.type;
   }
   let name = null;
+  let nameKey = null;
   for(const k of _OP_NAME_KEYS){
-    if(typeof src[k] === 'string' && src[k].trim()){ name = src[k]; break; }
+    if(typeof src[k] === 'string' && src[k].trim()){ name = src[k]; nameKey = k; break; }
   }
   if(name == null) return raw;
   name = String(name).trim().toUpperCase().replace(/[\s-]+/g, '_').replace(/[^A-Z0-9_]/g, '');
@@ -565,6 +590,13 @@ function normalizeProposedOp(raw){
   const flat = {};
   let flatCount = 0;
   for(const k of Object.keys(src)){
+    // `type` is both a possible op-name key and a task argument (task type:
+    // bug / idea / errand …). Only treat it as metadata when it actually
+    // supplied the op name or is the OpenAI "function" marker; otherwise
+    // {"name":"UPDATE_TASK","id":3,"type":"bug"} silently lost the type.
+    if(k === 'type' && nameKey !== 'type' && src[k] !== 'function'){
+      flat[k] = src[k]; flatCount++; continue;
+    }
     if(_OP_META_KEYS.has(k)) continue;
     flat[k] = src[k];
     flatCount++;

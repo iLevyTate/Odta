@@ -182,7 +182,13 @@
    */
   function rebuild(opts) {
     var force = !!(opts && opts.force);
-    var list = collect();
+    // Honour the Notifications toggle and the browser permission here, not
+    // only in syncTriggers: the service worker shows whatever is pending in
+    // the shared store, so writing deadlines while notifications are off
+    // (or not granted) had the SW announcing a "Focus Complete" the page
+    // itself would have suppressed — and, without permission, retrying a
+    // failing showNotification on every wake.
+    var list = notifGranted() ? collect() : [];
     var serialized = JSON.stringify(list.map(function (a) { return a.id + '@' + a.at; }));
     if (!force && serialized === _lastSerialized) return Promise.resolve(false);
     _lastSerialized = serialized;

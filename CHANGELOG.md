@@ -1,5 +1,55 @@
 # Changelog
 
+## v79 — 2026-09-26
+
+A bug-hunt release: a static/dynamic sweep of every module (dead references, undo paths, sync merges, the calendar parser, the service worker) with each fix pinned by a regression test. Nothing here changes the data model or the UI layout.
+
+### Tasks and undo
+
+- **Undo actually undid the wrong thing.** `toggleTaskDoneQuick` and `cycleStatus` took their snapshot *after* mutating the task, so the Undo toast (and Cmd+Z) re-applied the post-click state and a completed task stayed completed. The snapshot is now taken first; seconds the timer folded in while completing an active task are kept, and the restored task is re-stamped so a paired device can't win the merge with the undone state.
+- **Urgent sorted last.** `PRIORITY_ORDER[p]||9` turned urgent's rank 0 into 9 in the priority, smart and impact sorts.
+- **Inbox was always empty.** It required "no list", but every task carries one (`defaultTaskProps` + `ensureDefaultList`). Inbox is now "no category, no due date, no tags, not done" — in the view and in the chip count.
+- **"This week" listed overdue tasks its chip didn't count.** Same lower bound on both sides.
+- **Habits logged late stayed overdue.** `completeHabitCycle` advanced exactly one cycle from the stale due date, and with the reminder re-armed the phone showed "Missed:" within 30 s of logging. It now catches up to the first occurrence after today (keeping the weekday / day-of-month anchor); the explicit reminder rolls the same number of cycles.
+- **Grouped view lost search hits on subtasks** whose parent didn't match; they are now promoted to a group root, and children follow the tree-mode visibility rule.
+- **Move up / Indent skipped invisible rows**: they operated on done / snoozed / filtered-out siblings, so "move up" did nothing visible on the first press and "indent" nested under a hidden done task.
+- **Delete purged photos and voice notes immediately**, before the Undo window. The blob purge now waits out the toast plus the Cmd+Z ring (65 s), Undo cancels it, and a boot-time sweep removes rows a closed tab left behind. Undoing a delete or an add also re-stamps / tombstones the task so another tab or peer doesn't re-delete or resurrect it.
+- **Task modal close replaced the task object** with its snapshot: the `_taskById` index then pointed at a ghost, so later edits through the row (checkbox, star, timer) never persisted; notes / checklist items added in the modal, a re-armed reminder and timer seconds were discarded. The revert is gone — everything is already committed as it happens.
+- Six command-palette entries ("Daily brief", "Weekly review", "AI: Rephrase", "AI: Suggest tags", "Save as template", "Apply template") called handlers that were never written and threw on selection. Removed; a test now resolves every palette target against the real globals.
+
+### Storage, cross-tab and P2P sync
+
+- **Two open tabs ping-ponged saves forever.** Every cross-tab apply queued an autosave, which minted a fresh epoch the other tab saw as newer — a full save + `renderAll()` every ~450 ms in both tabs (and the task list jumping to the top). A tab now writes back only when its LWW merge kept something the other tab lacks.
+- **Quota failure could roll data back.** After a localStorage `QuotaExceededError` the next boot loaded the stale LS mirror and the first save overwrote the newer IndexedDB copy. Boot now also reads IDB and applies it when its epoch is newer and nothing has been edited yet.
+- **Encrypted backups could never be restored** — the decrypted payload nests the state under `state`, which `importData` doesn't understand. It is re-wrapped on the way in.
+- Manual order (`order`) is part of the change comparator, so a reorder syncs. `lastModified` stamps are monotonic per task, so a device with a fast clock can't keep reverting the other one's edits.
+- P2P merge with a newer remote epoch **replaced** this device's time log wholesale; it now unions logs like the cross-tab path (and the id-less session history no longer doubles on every merge). Checklist / note id allocators are reseeded after imports and merges. A replaced PeerJS connection's synchronous `close` no longer tears down its successor.
+
+### AI ops
+
+- `DELETE_TASK` wrote no sync tombstones (an Ask delete came straight back on the next merge), left the timer running on the deleted task and kept its embeddings. Undo of an AI batch replays snapshots in reverse (two ops on one task restored the intermediate state). `SPLIT_TASK` siblings shared the source's attachment ids and nested arrays. `MOVE_TASK` could parent a task to itself (infinite render recursion). `SET_RECUR` could never clear a recurrence. `UPDATE_TASK` with an empty name blanked the title. A flattened op's `type` argument was dropped as metadata. JSON repair rewrote True/False/None *inside* task text. Previewed classifications are no longer re-predicted at apply time, and a hidden heuristic category no longer suppresses the embedding vote. `_askLooksDegenerate` tripped on the third op of a pretty-printed batch.
+- Cancelling a model download now terminates the worker (the pipeline kept downloading and built the session anyway; a second model in the same WASM heap then ran out of memory), and the 20 s watchdog can't kill a retry started inside its window. The WebGPU 45 s cap applies to the init phase after the last file downloads, not to the download itself.
+
+### Calendar feeds
+
+- `VALARM` sub-components overwrote the event's title / description ("Alarm notification" / "This is an event reminder" from Google feeds). Colons inside quoted `TZID` parameters split the property in the wrong place. `RECURRENCE-ID` overrides now exclude the slot they replace from the master (no ghost original next to the moved instance).
+- MONTHLY / YEARLY stepped with `setMonth()`, so a rule from the 31st drifted to the 3rd forever and a Feb 29 yearly became Mar 1; months without the day are now skipped, with `BYMONTHDAY` (incl. `-1`) and ordinal `BYDAY` (`2MO`, `-1FR`) support. `WEEKLY;INTERVAL>1` cycles honour `WKST` (Monday by default).
+- A cross-tab feed rewrite during a sync could persist `null` and wipe every feed; the fetch timeout now covers the body read; return-to-tab refreshes are rate-limited; the what-next conflict hint sees in-progress meetings; more loopback host spellings are blocked.
+
+### Escaping
+
+- `esc()` never escaped quotes (a text node serialises only `& < >`), yet several sites used it inside `title="…"` / `value="…"` — a calendar SUMMARY or synced list name with a `"` could inject `data-action` attributes the delegation dispatcher runs. It now escapes `"` and `'` too. Checklist / note / blocker `data-args` are attribute-escaped and imported note ids are coerced to numbers.
+
+### Timer, alarms, audio, service worker
+
+- CSP had no `media-src`, so every `blob:` media source was refused: the media-element keepalive never played and voice notes couldn't be played back.
+- Skip, reset, reset-phase and remove-quick-timer never rewrote the shared alarm store, so the service worker fired "Focus Complete" for a phase that no longer existed. The store also honours the Notifications toggle / permission now.
+- Boot-time catch-up completions (a phase that ended while the app was closed) waited for nothing, so they re-announced the notification the SW had just shown; they now run after the fired-alarm set loads, and a phase that ended while closed credits its linked task.
+- Chimes scheduled at boot before any gesture sat on a frozen AudioContext clock and played late (or never); scheduling waits for a live clock and the first gesture reschedules.
+- Navigation is served from the precached shell (it was network-first while scripts were cache-first, so the first load after a deploy ran the new HTML against the old JS). A failed fetch of a core shell asset now fails the install instead of activating a broken cache. Notification taps prefer an app-shell client over another same-origin tab.
+
+Not changed, for the maintainers to decide: EXDATE'd occurrences still don't consume `COUNT` (pinned by two tests; RFC 5545 and Google count them), and entity ids remain per-device counters (two devices creating a task between syncs can collide on an id).
+
 ## v78 — 2026-09-17
 
 Two complaints, both traced to a root cause and fixed there: **notifications only fire while the app is on screen**, and **the Settings filter box is a stub**. The layered-surface sweep that came out of the second found two more surfaces stacking wrong.
