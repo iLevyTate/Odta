@@ -131,7 +131,10 @@ function _repairTask(t){
                     })).filter(c=>c.text),
                   })).filter(g=>g.name),
     notes:        _arr(t.notes).map(n=>({
-                    id:        n.id||Date.now()+Math.random(),
+                    // Numeric only: the id is interpolated into the note row's
+                    // data-args, so an imported string id must never carry
+                    // markup. (Non-finite → fresh id, same as a missing one.)
+                    id:        (Number.isFinite(Number(n.id)) && n.id !== '' && n.id !== null) ? Number(n.id) : Date.now()+Math.random(),
                     text:      _str(n.text, ''),
                     createdAt: _str(n.createdAt, ''),
                   })).filter(n=>n.text),
@@ -336,6 +339,21 @@ function _snapshotTask(t){
   catch(_){ return { ...t }; }
 }
 
+/**
+ * Next lastModified stamp for a task that just changed. Monotonic per task:
+ * a stamp received from a peer whose clock runs ahead (or one this device
+ * wrote while its own clock was ahead) must not outrank the edit that
+ * supersedes it, or last-writer-wins keeps reverting our newer edit to the
+ * stale copy. `p` is the previous snapshot (it still holds the stamp the
+ * mutation sites may already have overwritten with a plain Date.now()).
+ */
+function _nextLastModified(t, p){
+  const now = Date.now();
+  const prevT = (t && typeof t.lastModified === 'number' && Number.isFinite(t.lastModified)) ? t.lastModified : 0;
+  const prevP = (p && typeof p.lastModified === 'number' && Number.isFinite(p.lastModified)) ? p.lastModified : 0;
+  return Math.max(now, prevT + 1, prevP + 1);
+}
+
 function resetTaskSnapshotBaseline(){
   _prevTaskSnapshot = {};
   tasks.forEach(t => { _prevTaskSnapshot[t.id] = _snapshotTask(t); });
@@ -436,7 +454,11 @@ function saveState(reason){
         'relatedTo','attachments',
         'completions','habitLastRecordedTotalSec',
         'totalSec','sessions','sessionEntries','checklist','checklists','notes',
-        'completionNote','hiddenUntil','valuesNote','_ext'];
+        'completionNote','hiddenUntil','valuesNote','_ext',
+        // Manual reorder (move up/down, drag, board column order) only writes
+        // `order`; without it here the stamp never moved and a paired device
+        // kept its own order forever (and its next edit overwrote ours).
+        'order'];
       let changed = false;
       for (const f of fieldsToCompare){
         const a = JSON.stringify(t[f]);
@@ -444,7 +466,7 @@ function saveState(reason){
         if (a !== b) { changed = true; break; }
       }
       if (changed){
-        t.lastModified = Date.now();
+        t.lastModified = _nextLastModified(t, p);
         _intelEmbedIds.push(t.id);
       }
     }
@@ -841,6 +863,11 @@ function _applyState(s){
           startedAt = p.startedAt;
           running = rem > 0;
           finished = rem <= 0;
+          // When the live task-time was last folded into totalSec (saveState
+          // folds the running burst into the persisted copy). The boot-time
+          // catch-up uses it to credit only the remainder of a phase that
+          // ended while the app was closed.
+          window._pomoSavedAt = _int(p.pomoSavedAt, 0);
           // Distinguish "phase completed while tab was closed" (we owe the user
           // pip + log + auto-advance) from "phase completed normally before
           // save, then reload" (bookkeeping already in saved state). The flag
@@ -953,6 +980,27 @@ function _mergeDelPair(loc, rem){
  * When another tab persists newer state and this tab has unsaved user edits,
  * merge by last-write-wins on entities (tasks/lists/goals) and union logs.
  */
+// Set by _mergeRemoteStateLww: true when the merged result differs from the
+// remote payload (this tab kept something the other tab lacks), so the
+// storage-event handler knows whether a write-back is needed at all.
+let _lastCrossTabMergeKeptLocal = false;
+function _canonJson(v){
+  if(Array.isArray(v)) return '[' + v.map(_canonJson).join(',') + ']';
+  if(v && typeof v === 'object'){
+    const keys = Object.keys(v).filter(k => v[k] !== undefined).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + _canonJson(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+function _mergeFingerprint(o){
+  const byId = (arr) => (Array.isArray(arr) ? arr.filter(Boolean).slice().sort((a, b) => (a.id > b.id ? 1 : a.id < b.id ? -1 : 0)) : []);
+  return _canonJson({
+    tasks: byId(o.tasks), lists: byId(o.lists), goals: byId(o.goals),
+    timeLog: byId(o.timeLog), intervals: byId(o.intervals),
+    sessionHistory: Array.isArray(o.sessionHistory) ? o.sessionHistory : [],
+    syncTaskDels: o.syncTaskDels || {}, syncListDels: o.syncListDels || {}, syncGoalDels: o.syncGoalDels || {},
+  });
+}
 function _mergeRemoteStateLww(raw){
   try{
     const r = migrateState(JSON.parse(JSON.stringify(raw)));
@@ -1046,7 +1094,21 @@ function _mergeRemoteStateLww(raw){
       stateEpoch = Math.max(_localEpoch, _remoteEpoch);
     if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
     if(typeof repairOrphanedTaskParents === 'function') repairOrphanedTaskParents();
+    if(typeof reseedChecklistAndNoteIdCtrs === 'function') reseedChecklistAndNoteIdCtrs();
     if(activeTaskId && typeof findTask === 'function' && !findTask(activeTaskId)) activeTaskId = null;
+    // Did anything local survive the merge that the remote doesn't already
+    // have? Compared on a key-order-insensitive projection of the synced
+    // entities so a re-ordered object key can't read as a difference.
+    try{
+      _lastCrossTabMergeKeptLocal = _mergeFingerprint({
+        tasks, lists, goals, timeLog, intervals, sessionHistory,
+        syncTaskDels, syncListDels, syncGoalDels,
+      }) !== _mergeFingerprint({
+        tasks: r.tasks, lists: r.lists, goals: r.goals, timeLog: r.timeLog,
+        intervals: r.intervals, sessionHistory: r.sessionHistory,
+        syncTaskDels: mergedTaskDels, syncListDels: mergedListDels, syncGoalDels: mergedGoalDels,
+      });
+    }catch(_){ _lastCrossTabMergeKeptLocal = true; }
     return true;
   }catch(e){
     console.warn('[storage] _mergeRemoteStateLww', e);
@@ -1075,7 +1137,15 @@ function _onStorageFromOtherTab(e){
   if(dirty) ok = _mergeRemoteStateLww(remote);
   else ok = _applyState(remote);
   if(!ok) return;
-  if(typeof queueAutoSave === 'function') queueAutoSave();
+  // Re-persist ONLY when this tab has something the other tab lacks. Saving
+  // unconditionally minted a fresh stateEpoch every time, which the other
+  // tab saw as "newer", applied, and re-saved — two open tabs ping-ponged a
+  // full save + renderAll() every ~450 ms for as long as both stayed open
+  // (the task list jumped to the top twice a second in both). A non-dirty
+  // tab just applied exactly what localStorage holds, so there is nothing to
+  // write; a dirty tab writes back only if the merge kept local state that
+  // the remote copy doesn't have.
+  if(dirty && _lastCrossTabMergeKeptLocal && typeof queueAutoSave === 'function') queueAutoSave();
   if(dirty && typeof showExportToast === 'function'){
     const now = Date.now();
     if(now - (window._lastCrossTabMergeToast | 0) > 20_000){
@@ -1112,7 +1182,10 @@ function loadState(){
     if(raw){
       const s = JSON.parse(raw);
       const ok = _applyState(s);
-      if(ok) return true;
+      if(ok){
+        _recoverNewerIdbState(typeof s.stateEpoch === 'number' ? s.stateEpoch : 0);
+        return true;
+      }
     }
   }catch(e){ console.warn('[storage] localStorage load failed:',e); }
 
@@ -1153,6 +1226,43 @@ function loadState(){
   });
 
   return false;
+}
+
+/**
+ * localStorage is only the fast-path mirror: saveState writes IndexedDB first
+ * and the LS setItem can fail on quota. After such a failure LS holds an
+ * OLDER snapshot than IDB, and loading LS first then returning early meant
+ * the next boot silently reverted to that stale copy — and the first save
+ * after boot overwrote the newer IDB state with it, while the quota banner
+ * had promised "your data is safe — IndexedDB has it". So after a
+ * successful LS load, also read IDB and, if it carries a newer stateEpoch
+ * and the user hasn't touched anything yet, apply it.
+ */
+function _recoverNewerIdbState(lsEpoch){
+  try{
+    _idbGet(STORE_KEY).then(raw => {
+      if(!raw) return;
+      if(window._stateDirty) return;
+      const s = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      if(!s || typeof s !== 'object') return;
+      const idbEpoch = typeof s.stateEpoch === 'number' ? s.stateEpoch : 0;
+      if(!(idbEpoch > (lsEpoch || 0))) return;
+      if(window._stateDirty) return;
+      if(!_applyState(s)) return;
+      if(typeof resetTaskSnapshotBaseline === 'function') resetTaskSnapshotBaseline();
+      if(typeof renderAll === 'function') renderAll();
+      if(typeof renderLog === 'function') renderLog();
+      if(typeof renderGoalList === 'function') renderGoalList();
+      if(typeof renderIntList === 'function') renderIntList();
+      if(typeof renderQuickTimers === 'function') renderQuickTimers();
+      if(typeof applyTheme === 'function') applyTheme();
+      if(typeof setTaskView === 'function') setTaskView(taskView);
+      if(typeof setSmartView === 'function') setSmartView(smartView);
+      // Bring the LS mirror back in line so the next boot doesn't repeat this.
+      if(typeof queueAutoSave === 'function') queueAutoSave();
+      console.info('[storage] Restored newer state from IndexedDB (localStorage mirror was stale)');
+    }).catch(() => {});
+  }catch(_){}
 }
 
 /** True when the in-memory state is still the post-boot defaults — i.e. the
@@ -1533,8 +1643,19 @@ async function importDataEncrypted(file){
     const pt   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
     const json = new TextDecoder().decode(pt);
     const payload = JSON.parse(json);
-    // Hand off to the existing restore logic via a synthetic File.
-    const f = new File([JSON.stringify(payload)], file.name.replace(/\.enc(\.json)?$/, '') + '-decrypted.json', { type: 'application/json' });
+    // Hand off to the existing restore logic via a synthetic File. importData
+    // expects either a bare state object or the plain-export wrapper
+    // { export: <state JSON string>, archive: <archive JSON string> }; the
+    // encrypted payload nests the state under `state` and carries the
+    // archive as an array, so it must be re-wrapped — handing it over as-is
+    // failed every restore with "Invalid backup file".
+    const state = (payload && typeof payload === 'object' && payload.state && typeof payload.state === 'object')
+      ? payload.state : payload;
+    const wrapped = { export: JSON.stringify(state) };
+    if(payload && payload.archive != null){
+      wrapped.archive = (typeof payload.archive === 'string') ? payload.archive : JSON.stringify(payload.archive);
+    }
+    const f = new File([JSON.stringify(wrapped)], file.name.replace(/\.enc(\.json)?$/, '') + '-decrypted.json', { type: 'application/json' });
     if(typeof importData === 'function') importData(f);
   }catch(e){
     alert('Decryption failed — wrong passphrase or corrupted file.');
@@ -1756,6 +1877,11 @@ function importTasks(file){
       // subsequent edit silently misses.
       tasks = tasks.map(_repairTask).filter(Boolean);
       if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
+      // Imported checklists / notes bring their own ids; the allocators are
+      // otherwise only reseeded at load, so the next item added to an
+      // imported task could reuse an existing id (toggle / remove then hit
+      // the wrong item).
+      if(typeof reseedChecklistAndNoteIdCtrs === 'function') reseedChecklistAndNoteIdCtrs();
       saveState('user');
       if(typeof renderTaskList === 'function') renderTaskList();
       if(typeof renderLists === 'function') renderLists();

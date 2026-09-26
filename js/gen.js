@@ -494,19 +494,32 @@ async function _genLoadInThread(modelId, dtype, onProgress){
 function genAbortLoad(){
   if(_genWorker){ try{ _genWorker.postMessage({ type: 'abort-load' }); }catch(_){} }
   if(_genLoadAbortCtl){ try{ _genLoadAbortCtl.abort(); }catch(_){} }
-  // The engine settles its promise on abort, but a worker wedged in native
-  // code never gets to. Settle locally after a grace period so the UI can
-  // always leave "Loading…"; a late 'loaded' for a discarded load is ignored
-  // because the resolvers are gone by then.
-  if(_genLoadResolvers){
-    setTimeout(() => {
-      if(!_genLoadResolvers) return;
-      const r = _genLoadResolvers; _genLoadResolvers = null;
-      try{ r.reject(new Error('LOAD_ABORTED')); }catch(_){}
-      _genTeardownWorker('LOAD_ABORTED');
-      _genLastError = 'Download cancelled.';
-    }, GEN_ABORT_WATCHDOG_MS);
+  if(!_genLoadResolvers) return;
+  if(_genWorker){
+    // A worker load can only truly be cancelled by terminating the worker:
+    // the abort signal settles the promise, but the pipeline underneath keeps
+    // downloading the remaining weights and then builds the session anyway
+    // (its progress events kept flowing into whichever load the user started
+    // next, and a second model in the same WASM heap ran out of memory). The
+    // worker is cheap to respawn on the next load.
+    const r = _genLoadResolvers; _genLoadResolvers = null;
+    try{ r.reject(new Error('LOAD_ABORTED')); }catch(_){}
+    _genTeardownWorker('LOAD_ABORTED');
+    _genLastError = 'Download cancelled.';
+    return;
   }
+  // Main-thread pipeline: the engine settles its promise on abort, but a
+  // wedged native build never gets to. Settle locally after a grace period so
+  // the UI can always leave "Loading…". The watchdog is tied to THIS load —
+  // a retry started inside the grace period must not be killed by it.
+  const mine = _genLoadResolvers;
+  setTimeout(() => {
+    if(!_genLoadResolvers || _genLoadResolvers !== mine) return;
+    const r = _genLoadResolvers; _genLoadResolvers = null;
+    try{ r.reject(new Error('LOAD_ABORTED')); }catch(_){}
+    _genTeardownWorker('LOAD_ABORTED');
+    _genLastError = 'Download cancelled.';
+  }, GEN_ABORT_WATCHDOG_MS);
 }
 
 function _friendlyGenError(msg, modelId){

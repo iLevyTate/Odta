@@ -18,7 +18,11 @@ function calFocusDay(iso){
 window.calFocusDay = calFocusDay;
 
 function _calMonthAnchor(){
-  if(!calMonth) return new Date();
+  // Anchor on the 1st (noon, DST-safe): calNav does setMonth(±1) on this
+  // date, and from the 29th–31st that overflows a shorter neighbour
+  // (Jan 31 → "Feb 31" → Mar 3), so "next month" skipped February and
+  // "previous month" from Mar 31 did nothing.
+  if(!calMonth){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),1,12,0,0); }
   if(/^\d{4}-\d{2}$/.test(calMonth)){
     const p=calMonth.split('-').map(Number);
     return new Date(p[0],p[1]-1,1,12,0,0);
@@ -43,6 +47,19 @@ function _calModeSegHtml(active){
   return h+'</div>';
 }
 
+// Apply per-event feed colours via the DOM API — inline style attributes are
+// blocked by CSP, but el.style.X writes are allowed. Shared by every calendar
+// mode (the Day view used to return before this ran, so its agenda dots all
+// showed the default accent instead of the feed's colour).
+function _applyCalFeedColors(container){
+  if(!container)return;
+  container.querySelectorAll('.cal-feed-event[data-feed-color]').forEach(el=>{
+    el.style.borderLeftColor = el.dataset.feedColor;
+  });
+  container.querySelectorAll('.cal-agenda-dot[data-feed-color]').forEach(el=>{
+    el.style.background = el.dataset.feedColor;
+  });
+}
 function renderCalendar(visibleTasks){
   const container=gid('calendarView');if(!container)return;
   const calMode=(typeof cfg==='object'&&cfg&&cfg.calMode)||'month';
@@ -52,6 +69,7 @@ function renderCalendar(visibleTasks){
 
   if(calMode==='day'){
     container.innerHTML=_calModeSegHtml('day')+_renderCalDayAgendaHtml(focusIso, byDate, true);
+    _applyCalFeedColors(container);
     _bindCalAgendaClicks(container);
     return;
   }
@@ -130,14 +148,7 @@ function renderCalendar(visibleTasks){
   }
   html+='</div>'+_renderCalDayAgendaHtml(focusIso, byDate)+'</div>';
   container.innerHTML=html;
-  // Apply per-event border-left-color via DOM API — inline style is blocked
-  // by CSP, but el.style.X writes are allowed.
-  container.querySelectorAll('.cal-feed-event[data-feed-color]').forEach(el=>{
-    el.style.borderLeftColor = el.dataset.feedColor;
-  });
-  container.querySelectorAll('.cal-agenda-dot[data-feed-color]').forEach(el=>{
-    el.style.background = el.dataset.feedColor;
-  });
+  _applyCalFeedColors(container);
   container.querySelectorAll('.cal-agenda-task[data-task-id]').forEach(el=>{
     el.onclick = function(e){
       e.stopPropagation();
@@ -1545,10 +1556,13 @@ function renderCmdK(){
     {type:'action',label:'Focus-on-list mode (hide other lists)',icon:ic('folder'),run:()=>toggleFocusListMode()},
     {type:'action',label:(isBulkMode()?'Exit bulk-edit mode':'Bulk-edit mode (multi-select)'),icon:ic('check'),run:()=>toggleBulkMode()},
     {type:'action',label:'Save current view…',icon:ic('star'),run:()=>savePerspectivePrompt()},
-    {type:'action',label:'Daily brief (top tasks today)',icon:ic('sparkles'),run:()=>showDailyBriefCard()},
-    {type:'action',label:'Weekly review (last 7 days)',icon:ic('clipboard'),run:()=>showWeeklyReviewCard()},
-    {type:'action',label:'AI: Rephrase open task title',icon:ic('wand'),run:()=>rephraseActiveTaskTitle()},
-    {type:'action',label:'AI: Suggest tags for open task',icon:ic('spark'),run:()=>suggestTagsForTask()},
+    // NOTE: "Daily brief", "Weekly review", "AI: Rephrase", "AI: Suggest tags",
+    // "Save as template" and "Apply template" used to be listed here, but their
+    // handlers (showDailyBriefCard, showWeeklyReviewCard, rephraseActiveTaskTitle,
+    // suggestTagsForTask, saveCurrentTaskAsTemplate, showApplyTemplateCard) were
+    // never written — picking any of them threw a ReferenceError and did
+    // nothing. The gen.js helpers (genDailyBrief, genWeeklyReview, genRephrase,
+    // genSuggestTags) still exist for when the UI side is built.
     {type:'action',label:'AI: Suggest due date for open task',icon:ic('calendar'),run:()=>suggestDueDateForTask()},
     {type:'action',label:'Snooze open task — 1 day',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,1); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
     {type:'action',label:'Snooze open task — 3 days',icon:ic('moon'),run:()=>{ if(editingTaskId!=null) snoozeTaskForDays(editingTaskId,3); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
@@ -1557,8 +1571,6 @@ function renderCmdK(){
     {type:'action',label:'Manage saved views (perspectives)',icon:ic('star'),run:()=>showManagePerspectivesCard()},
     {type:'action',label:'Render markdown in open task description',icon:ic('book'),run:()=>{ if(typeof toggleDescriptionRender==='function') toggleDescriptionRender(); }},
     {type:'action',label:'Export open task as Markdown',icon:ic('clipboard'),run:()=>{ if(editingTaskId!=null) exportSingleTaskAsMarkdown(editingTaskId); else if(typeof showExportToast==='function') showExportToast('Open a task first.') }},
-    {type:'action',label:'Save open task as template',icon:ic('clipboard'),run:()=>saveCurrentTaskAsTemplate()},
-    {type:'action',label:'Apply task template…',icon:ic('clipboard'),run:()=>showApplyTemplateCard()},
     {type:'action',label:'Start focus timer',icon:ic('play'),run:()=>{showTab('focus');if(!running)startTimer()}},
     {type:'action',label:'Add new list',icon:ic('plus'),run:()=>{showTab('tasks');addList()}},
     {type:'action',label:'Harmonize all fields (embeddings)',icon:ic('harmonize'),run:()=>{showTab('tools');if(typeof intelHarmonizeFields==='function')intelHarmonizeFields()}},
@@ -3656,13 +3668,16 @@ async function closeTaskDetail(opts){
   // blur this is usually a no-op, but it covers the case where a field still
   // holds focus when the user clicks Done / taps the backdrop / presses ESC.
   if(!skipRevert && editingTaskId!=null && typeof _autosaveTaskDetailText==='function') _autosaveTaskDetailText();
-  if(!skipRevert&&_taskModalSnapshot&&editingTaskId!=null){
-    const id=editingTaskId,si=tasks.findIndex(x=>x.id===id);
-    if(si>=0){
-      const snap=JSON.parse(JSON.stringify(_taskModalSnapshot));
-      tasks[si]=snap;
-    }
-  }
+  // No "revert to snapshot" on close any more. Every edit in the modal is
+  // committed as it happens (chips via _commitChipChange, text via the
+  // autosave above, blockers / related / attachments via
+  // _syncTaskModalSnapshot), so replacing the task with the snapshot could
+  // only ever DISCARD data: notes and checklist items added in the modal,
+  // reminderFired re-armed by a due-date edit, and the totalSec / sessions a
+  // running timer wrote while the modal was open. Worse, replacing the array
+  // slot with the snapshot swapped the object out from under the _taskById
+  // index, so every later edit through findTask() landed on a ghost that was
+  // no longer in `tasks` and silently never persisted.
   _taskModalSnapshot=null;
   const _modalEl=gid('taskModal');
   // Reset any leftover swipe-drag transform from the bottom-sheet gesture so
@@ -4355,7 +4370,12 @@ window.clearLog = clearLog;
 // ========== TAB NAVIGATION ==========
 const _enteredTabs = {};
 function showTab(tab){
-  if(typeof closeCmdK==='function')closeCmdK();
+  // Dismiss (don't destroy) the palette: closeCmdK() aborts an in-flight Ask
+  // turn and drops the conversation, so switching sections while a question
+  // was minimized to the pill silently cancelled it — no answer, no toast.
+  // cmdkDismiss minimizes a busy / minimized Ask and fully closes otherwise.
+  if(typeof cmdkDismiss==='function')cmdkDismiss();
+  else if(typeof closeCmdK==='function')closeCmdK();
   activeTab=tab;
   document.querySelectorAll('[data-tab]').forEach(el=>{el.hidden = !(el.dataset.tab===tab)});
   document.querySelectorAll('.nav-tab').forEach(el=>{

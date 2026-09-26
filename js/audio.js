@@ -15,14 +15,47 @@ function getAudioCtx(){if(!_audioCtx||_audioCtx.state==='closed')_audioCtx=new(w
 // background and refuses resume() outside user activation, so the listeners
 // stay armed and re-prime on any later gesture while the context isn't
 // running. The check is a cheap state read, so this costs nothing once primed.
+let _hadUserGesture=false;        // fallback where navigator.userActivation is missing
+let _audioRescheduleOnPrime=false; // a schedule was skipped because the clock wasn't live
+/**
+ * Can oscillators be scheduled against the AudioContext clock right now?
+ * Before the first user gesture the context is suspended with currentTime
+ * frozen at 0 (autoplay policy), so a chime scheduled at `0 + remaining`
+ * would sound `remaining` seconds after the first click instead of at phase
+ * end — and audioScheduled=true made the completion path skip its fallback
+ * chime. After a gesture a suspended context is only moments from running.
+ */
+function _audioClockLive(){
+  try{
+    const x=getAudioCtx();
+    if(!x||x.state==='running')return true;
+    const ua=(typeof navigator!=='undefined')?navigator.userActivation:null;
+    if(ua&&typeof ua.hasBeenActive==='boolean')return ua.hasBeenActive;
+    return _hadUserGesture;
+  }catch(_){return true;}
+}
+/** First gesture after a boot that skipped scheduling: put the chimes back. */
+function _rescheduleAudioAfterPrime(){
+  if(!_audioRescheduleOnPrime)return;
+  _audioRescheduleOnPrime=false;
+  try{
+    if(typeof running!=='undefined'&&running&&typeof schedulePhaseAudio==='function'&&!audioScheduled)schedulePhaseAudio();
+    if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers)&&typeof scheduleQtAudio==='function'){
+      quickTimers.forEach(qt=>{ if(qt&&qt.running&&!(qt._nodes&&qt._nodes.length))scheduleQtAudio(qt); });
+    }
+  }catch(_){}
+}
 (function(){
   if(typeof document === 'undefined') return;
   const prime = () => {
+    _hadUserGesture=true;
     try{
-      if(_audioCtx && _audioCtx.state === 'running') return;
+      if(_audioCtx && _audioCtx.state === 'running'){ _rescheduleAudioAfterPrime(); return; }
       const x = getAudioCtx();
       if(x && x.state !== 'running' && x.state !== 'closed' && typeof x.resume === 'function'){
-        x.resume().catch(()=>{});
+        x.resume().then(()=>{ _rescheduleAudioAfterPrime(); }).catch(()=>{});
+      } else if(x && x.state === 'running'){
+        _rescheduleAudioAfterPrime();
       }
     }catch(_){}
     // A keepalive element whose autoplay was refused before any gesture gets
@@ -367,6 +400,7 @@ function cancelSwIntervalChimes(nodesOut){
 function schedulePhaseAudio(){
   cancelScheduledAudio();
   if(!cfg.sound)return;
+  if(!_audioClockLive()){ audioScheduled=false; _audioRescheduleOnPrime=true; return; }
   // Schedule phase-end completion chime
   if(phase==='work')scheduleTransitionAudio(remaining);
   else scheduleBreakEndAudio(remaining);

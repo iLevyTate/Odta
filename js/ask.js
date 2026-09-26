@@ -433,14 +433,21 @@ const ASK_REPETITION_PENALTY = 1.1;
 function _askLooksDegenerate(text){
   const s = String(text || '');
   if(s.length < 240) return false;
-  const win = s.slice(-48);
-  if(!win.trim()) return false;
-  let count = 0;
-  let idx = 0;
-  while((idx = s.indexOf(win, idx)) !== -1){
-    count++;
-    if(count >= 3) return true;
-    idx += 1;
+  // Compare on a whitespace-stripped copy with a window long enough to span
+  // more than one compact op. Pretty-printed batches (the shape small models
+  // emit) repeat the structural boilerplate before every `"id":` verbatim,
+  // and the raw 48-char window tripped on the THIRD legitimate op of a
+  // `mark these done` batch — so the turn bailed with no ops.
+  const c = s.replace(/\s+/g, '');
+  if(c.length >= 192){
+    const win = c.slice(-64);
+    let count = 0;
+    let idx = 0;
+    while((idx = c.indexOf(win, idx)) !== -1){
+      count++;
+      if(count >= 3) return true;
+      idx += 1;
+    }
   }
   // Key spam: the model invents one `"key":"value"` line after another
   // ("pendingComplement", "pendingComplexx", …) with slight variations that

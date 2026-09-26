@@ -115,7 +115,9 @@
 
   function _suggestions(word){
     const w = word.toLowerCase();
-    if(TOKEN_FIXES[w]) return [TOKEN_FIXES[w]];
+    // Own-property lookup: a plain object inherits `constructor`, `toString`
+    // etc., so the word "constructor" used to "suggest" the Object function.
+    if(Object.prototype.hasOwnProperty.call(TOKEN_FIXES, w) && typeof TOKEN_FIXES[w] === 'string') return [TOKEN_FIXES[w]];
     const maxDist = _maxDistFor(w);
     if(!maxDist) return [];
     _buildDict();

@@ -277,3 +277,22 @@ test('askRun: the degeneration guard aborts only its own turn and skips the corr
   assert.match(res.chatAnswer || '', /overdue/, 'falls through to the grounded prose pass');
   assert.ok(!/"id":1/.test(res.chatAnswer || ''), 'the echoed context is never shown as an answer');
 });
+
+test('_askLooksDegenerate: a pretty-printed batch of same-op entries is not a loop', () => {
+  const { win } = mkSandbox({ tasks: TASKS, reply: () => '[]' });
+  const ops = [12, 13, 14, 15].map((id) => ({ name: 'MARK_DONE', args: { id } }));
+  const pretty2 = JSON.stringify(ops, null, 2);
+  const pretty4 = JSON.stringify(ops, null, 4);
+  // Stream it token by token like onToken does — the guard must stay quiet
+  // at every prefix, not just on the final text.
+  for (const text of [pretty2, pretty4]) {
+    for (let i = 240; i <= text.length; i += 7) {
+      assert.equal(win._askLooksDegenerate(text.slice(0, i)), false, `false positive at char ${i}`);
+    }
+  }
+  const resched = JSON.stringify([1, 2, 3, 4, 5].map((id) => ({ name: 'RESCHEDULE', args: { id, dueDate: TODAY } })), null, 2);
+  assert.equal(win._askLooksDegenerate(resched), false);
+  // A genuine echo loop of one op (still streaming — no closing bracket) is caught.
+  const loop = '  {\n    "name": "MARK_DONE",\n    "args": {\n      "id": 12\n    }\n  },\n'.repeat(7);
+  assert.equal(win._askLooksDegenerate(loop), true, 'seven identical pretty-printed ops is a loop');
+});

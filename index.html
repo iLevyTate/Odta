@@ -42,7 +42,7 @@
      connect-src uses http:/https: broadly because calfeeds.js allows
      user-configured CORS proxy URLs.
      wss: entries are required for PeerJS WebRTC signalling. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
 
 <!-- Icons -->
 <link rel="manifest" href="manifest.json" id="pwa-manifest">
@@ -70,7 +70,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v78">
+<link rel="stylesheet" href="css/main.css?v=v79">
 
 </head>
 <body>

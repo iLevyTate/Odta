@@ -115,3 +115,13 @@ test('sw: precaches spellcheck.js', () => {
   const sw = readFileSync(join(root, 'sw.js'), 'utf8');
   assert.match(sw, /'\.\/js\/spellcheck\.js'/);
 });
+
+test('spellcheck: inherited Object.prototype names are not "fixes"', () => {
+  const win = loadSpellcheck();
+  const res = win.checkTaskSpelling('call the constructor today');
+  const sugg = res && Array.isArray(res.suggestions) ? res.suggestions : (Array.isArray(res) ? res : []);
+  for (const s of sugg) {
+    const fix = s && (s.fix ?? s.to ?? s.suggestion ?? s[1]);
+    assert.notEqual(typeof fix, 'function', 'no prototype member leaks out as a suggestion');
+  }
+});
