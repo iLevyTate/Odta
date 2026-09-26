@@ -46,7 +46,7 @@ if(typeof window !== 'undefined' && typeof window.addEventListener === 'function
 // Handles VEVENT entries with DTSTART, DTEND, SUMMARY, DESCRIPTION, LOCATION,
 // UID, RRULE. Properly unfolds long lines (RFC 5545: lines continue on the
 // next line if they start with a space or tab).
-function parseICS(text){
+function parseICS(text, stats){
   if(typeof text !== 'string') return [];
   // Normalise line endings and unfold continuation lines
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
@@ -64,7 +64,12 @@ function parseICS(text){
   for(const raw of unfolded){
     if(raw === 'BEGIN:VEVENT'){ current = {}; continue; }
     if(raw === 'END:VEVENT'){
-      if(current && current.DTSTART){ events.push(current); }
+      if(current && current.DTSTART){
+        // Per-feed cap (see CAL_FEED_MAX_EVENTS): keep the first N in file
+        // order and stop parsing: the rest would only be thrown away.
+        if(events.length >= CAL_FEED_MAX_EVENTS){ if(stats) stats.truncated = true; break; }
+        events.push(current);
+      }
       current = null; continue;
     }
     if(!current) continue;
@@ -125,7 +130,10 @@ function normaliseEvent(ev){
   return {
     uid:         (ev.UID || '').slice(0, 200),
     title:       unescapeICS(ev.SUMMARY || '(no title)'),
-    description: unescapeICS(ev.DESCRIPTION || ''),
+    // Capped at the 8000 chars createTaskFromCalEventCore keeps (its only
+    // reader): every expanded occurrence re-serialises it, so a 1.9 MB
+    // DESCRIPTION on a daily rule became ~690 MB of JSON and the save threw.
+    description: unescapeICS(ev.DESCRIPTION || '').slice(0, 8000),
     location:    unescapeICS(ev.LOCATION || ''),
     dateISO:     start.iso,       // YYYY-MM-DD (in user's local zone)
     time:        start.time,      // HH:MM (in user's local zone) or null for all-day
@@ -204,6 +212,27 @@ function toLocalIsoTime(d){
   return { iso: `${localY}-${localM}-${localD}`, time: `${localH}:${localMin}` };
 }
 
+// Constructing an Intl.DateTimeFormat costs ~50 µs and every TZID'd value needs
+// two, so a 1.5 MB feed of 100k EXDATE;TZID values blocked for 13 s. Cache per
+// zone (names are case-insensitive, so lowercasing keeps the key space small);
+// an invalid zone caches its RangeError so repeats fail just as fast.
+const _calTzFmtCache = new Map();
+function _calTzFmt(tzid, withSec){
+  const k = String(tzid).toLowerCase() + (withSec ? '|s' : '');
+  let c = _calTzFmtCache.get(k);
+  if(!c){
+    try{
+      c = { fmt: new Intl.DateTimeFormat('en-US', Object.assign({
+        timeZone: tzid, year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', hour12:false,
+      }, withSec ? { second:'2-digit' } : {})) };
+    }catch(e){ c = { err: e }; }
+    if(_calTzFmtCache.size < 512) _calTzFmtCache.set(k, c);
+  }
+  if(c.err) throw c.err;
+  return c.fmt;
+}
+
 // Helper: figure out what UTC offset an IANA timezone has at a given wall-clock moment.
 // Returns minutes east of UTC. Uses Intl.DateTimeFormat trick — works in all modern browsers.
 function getTzOffsetMinutes(tzid, Y, M, D, hh, mm){
@@ -211,10 +240,7 @@ function getTzOffsetMinutes(tzid, Y, M, D, hh, mm){
   // and see how much it shifts.
   const asUTC = new Date(Date.UTC(Y, M-1, D, hh, mm));
   // Format target zone's wall clock for this instant
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tzid, year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', hour12:false,
-  });
+  const fmt = _calTzFmt(tzid, false);
   const parts = {};
   fmt.formatToParts(asUTC).forEach(p => { parts[p.type] = p.value; });
   const targetY  = +parts.year;
@@ -231,10 +257,7 @@ function getTzOffsetMinutes(tzid, Y, M, D, hh, mm){
 // Used for the second pass of the DST-aware conversion in parseICSDate.
 function _tzOffsetAtInstantMin(tzid, instantMs){
   const dt = new Date(instantMs);
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tzid, year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false,
-  });
+  const fmt = _calTzFmt(tzid, true);
   const parts = {};
   fmt.formatToParts(dt).forEach(p => { parts[p.type] = p.value; });
   const h = +parts.hour === 24 ? 0 : +parts.hour;
@@ -290,7 +313,9 @@ function unescapeICS(s){
 // Supports: FREQ, INTERVAL, COUNT, UNTIL, BYDAY (weekly only, most common)
 // Skipped: BYMONTHDAY, BYMONTH, BYSETPOS (less common; EXDATE is handled)
 // Expands only within ±windowDays around today so caches stay small.
-function expandEventToDateRange(event, windowDays = 180){
+// stopAfterISO (optional): emit nothing dated after it. _calExpandCapped
+// passes its current cutoff so rules past the per-feed cap stop early.
+function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
   const today = new Date();
   const past = new Date(today); past.setDate(past.getDate() - windowDays);
   const future = new Date(today); future.setDate(today.getDate() + windowDays);
@@ -309,7 +334,10 @@ function expandEventToDateRange(event, windowDays = 180){
     return [event];
   }
 
-  const interval = parseInt(params.INTERVAL || '1', 10);
+  // INTERVAL=0 (or junk) was taken literally, so the loop re-emitted the same
+  // date for every maxIter iteration. RFC 5545 requires a positive integer.
+  let interval = parseInt(params.INTERVAL || '1', 10);
+  if(!Number.isFinite(interval) || interval < 1) interval = 1;
   const until = params.UNTIL ? parseICSDate(params.UNTIL, false) : null;
   const countSpecified = params.COUNT !== undefined && String(params.COUNT).length > 0;
   const countParsed = countSpecified ? parseInt(params.COUNT, 10) : null;
@@ -319,10 +347,19 @@ function expandEventToDateRange(event, windowDays = 180){
   const count = countParsed;
   const countActive = countSpecified && Number.isFinite(count) && count > 0;
   // BYDAY — e.g. "MO,WE,FR" — for weekly events that fire on multiple days per week
+  // Dedupe + cap: BYDAY=MO,MO,…×100k (300 KB) was walked in full for every
+  // week of the window: 5.8 s / 1.4 GB heap for one event. Ordinals are
+  // dropped below, so at most 7 distinct weekdays survive anyway.
   const BY_DAY_MAP = { SU:0, MO:1, TU:2, WE:3, TH:4, FR:5, SA:6 };
-  const byDays = params.BYDAY
-    ? params.BYDAY.split(',').map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null).sort((a, b) => a - b)
-    : null;
+  let byDays = null;
+  if(params.BYDAY){
+    const toks = Array.from(new Set(params.BYDAY.split(','))).slice(0, CAL_RRULE_MAX_BYDAY);
+    byDays = Array.from(new Set(toks.map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null)))
+      .sort((a, b) => a - b);
+  }
+  // Set lookup: scanning a 200k-entry EXDATE array on every iteration took 2.5 s.
+  const exSet = new Set(Array.isArray(event.exdateList) ? event.exdateList : []);
+  const exSorted = Array.from(exSet).filter(x => typeof x === 'string').sort();
 
   const baseDate = new Date(event.dateISO + 'T12:00:00');
   const results = [];
@@ -355,6 +392,18 @@ function expandEventToDateRange(event, windowDays = 180){
       const d = new Date(iso + 'T00:00:00');
       d.setDate(d.getDate() + _spanDays);
       o.endDateISO = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    }
+    // Keep only EXDATEs inside this occurrence's own span, the only ones
+    // getCalFeedEventsForDate can consult. Copying the full list into every
+    // row made a 200k-EXDATE daily rule serialise to ~900 MB, so
+    // _saveCalFeeds' JSON.stringify threw and the sync was never persisted.
+    if(exSorted.length){
+      const last = o.endDateISO || iso;
+      let lo = 0, hi = exSorted.length;
+      while(lo < hi){ const mid = (lo + hi) >> 1; if(exSorted[mid] < iso) lo = mid + 1; else hi = mid; }
+      const own = [];
+      for(let i = lo; i < exSorted.length && exSorted[i] <= last; i++) own.push(exSorted[i]);
+      o.exdateList = own;
     }
     return o;
   };
@@ -409,6 +458,7 @@ function expandEventToDateRange(event, windowDays = 180){
       // Find start of this week's cycle (Sunday)
       const weekStart = new Date(current);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      let pastStop = false;
       for(const dayOfWeek of byDays){
         const occ = new Date(weekStart);
         occ.setDate(weekStart.getDate() + dayOfWeek);
@@ -417,13 +467,14 @@ function expandEventToDateRange(event, windowDays = 180){
         const iso = occ.getFullYear() + '-' +
                     String(occ.getMonth()+1).padStart(2,'0') + '-' +
                     String(occ.getDate()).padStart(2,'0');
+        if(stopAfterISO && iso > stopAfterISO){ pastStop = true; break; }
         if(until && iso > until.iso) continue;
-        if(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso)) continue;
+        if(exSet.has(iso)) continue;
         occSeen++;
         if(occ >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
         if(countActive && occSeen >= count) break;
       }
-      if(countActive && occSeen >= count) break;
+      if(pastStop || (countActive && occSeen >= count)) break;
       current.setDate(current.getDate() + 7 * interval);
     } else {
       // Standard path — one occurrence per interval
@@ -431,7 +482,8 @@ function expandEventToDateRange(event, windowDays = 180){
                   String(current.getMonth()+1).padStart(2,'0') + '-' +
                   String(current.getDate()).padStart(2,'0');
       if(until && iso > until.iso) break;
-      if(!(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso))){
+      if(stopAfterISO && iso > stopAfterISO) break;
+      if(!exSet.has(iso)){
         occSeen++;
         if(current >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
       }
@@ -452,8 +504,26 @@ function expandEventToDateRange(event, windowDays = 180){
   });
 }
 
+// Per-feed work caps. The byte cap alone doesn't bound work: 10k copies of a
+// one-line FREQ=DAILY VEVENT (580 KB) expanded to 3.6M rows (563 MB heap,
+// 4.4 s) and _saveCalFeeds' JSON.stringify then threw "Invalid string length".
+// Declared above CAL_FETCH_MAX_BYTES so tests that slice parser..expand get them.
+const CAL_FEED_MAX_EVENTS = 5000;       // VEVENTs parsed per feed (first N in file order)
+const CAL_FEED_MAX_OCCURRENCES = 20000; // expanded rows kept per feed (earliest first)
+const CAL_RRULE_MAX_BYDAY = 50;         // distinct BYDAY tokens (7 weekdays × a few ordinals)
 const CAL_FETCH_MAX_BYTES = 2_000_000;
 const CAL_FETCH_TIMEOUT_MS = 25000;
+
+// Gate for pasted / opened .ics text. The size cap and BEGIN:VCALENDAR marker
+// used to live only in submitAddCalFeed, so app.js's "Open with Odta" handler
+// (addCalFeed({content})) stored any file unchecked. Returns a user-facing
+// reason, or null when the content is acceptable.
+function calFeedContentError(text){
+  if(typeof text !== 'string') return 'Calendar content must be text.';
+  if(text.length > CAL_FETCH_MAX_BYTES) return 'Calendar file is too large (max ' + (CAL_FETCH_MAX_BYTES / 1_000_000) + ' MB).';
+  if(!text.includes('BEGIN:VCALENDAR')) return 'That doesn\'t look like an .ics file. It should start with BEGIN:VCALENDAR.';
+  return null;
+}
 
 // Parse the "loose" IPv4 forms that inet_aton / browsers accept but a naive
 // string check misses: a single decimal (2130706433), hex (0x7f000001), octal
@@ -495,7 +565,37 @@ function _calIpv4IsPrivate(ip){
   if(a === 192 && b === 168) return true;                      // 192.168/16
   if(a === 169 && b === 254) return true;                      // link-local + cloud metadata
   if(a === 172 && b >= 16 && b <= 31) return true;             // 172.16/12
+  if(a === 100 && b >= 64 && b <= 127) return true;            // 100.64/10 CGNAT (RFC 6598)
   return false;
+}
+
+// Expand a URL-normalised IPv6 literal (pure hex: WHATWG URL rewrites
+// ::ffff:127.0.0.1 to ::ffff:7f00:1) to 8 hextets, or null if it isn't one.
+function _calParseIpv6(h){
+  if(typeof h !== 'string' || h.indexOf(':') < 0 || !/^[0-9a-f:]+$/.test(h)) return null;
+  const halves = h.split('::');
+  if(halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = 8 - head.length - tail.length;
+  if(halves.length === 2 ? fill < 1 : fill !== 0) return null;
+  const parts = head.concat(new Array(halves.length === 2 ? fill : 0).fill('0'), tail);
+  if(parts.some(p => !/^[0-9a-f]{1,4}$/.test(p))) return null;
+  return parts.map(p => parseInt(p, 16));
+}
+
+// The IPv4 address carried in the low 32 bits of IPv6 forms that reach it:
+// IPv4-mapped ::ffff:0:0/96, IPv4-translated ::ffff:0:0:0/96, NAT64
+// 64:ff9b::/96 and deprecated IPv4-compatible ::/96. Null for anything else.
+function _calIpv6EmbeddedIpv4(g){
+  const zero = (from, to) => g.slice(from, to).every(x => x === 0);
+  if((zero(0, 5) && g[5] === 0xffff) ||
+     (zero(0, 4) && g[4] === 0xffff && g[5] === 0) ||
+     (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) ||
+     zero(0, 6)){
+    return ((g[6] * 0x10000) + g[7]) >>> 0;
+  }
+  return null;
 }
 
 function _calFetchUrlOk(urlStr){
@@ -507,11 +607,16 @@ function _calFetchUrlOk(urlStr){
   // Defense-in-depth: block loopback / private / link-local / unique-local.
   // Covers 127/8 (loopback), 10/8, 172.16/12, 192.168/16 (RFC1918),
   // 169.254/16 (link-local — includes AWS metadata 169.254.169.254),
-  // 0.0.0.0, IPv6 ::1, fe80::/10 (link-local), fc00::/7 (unique-local).
+  // 100.64/10 (CGNAT), 0.0.0.0, IPv6 ::1, fe80::/10 (link-local),
+  // fc00::/7 (unique-local), and IPv6 forms that embed any of the IPv4 ranges.
   let h = u.hostname.toLowerCase();
   // Strip IPv6 brackets if present
   if(h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
-  if(h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return false;
+  // One trailing dot is the DNS root and resolves identically: "localhost."
+  // and "lvh.me." slipped past the exact / suffix matches below.
+  if(h.endsWith('.')) h = h.slice(0, -1);
+  // *.localhost is loopback by spec (RFC 6761) and in every modern browser.
+  if(h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::' || h === '::1') return false;
   // Numeric/hex/octal/short IPv4 obfuscations (e.g. http://2130706433/,
   // http://0x7f000001/, http://127.1/) — parse to a real address and block if
   // it lands in a private range. Without this the string checks below miss them.
@@ -525,14 +630,15 @@ function _calFetchUrlOk(urlStr){
      h.startsWith('192.168.') ||
      h.startsWith('169.254.') ||
      /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
-  // IPv6 link-local fe80::/10 and unique-local fc00::/7. Also IPv4-mapped
-  // forms ::ffff:127.0.0.1 / ::ffff:7f00:1.
+  // IPv6 link-local fe80::/10 and unique-local fc00::/7.
   if(/^fe[89ab][0-9a-f]?:/.test(h)) return false;
   if(/^f[cd][0-9a-f]{2}:/.test(h)) return false;
-  if(/^::ffff:(7f|0a|c0a8|a9fe|ac1[0-9a-f])/.test(h)) return false;
-  if(/^::ffff:127\./.test(h) || /^::ffff:10\./.test(h) ||
-     /^::ffff:192\.168\./.test(h) || /^::ffff:169\.254\./.test(h) ||
-     /^::ffff:172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  // IPv6 forms embedding an IPv4 address: run the parsed IPv4 through the same
+  // private check. Prefix regexes missed [::ffff:0:7f00:1], [::ffff:a00:1]
+  // and NAT64 [64:ff9b::7f00:1], all of which reach 127/8 or 10/8.
+  const _g = _calParseIpv6(h);
+  const _v4 = _g ? _calIpv6EmbeddedIpv4(_g) : null;
+  if(_v4 != null && _calIpv4IsPrivate(_v4)) return false;
   return true;
 }
 
@@ -542,8 +648,60 @@ function _calFetchUrlOk(urlStr){
 // writes results into a stale closure (or silently completes for nothing).
 const _calFeedControllers = new Map();
 
+// Settle with `p`, or reject as soon as `signal` aborts, even when `p` ignores
+// the signal (a body stream that stalls without ever erroring).
+function _calUntilAbort(p, signal){
+  if(!signal) return p;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason || new Error('Aborted'));
+    Promise.resolve(p).then(
+      v => { signal.removeEventListener('abort', onAbort); resolve(v); },
+      e => { signal.removeEventListener('abort', onAbort); reject(e); });
+    if(signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+// Read a response body under CAL_FETCH_MAX_BYTES. The cap used to be checked
+// only after res.text() had buffered everything; now an oversized
+// Content-Length is refused up front and a streamed body is aborted the moment
+// its running byte count passes the cap. res.text() + post-check remains the
+// fallback where streams / TextDecoder are unavailable.
+async function _calReadBodyCapped(res, ac){
+  const tooLarge = () => { try{ ac.abort(); }catch(_){} return new Error('Calendar response too large'); };
+  const len = res.headers && typeof res.headers.get === 'function' ? Number(res.headers.get('content-length')) : NaN;
+  if(len > CAL_FETCH_MAX_BYTES) throw tooLarge();
+  const body = res.body;
+  if(!body || typeof body.getReader !== 'function' || typeof TextDecoder !== 'function'){
+    const text = await _calUntilAbort(res.text(), ac.signal);
+    if(text.length > CAL_FETCH_MAX_BYTES) throw tooLarge();
+    return text;
+  }
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let bytes = 0, text = '';
+  try{
+    for(;;){
+      const { done, value } = await _calUntilAbort(reader.read(), ac.signal);
+      if(done) break;
+      bytes += value.byteLength;
+      if(bytes > CAL_FETCH_MAX_BYTES) throw tooLarge();
+      text += dec.decode(value, { stream: true });
+    }
+  }catch(e){
+    try{ const p = reader.cancel(); if(p && p.catch) p.catch(() => {}); }catch(_){}
+    throw e;
+  }
+  return text + dec.decode();
+}
+
 async function fetchICSContent(feed){
-  if(feed.content){ return feed.content; }      // paste mode — already have it
+  if(feed.content){                             // paste mode: already have it
+    // Same gate as a fresh paste: stored content can predate the check or
+    // arrive via a restored backup.
+    const bad = calFeedContentError(feed.content);
+    if(bad) throw new Error(bad);
+    return feed.content;
+  }
   if(!feed.url) throw new Error('No URL or pasted content for feed');
 
   let fetchUrl = feed.url;
@@ -559,17 +717,20 @@ async function fetchICSContent(feed){
 
   const ac = new AbortController();
   if(feed && feed.id) _calFeedControllers.set(feed.id, ac);
+  // The timer and the controller registration must cover the BODY too. They
+  // used to be released once fetch() resolved (headers only), so a server that
+  // sent headers and then stalled the body hung the sync forever, and
+  // removeCalFeed could no longer abort it.
   const to = setTimeout(() => ac.abort(), CAL_FETCH_TIMEOUT_MS);
-  let res;
+  let text;
   try{
-    res = await fetch(fetchUrl, { cache: 'no-cache', signal: ac.signal });
+    const res = await fetch(fetchUrl, { cache: 'no-cache', signal: ac.signal });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    text = await _calReadBodyCapped(res, ac);
   }finally{
     clearTimeout(to);
     if(feed && feed.id && _calFeedControllers.get(feed.id) === ac) _calFeedControllers.delete(feed.id);
   }
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
-  const text = await res.text();
-  if(text.length > CAL_FETCH_MAX_BYTES) throw new Error('Calendar response too large');
   // Detect proxies that returned 200 OK with a non-ICS body (e.g. an auth /
   // login HTML page). Without this, parseICS happily produces 0 events and
   // the user sees "Last synced · 0 events" with no error, looking like an
@@ -584,6 +745,31 @@ async function fetchICSContent(feed){
   return text;
 }
 
+// Expand every event within the window, keeping at most
+// CAL_FEED_MAX_OCCURRENCES rows. When over the cap the kept set is the
+// earliest by (date, time) with ties broken by feed order, i.e. exactly the
+// first N of a stable sort of the full expansion. The running cutoff date is
+// passed down so later rules stop expanding past it, and the buffer is trimmed
+// at 2× the cap so sorting stays amortised. Below the cap, feed order is kept.
+function _calExpandCapped(events){
+  const MAX = CAL_FEED_MAX_OCCURRENCES;
+  const out = [];
+  let cutoff = null, truncated = false;
+  const key = o => (o.dateISO || '') + ' ' + (o.time || '');
+  const trim = () => {
+    out.sort((a, b) => { const x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+    out.length = MAX;
+    cutoff = out[MAX - 1].dateISO || null;
+    truncated = true;
+  };
+  for(const e of events){
+    for(const occ of expandEventToDateRange(e, 180, cutoff)) out.push(occ);
+    if(out.length >= 2 * MAX) trim();
+  }
+  if(out.length > MAX) trim();
+  return { list: out, truncated };
+}
+
 // ── Sync a single feed: fetch + parse + store ──────────────────────────────
 async function syncCalFeed(feedId){
   _loadCalFeeds();
@@ -592,17 +778,22 @@ async function syncCalFeed(feedId){
 
   try {
     const content = await fetchICSContent(feed);
-    const events = parseICS(content);
+    const stats = {};
+    const events = parseICS(content, stats);
     // Expand recurring events within window
-    const expanded = [];
-    events.forEach(e => {
-      expandEventToDateRange(e, 180).forEach(occ => expanded.push(occ));
-    });
+    const { list: expanded, truncated } = _calExpandCapped(events);
     feed.events = expanded;
     feed.lastSync = Date.now();
+    // A capped feed still synced, so it's a warning on its status line, not
+    // an error: feed.error drives the calendar's "sync failed; events may be
+    // stale · Retry" alert, and retrying can't shrink the feed.
+    const cut = [];
+    if(stats.truncated) cut.push('first ' + CAL_FEED_MAX_EVENTS + ' events');
+    if(truncated) cut.push('earliest ' + CAL_FEED_MAX_OCCURRENCES + ' occurrences');
     feed.error = null;
+    feed.warning = cut.length ? 'Feed too large, showing only its ' + cut.join(' and ') : null;
     _saveCalFeeds();
-    return { count: expanded.length };
+    return { count: expanded.length, truncated: cut.length > 0 };
   } catch(err) {
     // If the feed was removed mid-sync (AbortError from removeCalFeed) the
     // feed object is now an orphan; skip writing error state to it.
@@ -627,6 +818,11 @@ async function syncAllCalFeeds(){
 
 // ── CRUD: add/remove/update feeds ──────────────────────────────────────────
 function addCalFeed({label, url, proxy, content, color}){
+  // Validate here, not only in the paste form (see calFeedContentError).
+  if(content){
+    const bad = calFeedContentError(content);
+    if(bad) throw new Error(bad);
+  }
   _loadCalFeeds();
   const id = 'cf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
   const feed = {
@@ -926,6 +1122,8 @@ function renderCalFeedsPanel(){
           : 'Never';
         const status = f.error
           ? `<span class="calfeed-status calfeed-status--error">✕ ${esc(f.error)}</span>`
+          : f.warning
+            ? `<span class="calfeed-status calfeed-status--warn"><strong>⚠ ${esc(f.warning)}</strong> · ${evCount} events · ${lastSync}</span>`
           : f.visible
             ? `<span class="calfeed-status calfeed-status--ok">✓ ${evCount} events · ${lastSync}</span>`
             : `<span class="calfeed-status calfeed-status--warn">◎ synced (${evCount} events) · <strong>hidden</strong> — tap 👁 to show on calendar</span>`;
@@ -1083,14 +1281,8 @@ async function submitAddCalFeed(){
   let feed;
   if(pasteActive){
     const content = document.getElementById('cfPasteContent').value.trim();
-    if(content.length > CAL_FETCH_MAX_BYTES){
-      _cfToast('Calendar paste is too large (max ' + (CAL_FETCH_MAX_BYTES / 1_000_000) + ' MB).');
-      return;
-    }
-    if(!content.includes('BEGIN:VCALENDAR')){
-      _cfToast('That doesn\'t look like an .ics file. It should start with BEGIN:VCALENDAR.');
-      return;
-    }
+    const bad = calFeedContentError(content);
+    if(bad){ _cfToast(bad); return; }
     feed = addCalFeed({ label, color, content });
   } else {
     const url = document.getElementById('cfUrl').value.trim();

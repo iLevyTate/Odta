@@ -27,8 +27,9 @@ function sliceFn(name){
 }
 
 function extractFn(){
-  // _calFetchUrlOk depends on the two loose-IPv4 helpers, so include them.
-  const helpers = sliceFn('_calParseIpv4Loose') + '\n' + sliceFn('_calIpv4IsPrivate') + '\n';
+  // _calFetchUrlOk depends on the loose-IPv4 and embedded-IPv4 helpers.
+  const helpers = ['_calParseIpv4Loose', '_calIpv4IsPrivate', '_calParseIpv6', '_calIpv6EmbeddedIpv4']
+    .map(sliceFn).join('\n') + '\n';
   const body = sliceFn('_calFetchUrlOk');
   // Stub for the production env that the helper reads.
   return new Function('window', 'location', helpers + 'return (' + body + ')');
@@ -66,6 +67,27 @@ const BLOCKED = [
   'https://app.localtest.me/x',
   'https://foo.lvh.me/x',
   'https://service.nip.io/x',
+  // Trailing-dot (DNS root) and *.localhost forms of loopback:
+  'https://localhost./x',
+  'https://foo.localhost/x',
+  'https://a.b.localhost./x',
+  'https://lvh.me./x',
+  'https://foo.nip.io./x',
+  // IPv6 forms embedding a private IPv4 (URL rewrites the dotted quad to hex):
+  'https://[::ffff:127.0.0.1]/x',  // IPv4-mapped → [::ffff:7f00:1]
+  'https://[::ffff:7f00:1]/x',
+  'https://[::ffff:0:7f00:1]/x',   // IPv4-translated (RFC 2765)
+  'https://[::ffff:0:a00:1]/x',    // translated 10.0.0.1
+  'https://[::ffff:a00:1]/x',      // mapped 10.0.0.1 (old prefix regex missed it)
+  'https://[::ffff:c0a8:101]/x',   // mapped 192.168.1.1
+  'https://[::ffff:a9fe:a9fe]/x',  // mapped 169.254.169.254 (metadata)
+  'https://[64:ff9b::7f00:1]/x',   // NAT64 127.0.0.1
+  'https://[64:ff9b::a9fe:a9fe]/x',// NAT64 metadata
+  'https://[::7f00:1]/x',          // deprecated IPv4-compatible
+  // CGNAT 100.64/10 (RFC 6598):
+  'https://100.64.0.1/x',
+  'https://100.127.255.254/x',
+  'https://[::ffff:6440:1]/x',     // mapped 100.64.0.1
 ];
 
 const ALLOWED = [
@@ -76,6 +98,13 @@ const ALLOWED = [
   'https://172.32.0.1/x',  // just outside 172.16/12
   'https://192.169.1.1/x', // just outside 192.168/16
   'https://169.253.1.1/x', // just outside 169.254/16
+  'https://100.63.255.255/x', // just below 100.64/10
+  'https://100.128.0.1/x',    // just above 100.64/10
+  'https://example.com./feed.ics',  // trailing dot on a public name
+  'https://notlocalhost.example/x', // "localhost" only as a label suffix match
+  'https://[::ffff:808:808]/x',     // mapped 8.8.8.8 (public)
+  'https://[64:ff9b::808:808]/x',   // NAT64 8.8.8.8 (public)
+  'https://[2001:4860:4860::8888]/x',
 ];
 
 test('calfeeds SSRF: private/loopback/link-local ranges are rejected', () => {
