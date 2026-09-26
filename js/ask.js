@@ -25,6 +25,49 @@ function _askListName(id){
   return l ? l.name : null;
 }
 
+// Tasks made from a subscribed ICS event (calfeeds.js
+// createTaskFromCalEventCore) take their name from the feed's SUMMARY and
+// their description from its DESCRIPTION/LOCATION: text written by whoever
+// controls the feed, not the user. The durable marker is _ext.calFeedId /
+// calEventUid; SPLIT_TASK strips those two from the siblings but keeps
+// calEventDate while copying the source description, so any of the three
+// counts. The 'calendar' tag is not used: users remove it, or add it to
+// their own tasks.
+function _askTaskIsExternal(t){
+  const ex = t && t._ext;
+  if(!ex || typeof ex !== 'object') return false;
+  return ex.calFeedId != null || ex.calEventUid != null || ex.calEventDate != null;
+}
+
+function _askFindTaskById(id){
+  if(id == null) return null;
+  if(typeof findTask === 'function'){ try{ return findTask(id) || null; }catch(_){ return null; } }
+  if(typeof tasks !== 'undefined' && Array.isArray(tasks)) return tasks.find(t => t && t.id === id) || null;
+  return null;
+}
+
+/** True when a read-op result hands the model rows of a feed-authored task. */
+function _askReadTouchesExternal(result){
+  if(!result || typeof result !== 'object') return false;
+  const rows = [];
+  if(result.task && typeof result.task === 'object') rows.push(result.task);
+  if(Array.isArray(result.tasks)) rows.push(...result.tasks);
+  return rows.some(r => r && r.id != null && _askTaskIsExternal(_askFindTaskById(r.id)));
+}
+
+// Model output is rebuilt as a bare {name, args} before validation: every
+// underscore key on an op (`_preview`, `_rationale`, …) is display metadata
+// that trusted in-app proposers set, and validateOps copies it through to the
+// review card. From the model it is a spoofing channel: a CHANGE_LIST whose
+// `_preview` names "Buy milk → Groceries" while its ids move "Tax return" into
+// Archive, or a `_rationale` pill reading "you approved this".
+function _askBareOps(list){
+  if(!Array.isArray(list)) return list;
+  return list.map(op => (op && typeof op === 'object' && !Array.isArray(op) && op.name != null)
+    ? { name: op.name, args: (op.args && typeof op.args === 'object' && !Array.isArray(op.args)) ? op.args : {} }
+    : op);
+}
+
 function _askSerializeTask(t){
   const line = {
     id: t.id,
@@ -63,7 +106,13 @@ function _askIsRetrospective(q){
   return /\b(complete|completed|finish|finished|done|archived|history|last week|last month|yesterday|recent(ly)?|past)\b/.test(s);
 }
 
-async function _askBuildContext(query){
+/**
+ * @param {string} query
+ * @param {{ external?: boolean }} [meta] out-param: `external` is set true when
+ *   a serialised line belongs to a feed-authored task (see _askTaskIsExternal),
+ *   so the caller can taint the turn without re-deriving which tasks made it in.
+ */
+async function _askBuildContext(query, meta){
   const out = [];
   const seen = new Set();
   const retro = _askIsRetrospective(query);
@@ -115,6 +164,7 @@ async function _askBuildContext(query){
     if(used + line.length + 1 > ASK_CONTEXT_MAX_CHARS) break;
     lines.push(line);
     used += line.length + 1;
+    if(meta && _askTaskIsExternal(t)) meta.external = true;
   }
   return lines;
 }
@@ -373,13 +423,19 @@ async function askQuickIntent(q){
   if(!_askIsQuestionLike(s) || _askMentionsWriteVerb(s) || _askIsRetrospective(s)) return null;
   const byDue = (a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || ''));
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  // No model reads this answer now, but ui.js replays it as the next turn's
+  // prior assistant message, so a feed-authored name listed here reaches the
+  // model then, so the turn records it (see priorTurns in cognitaskRun).
+  let listedExternal = false;
   const list = (arr, withDue) => {
-    const lines = arr.slice(0, 8).map(t => '• ' + _askStripCtrl(t.name).slice(0, 80) + (withDue && t.dueDate ? ' (due ' + t.dueDate + ')' : ''));
+    const shown = arr.slice(0, 8);
+    if(shown.some(_askTaskIsExternal)) listedExternal = true;
+    const lines = shown.map(t => '• ' + _askStripCtrl(t.name).slice(0, 80) + (withDue && t.dueDate ? ' (due ' + t.dueDate + ')' : ''));
     if(arr.length > 8) lines.push('… and ' + plural(arr.length - 8, 'more'));
     return lines.join('\n');
   };
   const addDays = (n) => _askAddDaysIso(today, n);
-  const answer = (text) => ({ chatAnswer: text, kind: 'lookup' });
+  const answer = (text) => ({ chatAnswer: text, kind: 'lookup', external: listedExternal });
 
   if(/\b(overdue|past due|late|behind on)\b/i.test(s)){
     const od = open.filter(t => t.dueDate && String(t.dueDate) < today).sort(byDue);
@@ -801,7 +857,7 @@ async function cognitaskRun(query, opts){
   try{ quick = await askQuickIntent(q); }catch(_){ quick = null; }
   if(quick && quick.chatAnswer){
     if(typeof pushAskHistory === 'function') pushAskHistory(q);
-    return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, chatAnswer: quick.chatAnswer, quick: quick.kind };
+    return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, chatAnswer: quick.chatAnswer, quick: quick.kind, externalContent: !!quick.external };
   }
   if(quick && Array.isArray(quick.ops) && quick.ops.length && typeof validateOps === 'function'){
     const qctx = (typeof _askCtx === 'function') ? _askCtx() : { tasksById: new Map(), listsById: new Map() };
@@ -824,7 +880,8 @@ async function cognitaskRun(query, opts){
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: '', truncated: false, readRounds: 0, reason: 'ASK_HELPERS_MISSING' };
   }
 
-  const contextLines = await _askBuildContext(q);
+  const contextMeta = { external: false };
+  const contextLines = await _askBuildContext(q, contextMeta);
   const calendarBlock = _askSafeCalendarBlock();
   const useNativeQwenTools = typeof isGenModelNativeQwen25Tools === 'function' && isGenModelNativeQwen25Tools()
     && typeof buildOpenAIToolsFromToolSchema === 'function';
@@ -841,6 +898,13 @@ async function cognitaskRun(query, opts){
   // entry is { user:string, assistant:string }. Failures are silently
   // ignored — best-effort threading, not a load-bearing path.
   const priorMsgs = [];
+  // A prior answer that was itself planned over feed text ("what's on my
+  // calendar?" → a reply quoting the injected event) is replayed verbatim
+  // below, so "ok, do that" would carry the injection into an untainted
+  // turn. The caller marks such turns `external: true` (ui.js stores the
+  // result's externalContent on the turn); the flag is transitive because
+  // this turn's own result carries it forward in turn.
+  let priorExternal = false;
   if(opts && Array.isArray(opts.priorTurns)){
     for(const pt of opts.priorTurns){
       if(!pt) continue;
@@ -849,6 +913,7 @@ async function cognitaskRun(query, opts){
       if(!pu) continue;
       priorMsgs.push({ role: 'user', content: pu });
       if(pa) priorMsgs.push({ role: 'assistant', content: pa });
+      if(pt.external === true || pt.externalContent === true) priorExternal = true;
     }
   }
   const messages = useNativeQwenTools
@@ -891,8 +956,10 @@ async function cognitaskRun(query, opts){
   // The base user prompt itself embeds the next-7-days calendar digest
   // (_askCalendarBlock) on every turn, so externally-authored feed text can
   // influence write ops even when the model never calls GET_CALENDAR_EVENTS.
-  // Taint from the start whenever that block is non-empty.
-  let externalReads = !!calendarBlock;
+  // Taint from the start whenever that block is non-empty, and likewise when a
+  // Context line is a task created from a feed event (its name is the
+  // event's SUMMARY) or a replayed prior turn was itself tainted.
+  let externalReads = !!calendarBlock || contextMeta.external || priorExternal;
 
   // Pure questions ("what is overdue?", "what should I do next?") answer
   // prose-first. The ops prompt is a schema plus a dozen few-shot examples —
@@ -976,7 +1043,7 @@ async function cognitaskRun(query, opts){
     }
     if(!Array.isArray(parsed)) return null;
     if(typeof normalizeProposedOps === 'function') parsed = normalizeProposedOps(parsed);
-    return parsed;
+    return _askBareOps(parsed);
   };
 
   // How many times we let the model fix an unparseable reply before giving
@@ -1032,6 +1099,10 @@ async function cognitaskRun(query, opts){
         }
         const results = reads.map(r => ({ op: r.name, result: runReadOp(r) }));
         if(reads.some(r => ASK_EXTERNAL_READS.includes(r.name))) externalReads = true;
+        // Vault reads can return feed text too: GET_TASK_DETAIL hands over up
+        // to 800 chars of a calendar-made task's description (the event's
+        // DESCRIPTION), and QUERY_TASKS its name.
+        if(results.some(x => _askReadTouchesExternal(x.result))) externalReads = true;
         readRounds++;
         if(typeof opts.onReadRound === 'function'){ try{ opts.onReadRound({ results, readRounds }); }catch(e){} }
         messages.push({ role: 'assistant', content: raw });
@@ -1086,9 +1157,11 @@ async function cognitaskRun(query, opts){
     // questions that have no write operations to apply. Without it the UI
     // throws away a perfectly good answer and reports "Couldn't parse."
     const chatAnswer = _extractProseAnswer(allRaw);
+    // Answer-only results carry the taint as well: ui.js replays the answer
+    // as the next turn's prior message (see priorTurns above).
     if(chatAnswer){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
-      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer };
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, chatAnswer, externalContent: externalReads };
     }
     // The ops turns produced nothing usable. For a command, run the
     // write-only retry (stronger prompt, NOOP escape hatch) so the user gets
@@ -1102,7 +1175,7 @@ async function cognitaskRun(query, opts){
     const { chatAnswer: proseAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
     if(proseAnswer){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
-      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer };
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer: proseAnswer, externalContent: externalReads };
     }
     return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, reason: 'PARSE_FAILED:' + (lastError && lastError.message ? lastError.message : 'no_ops') };
   }
@@ -1130,10 +1203,10 @@ async function cognitaskRun(query, opts){
       const { chatAnswer, proseText } = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
       if(chatAnswer){
         if(typeof pushAskHistory === 'function') pushAskHistory(q);
-        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer };
+        return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + (allRaw ? '\n' : '') + proseText, truncated: false, readRounds, chatAnswer, externalContent: externalReads };
       }
     }
-    return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds };
+    return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw, truncated: false, readRounds, externalContent: externalReads };
   }
 
   const ctx = (typeof _askCtx === 'function') ? _askCtx() : { tasksById: new Map(), listsById: new Map() };
@@ -1204,6 +1277,10 @@ async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
     try{ retryParsed = parseOpsJson(retryRaw); }catch(_){}
     if(Array.isArray(retryParsed)){
       if(typeof normalizeProposedOps === 'function') retryParsed = normalizeProposedOps(retryParsed);
+      // Same boundary as parseReply in cognitaskRun: this path used to hand
+      // validateOps the ops as parsed, so a model `_preview` / `_rationale`
+      // survived onto the review card here while the main path dropped it.
+      retryParsed = _askBareOps(retryParsed);
       // Filter out the synthetic NOOP placeholder we instructed the model
       // to emit when it's stuck. If we get one, surface its reason as a
       // chat-style explanation so the user knows what to add.
@@ -1233,7 +1310,7 @@ async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
           return {
             ok: true, ops: [], rejected: val.rejected, destructiveLevel: 'none',
             rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
-            truncated: false, readRounds,
+            truncated: false, readRounds, externalContent: externalReads,
           };
         }
       }
@@ -1252,7 +1329,7 @@ async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
         return {
           ok: true, ops: [], rejected: [], destructiveLevel: 'none',
           rawText: allRaw + '\n--- write-retry ---\n' + retryRaw,
-          truncated: false, readRounds, chatAnswer: msg,
+          truncated: false, readRounds, chatAnswer: msg, externalContent: externalReads,
         };
       }
     }
@@ -1260,7 +1337,7 @@ async function _runAskWriteRetry(q, contextLines, priorMsgs, cfg, opts, state){
     const retryProse = _extractProseAnswer(retryRaw);
     if(retryProse){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
-      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + '\n' + retryRaw, truncated: false, readRounds, chatAnswer: retryProse };
+      return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: allRaw + '\n' + retryRaw, truncated: false, readRounds, chatAnswer: retryProse, externalContent: externalReads };
     }
   }catch(e){ /* write-retry is best-effort */ }
   return null;

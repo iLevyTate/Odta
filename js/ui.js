@@ -666,7 +666,7 @@ async function _cmdkConfirmDestructiveApply(ops, destructiveLevel){
   const hasDelete = ops.some(o => o && o.name === 'DELETE_TASK');
   const msg = hasDelete
     ? 'This batch includes permanent deletes. Apply anyway?'
-    : 'This batch includes bulk list moves or other destructive changes. Apply anyway?';
+    : 'This batch changes many tasks at once, or hides, renames or rewrites one. Apply anyway?';
   if(typeof showAppConfirm !== 'function') return false;
   // Chrome is passed in: showAppConfirm resets styling as its first act, so
   // applying it beforehand rendered this as a neutral green "OK" prompt.
@@ -744,7 +744,8 @@ function _cmdkAskPriorTurnsFor(currentTurn){
     if(t.status === 'streaming') break;
     const a = _cmdkAskSerialiseAssistant(t);
     if(!a) continue;
-    out.push({ user: String(t.q || ''), assistant: a });
+    // A turn that read calendar-authored text taints the next one it feeds.
+    out.push({ user: String(t.q || ''), assistant: a, external: !!t.externalContent });
   }
   if(out.length > _CMDK_ASK_CONTEXT_TURNS) return out.slice(-_CMDK_ASK_CONTEXT_TURNS);
   return out;
@@ -1329,6 +1330,9 @@ async function _cmdkAskRunTurn(turn, runOpts){
       }
       return;
     }
+    // Recorded before the answer-only returns below, which previously left it
+    // unset: _cmdkAskPriorTurnsFor carries it into the next turn's taint.
+    turn.externalContent = !!res.externalContent;
     const ops = Array.isArray(res.ops) ? res.ops : [];
     if(!ops.length){
       if(res.chatAnswer){
