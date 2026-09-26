@@ -293,8 +293,14 @@ function renderCalTasks(arr, isoDate){
   }
   const taskN=arr?arr.length:0;
   const feedN=feedEvents.length;
+  // The chips and "+N more" already show the count; a visible "1·0" in every
+  // cell read as noise (and always ended in ·0 without calendar feeds). Keep
+  // it for screen readers, with plurals and the zero side dropped.
   if(taskN||feedN){
-    html+='<span class="cal-day-count" title="'+taskN+' tasks, '+feedN+' events">'+taskN+'·'+feedN+'</span>';
+    const parts=[];
+    if(taskN) parts.push(taskN+(taskN===1?' task':' tasks'));
+    if(feedN) parts.push(feedN+(feedN===1?' event':' events'));
+    html+='<span class="cal-day-count sr-only">'+parts.join(', ')+'</span>';
   }
   // "+N more" indicator if we truncated
   const totalCount = (arr ? arr.length : 0) + feedEvents.length;
