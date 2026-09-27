@@ -281,6 +281,8 @@ function validateOps(raw, ctx){
   }
 
   const destructiveCounts = { DELETE_TASK: 0, CHANGE_LIST: 0 };
+  let writeCount = 0;
+  let quietRewrite = false;
   const simTasksById = new Map();
   let simNextId = 1;
   if(ctx.tasksById && typeof ctx.tasksById.forEach === 'function'){
@@ -379,6 +381,8 @@ function validateOps(raw, ctx){
     }
 
     if(destructiveCounts[name] != null) destructiveCounts[name]++;
+    if(!schema.readOnly) writeCount++;
+    if(!quietRewrite && _opQuietlyRewrites(name, args, ctx)) quietRewrite = true;
     const validated = { name, args };
     // Optional passthrough: _rationale is metadata surfaced to preview cards
     // (e.g. "marked urgent because description mentions 'asap'"). It's never
@@ -412,8 +416,37 @@ function validateOps(raw, ctx){
   if(destructiveCounts.DELETE_TASK > 0) out.destructiveLevel = 'hard';
   else if(destructiveCounts.CHANGE_LIST >= massThreshold) out.destructiveLevel = 'hard';
   else if(destructiveCounts.CHANGE_LIST > 0) out.destructiveLevel = 'warn';
+  // "Non-destructive" ops still need a look in bulk, or when one quietly
+  // hides or rewrites a task: in auto mode a single Ask turn could otherwise
+  // apply up to ASK_MAX_OPS MARK_DONE / UPDATE_TASK / DUPLICATE_TASK ops with
+  // no prompt, and saveState pushes them to every sync peer. 'warn' sends the
+  // batch through askDestructiveConfirmNeeded (and defers it to review while
+  // Ask is minimized); the Tools panel only escalates on 'hard', so bulk
+  // actions there are unaffected. 1 to 4 plain edits stay silent.
+  else if(writeCount >= massThreshold || quietRewrite) out.destructiveLevel = 'warn';
 
   return out;
+}
+
+/**
+ * True for an op whose effect is easy to miss after the fact: hiding a task
+ * (a snooze makes it vanish until the date: a missed deadline, not a visible
+ * edit), or replacing text the user wrote (name / description / a checklist
+ * item). Values equal to the task's current ones don't count: small models
+ * echo `"name"` back into every UPDATE_TASK ("make task 12 urgent" →
+ * {"id":12,"name":"Pay rent","priority":"urgent"}), which must stay silent.
+ * An id missing from ctx is a task created earlier in the same batch.
+ */
+function _opQuietlyRewrites(name, args, ctx){
+  if(name === 'SNOOZE_TASK' || name === 'SPLIT_TASK' || name === 'REMOVE_CHECK') return true;
+  if(name !== 'UPDATE_TASK') return false;
+  const cur = ctx && ctx.tasksById && typeof ctx.tasksById.get === 'function' ? ctx.tasksById.get(args.id) : null;
+  if(!cur || typeof cur !== 'object') return false;
+  const same = (a, b) => String(a == null ? '' : a).trim() === String(b == null ? '' : b).trim();
+  if(args.hiddenUntil != null && !same(args.hiddenUntil, cur.hiddenUntil)) return true;
+  if(args.name != null && !same(args.name, cur.name)) return true;
+  if(args.description != null && !same(args.description, cur.description)) return true;
+  return false;
 }
 
 /**

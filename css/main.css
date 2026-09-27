@@ -667,6 +667,9 @@
   .mfield-textarea{width:100%;padding:8px 12px;background:var(--bg-0);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);font-size:11px;font-family:inherit;outline:0;box-sizing:border-box;min-height:80px;resize:vertical;line-height:1.5}
   .mfield-row{display:flex;gap:10px;flex-wrap:wrap}
   .mfield-row > .mfield{flex:1;min-width:130px;margin-bottom:0}
+  /* The row zeroes its fields' margin, so the next field sat flush against
+     it ("Description" touching the Type chips in task details). */
+  .mfield-row + .mfield,.mfield-row + .mfield-row{margin-top:14px}
   .mfield-chips{display:flex;gap:6px;flex-wrap:wrap}
   .mfield-chip-btn{padding:5px 10px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);font-size:10px;font-weight:600;letter-spacing:.5px;cursor:pointer;font-family:inherit;transition:background var(--dur-base) var(--ease-out),color var(--dur-base) var(--ease-out),border-color var(--dur-base) var(--ease-out)}
   .mfield-chip-btn.active{background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)}
@@ -4043,6 +4046,12 @@ body:has(.cmdk-overlay.open)  #exportToast{
     transition-timing-function:var(--ease-out);
     transition-duration:var(--dur-base)
   }
+  /* The rule above sets duration only, so anything without its own
+     transition-property animates `all`, inherited `visibility` included.
+     .cmdk-overlay flips visibility on open; the panel then stayed hidden for
+     its first frame, cmdkInput.focus() was a silent no-op, and whatever was
+     typed right after Ctrl+K went to <body>. Name the properties it shows. */
+  .cmdk-panel{transition-property:background-color,border-color,box-shadow}
   .task-checkbox,.ta-btn,.toggle,.task-rm{
     transition-timing-function:var(--ease-out);
     transition-duration:var(--dur-fast)
@@ -4564,6 +4573,23 @@ button.hist-day{display:block;width:100%;font:inherit;cursor:pointer;background:
   }
 }
 
+/* Touch hit areas for controls that measured under the 24px WCAG 2.5.8
+   floor at 390px: the Pomodoro pips (10×10, and the hint under them says
+   "Tap a pip to jump in cycle"), the filter chip ×  (14×14), the timer dock
+   grip and minimise (18×14 / 20×16), the task-detail checkbox (22×22), the
+   swipe tip's "Got it" (50×22) and "View Habits" (58×17). Where a larger box
+   would shift layout, an invisible ::after takes the taps instead. */
+@media (pointer:coarse){
+  .pips{gap:16px}
+  .pip,.qpc-rm,.habits-hidden-link{position:relative}
+  .pip::after{content:'';position:absolute;inset:-12px -8px}
+  .qpc-rm::after{content:'';position:absolute;inset:-8px}
+  .habits-hidden-link::after{content:'';position:absolute;inset:-10px -4px}
+  .timer-dock-grip,.timer-dock-min{min-width:32px;min-height:32px;display:inline-flex;align-items:center;justify-content:center}
+  .swipe-tip-dismiss{min-height:32px}
+  #mdCheckbox{width:28px;height:28px;min-width:28px}
+}
+
 /* Starred indicator: gold left-stripe on the board card */
 .board-card.starred-card{border-left-color:var(--starred)!important}
 
@@ -4608,7 +4634,6 @@ body:has(.timer-dock.visible){padding-bottom:calc(80px + env(safe-area-inset-bot
 .cal-week-col.selected{border-color:var(--accent-border);box-shadow:0 0 0 1px var(--accent-border)}
 .cal-week-col-head{width:100%;padding:8px;border:none;border-bottom:1px solid var(--border-subtle);background:var(--bg-2);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text-1)}
 .cal-week-col-body{padding:6px;font-size:11px;flex:1;overflow-y:auto}
-.cal-day-count{display:block;font-size:9px;color:var(--text-3);margin-top:2px}
 .cal-day{min-height:72px}
 .cal-day-agenda--full{max-height:none}
 .cal-day-nav{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:8px}
@@ -4678,6 +4703,9 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .attach-lightbox-close:hover{background:rgba(255,255,255,.22)}
 @media (min-width:720px){
   #taskModal .modal-body .mfield-row--modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  /* "Remind me at" is the grid's only field: in one of two columns its five
+     quick-picks wrapped to a second row beside ~220px of empty space. */
+  #taskModal .modal-body .mfield-row--modal-grid > .mfield:only-child{grid-column:1 / -1}
   .panel[data-tab="tasks"] .task-form{position:sticky;top:0;z-index:2;background:var(--bg-0);padding-bottom:8px}
 }
 
@@ -5023,7 +5051,10 @@ body.light-theme .md-tab:hover{background:var(--bg-2)}
 .app-shell.sidebar-collapsed .sidebar-brand{justify-content:center}
 .app-shell.sidebar-collapsed .sidebar-collapse{transform:rotate(180deg)}
 
-.app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);border-image:var(--divider-fade-h) 1;position:sticky;top:0;z-index:var(--z-sticky);background:linear-gradient(180deg,var(--bg-0) 72%,transparent)}
+.app-topbar{grid-area:topbar;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:8px;border-bottom:1px solid var(--border-subtle);border-image:var(--divider-fade-h) 1;position:sticky;top:0;z-index:var(--z-sticky);background:var(--bg-0)}
+/* Opaque: the old 72%→transparent fade put the border line inside the
+   see-through band, so every row scrolled under the bar crossed it and the
+   stats row read through the header on phones. */
 .app-topbar .header-mid{flex-direction:row;align-items:center;gap:12px;margin:0;margin-right:auto}
 .app-topbar .header-utils{margin-left:auto}
 .drawer-toggle{display:none;width:40px;height:40px;border-radius:10px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-1);font-size:18px;cursor:pointer;align-items:center;justify-content:center}

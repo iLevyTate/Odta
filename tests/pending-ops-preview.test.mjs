@@ -1,7 +1,9 @@
 /**
  * Contract guards for the Tools-tab pending-ops preview. Rows must stay
- * readable after renderAIPanel rebuilds and list-move proposals must carry
- * display snapshots so preview text does not depend on live task lookups.
+ * readable after renderAIPanel rebuilds. List-move cards name the task and
+ * lists from the ids the op applies; a proposer's `_preview` snapshot only
+ * fills in for a task that no longer resolves (a model-written snapshot
+ * could otherwise relabel the move; see tests/ask-preview-spoof.test.mjs).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +36,9 @@ test('renderAIPanel preserves or rebuilds pending preview instead of leaving she
 
 test('auto-organize embeds list-move preview snapshots on ops', () => {
   assert.match(aiSrc, /_preview:\s*\{[\s\S]*taskName[\s\S]*fromList[\s\S]*toList/, 'auto-organize adds _preview snapshot');
-  assert.match(aiSrc, /pv\.fromList|snapName|pv\.taskName/, 'describeOpStructured reads preview snapshot');
+  assert.match(aiSrc, /pv\.fromList|snapName|pv\.taskName/, 'describeOpStructured can fall back to the snapshot');
+  assert.match(aiSrc, /const pv = \(!t && op\._preview/, 'snapshot is consulted only when the task id does not resolve');
+  assert.match(aiSrc, /toList: _listNameById\(a\.listId\)/, 'destination always comes from the applied listId');
 });
 
 test('validateOps preserves _preview metadata for review cards', () => {

@@ -20,7 +20,9 @@ const utils = read('js', 'utils.js');
 test('sheets focus only after the open transition, palettes still focus immediately', () => {
   assert.match(modal, /const deferFocus\s*=.*variant === 'sheet'/, 'sheet variant defers focus by default');
   assert.match(modal, /if\(!deferFocus\) applyFocus\(\);/, 'non-deferred variants focus in the open rAF');
-  assert.match(modal, /if\(deferFocus\) applyFocus\(\);/, 'deferred variants focus when the transition settles');
+  // settle() also retries an immediate focus that didn't take (see
+  // tests/cmdk-open-focus.test.mjs), so deferFocus is the first operand.
+  assert.match(modal, /if\(deferFocus( \|\| [^)]+\))?\) applyFocus\(\);/, 'deferred variants focus when the transition settles');
   assert.match(modal, /function applyFocus\(\)\{[\s\S]*?classList\.contains\('open'\)/,
     'applyFocus bails if the modal closed while it waited');
 });

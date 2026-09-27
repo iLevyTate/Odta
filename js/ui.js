@@ -304,8 +304,14 @@ function renderCalTasks(arr, isoDate){
   }
   const taskN=arr?arr.length:0;
   const feedN=feedEvents.length;
+  // The chips and "+N more" already show the count; a visible "1·0" in every
+  // cell read as noise (and always ended in ·0 without calendar feeds). Keep
+  // it for screen readers, with plurals and the zero side dropped.
   if(taskN||feedN){
-    html+='<span class="cal-day-count" title="'+taskN+' tasks, '+feedN+' events">'+taskN+'·'+feedN+'</span>';
+    const parts=[];
+    if(taskN) parts.push(taskN+(taskN===1?' task':' tasks'));
+    if(feedN) parts.push(feedN+(feedN===1?' event':' events'));
+    html+='<span class="cal-day-count sr-only">'+parts.join(', ')+'</span>';
   }
   // "+N more" indicator if we truncated
   const totalCount = (arr ? arr.length : 0) + feedEvents.length;
@@ -677,7 +683,7 @@ async function _cmdkConfirmDestructiveApply(ops, destructiveLevel){
   const hasDelete = ops.some(o => o && o.name === 'DELETE_TASK');
   const msg = hasDelete
     ? 'This batch includes permanent deletes. Apply anyway?'
-    : 'This batch includes bulk list moves or other destructive changes. Apply anyway?';
+    : 'This batch changes many tasks at once, or hides, renames or rewrites one. Apply anyway?';
   if(typeof showAppConfirm !== 'function') return false;
   // Chrome is passed in: showAppConfirm resets styling as its first act, so
   // applying it beforehand rendered this as a neutral green "OK" prompt.
@@ -755,7 +761,8 @@ function _cmdkAskPriorTurnsFor(currentTurn){
     if(t.status === 'streaming') break;
     const a = _cmdkAskSerialiseAssistant(t);
     if(!a) continue;
-    out.push({ user: String(t.q || ''), assistant: a });
+    // A turn that read calendar-authored text taints the next one it feeds.
+    out.push({ user: String(t.q || ''), assistant: a, external: !!t.externalContent });
   }
   if(out.length > _CMDK_ASK_CONTEXT_TURNS) return out.slice(-_CMDK_ASK_CONTEXT_TURNS);
   return out;
@@ -1340,6 +1347,9 @@ async function _cmdkAskRunTurn(turn, runOpts){
       }
       return;
     }
+    // Recorded before the answer-only returns below, which previously left it
+    // unset: _cmdkAskPriorTurnsFor carries it into the next turn's taint.
+    turn.externalContent = !!res.externalContent;
     const ops = Array.isArray(res.ops) ? res.ops : [];
     if(!ops.length){
       if(res.chatAnswer){

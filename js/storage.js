@@ -373,6 +373,73 @@ function persistAfterSyncMerge(remoteEpoch, remoteNonce){
   saveState('sync');
 }
 
+// ── Ingress repair: id counters, lists ──
+/**
+ * Id counters restored from storage, a backup or a peer must be safe integers
+ * above every id in use. A peer's taskIdCtr:1e21 made ++taskIdCtr a no-op
+ * (1e21+1 === 1e21), so every new task shared one id; after a reload
+ * parseInt("1e+21") read back as 1 and new ids collided with existing tasks.
+ */
+const ID_CTR_MAX = 1e9;
+function _idOk(id){ return Number.isSafeInteger(id) && id > 0 && id <= ID_CTR_MAX; }
+function _reseedIdCtr(ctr, items){
+  let n = Number(ctr);
+  if(!_idOk(n)) n = 0;
+  if(Array.isArray(items)) for(const it of items){
+    const id = it ? Number(it.id) : NaN;
+    if(_idOk(id) && id > n) n = id;
+  }
+  return n;
+}
+if(typeof window!=='undefined'){ window._reseedIdCtr=_reseedIdCtr; window._idOk=_idOk; }
+
+/**
+ * Lists arrive from storage, backups, the tasks JSON import, another tab and
+ * sync peers. Tasks were always repaired (_repairTask) but lists were taken as
+ * stored, and ai.js renders list names into innerHTML. Same shape everywhere:
+ * integer id, non-empty string name, hex colour, string description.
+ */
+function _repairList(l){
+  if(!l || typeof l !== 'object') return null;
+  const id = Number(l.id);
+  if(!_idOk(id)) return null;
+  const name = _str(l.name, '').trim().slice(0, 200);
+  if(!name) return null;
+  const color = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(String(l.color || '')) ? l.color : '#1a8cff';
+  return {
+    id, name, color,
+    description: typeof l.description === 'string' ? l.description.slice(0, 2000) : '',
+    lastModified: typeof l.lastModified === 'number' && l.lastModified > 0 ? l.lastModified : 0,
+  };
+}
+if(typeof window!=='undefined') window._repairList=_repairList;
+
+/**
+ * Past-day history comes back from localStorage and from backup restores,
+ * which wrote the backup's `archive` string straight into ARCHIVE_KEY. The
+ * history panel interpolates the numbers into innerHTML and the CSV export
+ * interpolates the date into a quoted cell, so a restored archive with
+ * totalPomos:"<form …>" or a quote in `date` was markup / CSV injection.
+ * Returns the days with numbers as numbers and a YYYY-MM-DD date.
+ */
+function _repairArchives(v){
+  const nat = x => { const n = Math.floor(Number(x)); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  return _arr(v).filter(a => a && typeof a === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String(a.date))).map(a => ({
+    ...a,
+    date: String(a.date),
+    totalPomos: nat(a.totalPomos), totalBreaks: nat(a.totalBreaks), totalFocusSec: nat(a.totalFocusSec),
+    goals: _arr(a.goals).filter(g => g && typeof g === 'object').map(g => ({ text: _str(g.text, ''), done: g.done === true, doneAt: g.doneAt ? _str(g.doneAt) : null })),
+    tasks: _arr(a.tasks).filter(t => t && typeof t === 'object').map(t => ({ ...t, name: _str(t.name, ''), totalSec: nat(t.totalSec), sessions: nat(t.sessions) })),
+    timeLog: _arr(a.timeLog).filter(l => l && typeof l === 'object').map(l => ({ ...l, time: _str(l.time, ''), name: _str(l.name, ''), durSec: nat(l.durSec) })),
+  })).slice(-90);
+}
+if(typeof window!=='undefined') window._repairArchives=_repairArchives;
+// ── end ingress repair ──
+
+/** [min, max, default], mirroring the min/max on #cfgWork/#cfgShort/#cfgLong/#cfgCycle. */
+const CFG_INT_BOUNDS={work:[1,120,25],short:[1,30,5],long:[1,60,15],cycle:[1,10,4]};
+if(typeof window!=='undefined') window.CFG_INT_BOUNDS=CFG_INT_BOUNDS;
+
 /**
  * Repair a cfg object that arrived from storage, a backup import, or a sync
  * peer. Every boolean the notification/timer paths branch on must be a real
@@ -388,6 +455,15 @@ function normalizeCfg(c){
   if(typeof c.notif!=='boolean') c.notif=true;
   if(typeof c.dueNotify!=='boolean') c.dueNotify=true;
   if(typeof c.sound!=='boolean') c.sound=true;
+  // Durations and cycle length come from a peer or a backup file as freely as
+  // from the Settings steppers. renderPips() loops cfg.cycle times creating a
+  // DOM node each, and load saves before it renders, so {cycle:1e9} froze the
+  // tab on every boot until site data was cleared. Hold them to the steppers'
+  // ranges (cycle 1 is the Ultradian / Deep work presets).
+  for(const k in CFG_INT_BOUNDS){
+    const b=CFG_INT_BOUNDS[k], n=Math.round(Number(c[k]));
+    c[k]=Number.isFinite(n)?Math.min(b[1],Math.max(b[0],n)):b[2];
+  }
   if(typeof ensureClassificationConfig === 'function') ensureClassificationConfig(c);
   return c;
 }
@@ -754,13 +830,13 @@ function _applyState(s){
         ...g,
         lastModified: typeof g.lastModified === 'number' && g.lastModified > 0 ? g.lastModified : 0,
       }));
-      goalIdCtr = _int(s.goalIdCtr, goals.length);
+      goalIdCtr = _reseedIdCtr(s.goalIdCtr != null ? s.goalIdCtr : goals.length, goals);
     }
 
     // Tasks — already repaired in migrateState
     if(Array.isArray(s.tasks)){
       tasks     = s.tasks;
-      taskIdCtr = _int(s.taskIdCtr, 0);
+      taskIdCtr = _reseedIdCtr(s.taskIdCtr, tasks);
       // Restore the active-task linkage if the saved id still resolves to a
       // real task. Without this, mobile tab-discard (common on iOS Safari /
       // low-RAM Android after minimizing) silently drops the tracking
@@ -786,14 +862,8 @@ function _applyState(s){
 
     // Lists
     if(Array.isArray(s.lists)){
-      lists       = s.lists.filter(l=>l&&l.id&&l.name).map(l=>({
-        id: l.id,
-        name: l.name,
-        color: l.color || '#1a8cff',
-        description: typeof l.description==='string' ? l.description : '',
-        lastModified: typeof l.lastModified === 'number' && l.lastModified > 0 ? l.lastModified : 0,
-      }));
-      listIdCtr   = _int(s.listIdCtr, 0);
+      lists       = s.lists.map(_repairList).filter(Boolean);
+      listIdCtr   = _reseedIdCtr(s.listIdCtr, lists);
       activeListId = s.activeListId ?? null;
       showAllLists = s.showAllLists === true;
     }
@@ -1029,15 +1099,16 @@ function _mergeRemoteStateLww(raw){
       else if(_taskLwwMs(rt) > _taskLwwMs(lt)) taskMap.set(rt.id, rt);
     }
     tasks = Array.from(taskMap.values());
-    taskIdCtr = Math.max(taskIdCtr, _int(r.taskIdCtr, 0));
+    taskIdCtr = _reseedIdCtr(Math.max(_reseedIdCtr(taskIdCtr), _reseedIdCtr(r.taskIdCtr)), tasks);
 
     const listMap = new Map(lists.map(l => [l.id, l]));
     for(const [id, l] of [...listMap.entries()]){
       const d = mergedListDels[id];
       if(d != null && d > (l.lastModified || 0)) listMap.delete(id);
     }
-    for(const rl of (r.lists || [])){
-      if(!rl || rl.id == null) continue;
+    for(const rl0 of (r.lists || [])){
+      const rl = _repairList(rl0);
+      if(!rl) continue;
       const d = mergedListDels[rl.id];
       if(d != null && d > (rl.lastModified || 0)) continue;
       const ex = listMap.get(rl.id);
@@ -1045,7 +1116,7 @@ function _mergeRemoteStateLww(raw){
       else if((rl.lastModified || 0) > (ex.lastModified || 0)) listMap.set(rl.id, rl);
     }
     lists = Array.from(listMap.values());
-    listIdCtr = Math.max(listIdCtr, _int(r.listIdCtr, 0));
+    listIdCtr = _reseedIdCtr(Math.max(_reseedIdCtr(listIdCtr), _reseedIdCtr(r.listIdCtr)), lists);
 
     const goalMap = new Map(goals.map(g => [g.id, g]));
     for(const [id, g] of [...goalMap.entries()]){
@@ -1061,7 +1132,7 @@ function _mergeRemoteStateLww(raw){
       else if((rg.lastModified || 0) > (ex.lastModified || 0)) goalMap.set(rg.id, rg);
     }
     goals = Array.from(goalMap.values());
-    goalIdCtr = Math.max(goalIdCtr, _int(r.goalIdCtr, 0));
+    goalIdCtr = _reseedIdCtr(Math.max(_reseedIdCtr(goalIdCtr), _reseedIdCtr(r.goalIdCtr)), goals);
 
     timeLog = _mergeTimeLogById(timeLog, r.timeLog);
     sessionHistory = _mergeSessionHistTail(sessionHistory, r.sessionHistory, 400);
@@ -1341,7 +1412,11 @@ function importData(file){
       // Force re-apply regardless of date
       s.date = todayKey();
       if(_applyState(s)){
-        if(arch) localStorage.setItem(ARCHIVE_KEY, arch);
+        if(arch){
+          let days = null;
+          try{ days = _repairArchives(JSON.parse(arch)); }catch(_){}
+          if(days) localStorage.setItem(ARCHIVE_KEY, JSON.stringify(days));
+        }
         saveState('user');
         renderAll(); renderLog(); renderGoalList();
         renderIntList(); renderQuickTimers();
@@ -1671,7 +1746,10 @@ function _icsEscape(s){
   if(s == null) return '';
   return String(s)
     .replace(/\\/g, '\\\\')
-    .replace(/\n/g, '\\n')
+    // CRLF / lone CR too: a bare \r survived as a raw line break, so a name
+    // like "x\rEND:VEVENT\rBEGIN:VEVENT…" (from an import or a peer) wrote
+    // extra events that lenient parsers, this app's parseICS included, read.
+    .replace(/\r\n?|\n/g, '\\n')
     .replace(/,/g, '\\,')
     .replace(/;/g, '\\;');
 }
@@ -1913,15 +1991,12 @@ function _importTasksFromJSON(text){
 
   // Import lists too if present (adds missing lists only, never overwrites)
   if(Array.isArray(parsed.lists)){
-    parsed.lists.forEach(rl => {
-      if(!rl || typeof rl !== 'object' || !rl.id) return;
+    parsed.lists.forEach(rl0 => {
+      const rl = _repairList(rl0 && typeof rl0 === 'object' ? { ...rl0, name: rl0.name || 'Imported' } : rl0);
+      if(!rl) return;
       if(!lists.find(l => l.id === rl.id)){
-        lists.push({
-          id: rl.id,
-          name: rl.name || 'Imported',
-          color: rl.color || '#1a8cff',
-          description: typeof rl.description==='string' ? rl.description : '',
-        });
+        delete rl.lastModified;
+        lists.push(rl);
         if(rl.id > listIdCtr) listIdCtr = rl.id;
       }
     });
@@ -1969,7 +2044,9 @@ function _importTasksFromCSV(text){
 // Apply a single incoming row (from CSV parse or JSON object) — decide add vs update vs skip
 function _applyIncomingTask(incoming, report){
   const incomingId = parseInt(incoming.id, 10);
-  if(!isNaN(incomingId) && incomingId > 0){
+  // An id past ID_CTR_MAX ("100000000000000000000") would stall taskIdCtr;
+  // such a row is imported as new with a fresh id instead.
+  if(_idOk(incomingId)){
     const existing = tasks.find(t => t.id === incomingId);
     if(existing){
       // Update existing — lastModified wins when both present; else fall back to

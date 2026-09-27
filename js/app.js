@@ -179,7 +179,7 @@ if ('serviceWorker' in navigator && !window.location.protocol.startsWith('file')
   });
 }
 // ========== ARCHIVE ==========
-function getArchives(){try{return JSON.parse(localStorage.getItem(ARCHIVE_KEY)||'[]')}catch(e){return[]}}
+function getArchives(){try{const a=JSON.parse(localStorage.getItem(ARCHIVE_KEY)||'[]');return typeof _repairArchives==='function'?_repairArchives(a):[]}catch(e){return[]}}
 
 function renderArchive(){
   const archives=getArchives();
@@ -569,12 +569,22 @@ setTimeout(() => {
         try{
           const file = await fh.getFile();
           const name = (file && file.name || '').toLowerCase();
-          const text = await file.text();
           if(name.endsWith('.ics')){
-            // Paste-as-calendar: hand to addCalFeed if available
+            // Paste-as-calendar. addCalFeed validates the content (size cap,
+            // BEGIN:VCALENDAR) and throws; say why instead of failing silently,
+            // and don't read a file past the cap into memory at all.
             if(typeof addCalFeed === 'function'){
-              addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: text, color: '#1a8cff' });
-              if(typeof showExportToast === 'function') showExportToast('Calendar feed added: ' + file.name);
+              const toast = (m) => { if(typeof showExportToast === 'function') showExportToast(m); };
+              if(typeof CAL_FETCH_MAX_BYTES === 'number' && file.size > CAL_FETCH_MAX_BYTES){
+                toast('Calendar file is too large to add: ' + file.name);
+                continue;
+              }
+              try{
+                const f = addCalFeed({ label: file.name.replace(/\.ics$/i,''), content: await file.text(), color: '#1a8cff' });
+                toast('Calendar feed added: ' + file.name);
+                // Only URL feeds sync on their own; without this it shows 0 events until refreshed.
+                if(f && f.id && typeof syncCalFeed === 'function') syncCalFeed(f.id).catch(()=>{});
+              }catch(err){ toast((err && err.message) || ('Could not add ' + file.name)); }
             }
           } else if(name.endsWith('.json')){
             // Try as full backup first; fall back to tasks-only import.

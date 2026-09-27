@@ -165,26 +165,29 @@ Then update `manifest.json` colors to match your brand:
 
 ## Content-Security-Policy (CSP)
 
-Odta ships a strict meta CSP in `index.html` — no `'unsafe-inline'` in `script-src` or `style-src`. Every event handler is delegated via `data-action` / `data-on*` attributes dispatched by `js/event-delegation.js` (there are no inline `onclick` handlers), and `scripts/check-inline-handlers.mjs` fails CI if one is ever reintroduced. The shipped policy is:
+Odta ships a strict meta CSP in `index.html`, with no `'unsafe-inline'` in `script-src` or `style-src`. Every event handler is delegated via `data-action` / `data-on*` attributes dispatched by `js/event-delegation.js` (there are no inline `onclick` handlers), and `scripts/check-inline-handlers.mjs` fails CI if one is ever reintroduced. The dispatcher only calls handler names on its allowlist (`HANDLERS`, pinned to the sources by `tests/event-delegation-allowlist.test.mjs`). The shipped policy is:
 
 ```
 default-src 'self';
 base-uri    'self';
 object-src  'none';
-script-src  'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com;
+script-src  'self' 'wasm-unsafe-eval';
 worker-src  'self' blob:;
 style-src   'self';
 img-src     'self' data: blob:;
+media-src   'self' blob:;
 font-src    'self' data:;
+form-action 'none';
 connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;
 ```
 
-On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this meta tag is what gets served and everything works. If you also enforce CSP via HTTP headers (which override the meta tag), mirror these same directives.
+On most static hosts (Netlify, GitHub Pages, Vercel, Cloudflare Pages) this meta tag is what gets served and everything works. If you also send a CSP header, the browser enforces **both** policies (a resource must pass each), so a header can only tighten the meta tag, never loosen it. Mirror these directives and add what a meta tag can't carry: `frame-ancestors 'none'` (ignored in `<meta>`), and optionally the same policy for the workers (`sw.js`, `js/gen-worker.js`), which take their CSP from response headers only.
 
 Why each entry:
-- `script-src 'wasm-unsafe-eval'` — Transformers.js compiles WASM for on-device embeddings.
-- `cdn.jsdelivr.net` / `unpkg.com` — Transformers.js ESM module + its WASM/worker assets.
-- `worker-src blob:` — Transformers.js spawns a Web Worker from a blob URL for background inference.
-- `connect-src http: https:` — calendar feeds in `js/calfeeds.js` accept user-configured CORS proxy URLs, so the host list can't be known ahead of time. The `wss://*.peerjs.com` entries cover P2P sync (PeerJS) signalling.
+- `script-src 'self' 'wasm-unsafe-eval'`: every library is vendored under `js/vendor/`; Transformers.js compiles WASM for on-device embeddings. Do **not** add `cdn.jsdelivr.net` or `unpkg.com` here: they serve any npm package, which turns any HTML injection into script execution.
+- `worker-src blob:`: `js/audio.js` runs its background tick worker from a blob URL.
+- `media-src blob:`: the background-audio keepalive and voice-note playback both play blob URLs. Without it media falls back to `default-src 'self'` and every one is refused.
+- `form-action 'none'`: the app has no form that submits anywhere.
+- `connect-src http: https:`: calendar feeds in `js/calfeeds.js` accept user-configured feed and CORS proxy URLs, so the host list can't be known ahead of time (`http:` only matters when the app itself is served over http, e.g. local dev; `calfeeds.js` refuses http feeds from an https page). The `wss://*.peerjs.com` entries cover P2P sync (PeerJS) signalling.
 
-To tighten `connect-src` (at the cost of features): drop the broad `http: https:` and list only the embedding-model origins (`https://cdn.jsdelivr.net https://huggingface.co https://cdn-lfs.huggingface.co https://*.huggingface.co`) — but note this blocks user-configured calendar-feed proxies. Keep the `wss://*.peerjs.com` entry only if you use P2P sync.
+To tighten `connect-src` (at the cost of features): drop the broad `http: https:` and list only `https://huggingface.co https://*.hf.co` (the embedding-model fallback and its CDN redirects). Note that this blocks user-configured calendar feeds and proxies. Keep the `wss://*.peerjs.com` entries only if you use P2P sync.

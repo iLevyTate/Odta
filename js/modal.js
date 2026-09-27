@@ -158,7 +158,10 @@
         done = true;
         el.removeEventListener('transitionend', onEnd);
         if(timer) clearTimeout(timer);
-        if(deferFocus) applyFocus();
+        // An immediate focus() on a target that isn't focusable yet (an
+        // inherited visibility still transitioning in) fails silently. Retry
+        // once the overlay has settled, unless focus already moved inside it.
+        if(deferFocus || !el.contains(document.activeElement)) applyFocus();
         if(typeof opts.onOpen === 'function'){
           try { opts.onOpen(el); } catch(err){ console.warn('[modal] onOpen', err); }
         }

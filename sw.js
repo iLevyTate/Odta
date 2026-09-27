@@ -1,6 +1,6 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v79';
+let CACHE_NAME = 'odtaulai-v80';
 try {
   importScripts('./js/version.js');
   // The alarm store is the one piece of state the page and this worker share.
@@ -28,7 +28,7 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v79',
+  './css/main.css?v=v80',
   './js/version.js',
   './js/event-delegation.js',
   './js/alarm-store.js',
@@ -169,18 +169,30 @@ self.addEventListener('fetch', e => {
     // mixed-version page until the next reload). It also meant a flaky
     // connection showed a blank page until the fetch finally failed.
     e.respondWith(
-      caches.match('./index.html').then(cached => {
-        const net = fetch(e.request).then(res => {
-          if(res && res.status === 200 && res.type === 'basic'){
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then(c => c.put('./index.html', clone).catch(() => {}));
-          }
-          return res;
-        }).catch(() => null);
-        if(cached) return cached;
-        return net.then(r => r || caches.match(e.request))
-          .then(r => r || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }));
-      })
+      (() => {
+        const scopePath = new URL(self.registration.scope).pathname;
+        const isShell = url.pathname === scopePath || url.pathname === scopePath + 'index.html';
+        // Another page in scope (README.md, docs/…) is not the shell: fetch it,
+        // and never let its body land under the shell's cache key, or the
+        // next launch would serve that page as the app.
+        if(!isShell) return fetch(e.request).catch(() => caches.match('./index.html'));
+        return caches.match('./index.html').then(cached => {
+          const net = fetch(e.request).then(res => {
+            if(res && res.status === 200 && res.type === 'basic'){
+              const clone = res.clone();
+              // One key for every shell navigation. Keyed by e.request, each
+              // launch URL (?tab=…&task=…, ?share=1&share_text=…) kept its own
+              // copy of the shell until the next version bump, and a
+              // share-target launch left the shared text in Cache Storage
+              // after app.js had scrubbed it from the address bar.
+              caches.open(CACHE_NAME).then(c => c.put('./index.html', clone).catch(() => {}));
+            }
+            return res;
+          }).catch(() => null);
+          if(cached) return cached;
+          return net.then(r => r || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }));
+        });
+      })()
     );
     return;
   }
@@ -204,7 +216,7 @@ self.addEventListener('fetch', e => {
 // ══════════════════════════════════════════════════════════════════════════
 // Before this, every notification was emitted by the page at the moment the
 // page noticed a deadline had passed, and this worker only ever rendered what
-// it was told (SHOW_NOTIFICATION, below). That made delivery conditional on
+// it was told (a SHOW_NOTIFICATION message, since removed). That made delivery conditional on
 // the page still running — which a backgrounded PWA is not: the browser
 // throttles its timers, then freezes it (suspending its Web Workers too),
 // then discards it. The result was a timer that only reliably rang while the
@@ -313,31 +325,20 @@ self.addEventListener('message', e => {
   // The page rewrote the alarm set (a phase started, a timer was cancelled,
   // a reminder moved). Re-read it and re-arm.
   if(e.data?.type === 'ALARMS_UPDATED') e.waitUntil(serviceAlarms());
-  // ── Persistent notification from main thread ──
-  // ServiceWorker.showNotification() fires even when the page tab is frozen
-  // or backgrounded on mobile — unlike `new Notification()` from the main
-  // thread which requires the page to be active.
-  if(e.data?.type === 'SHOW_NOTIFICATION'){
-    const d = e.data;
-    e.waitUntil(
-      self.registration.showNotification(d.title || 'Odta', {
-        body:               d.body || '',
-        tag:                d.tag || 'odtaulai',
-        renotify:           d.renotify !== false,
-        icon:               './icons/icon-192.png',
-        badge:              './icons/icon-192.png',
-        silent:             !!d.silent,
-        requireInteraction: !!d.requireInteraction,
-        data:               d.data || {},
-      })
-    );
-  }
+  // (SHOW_NOTIFICATION was removed: nothing posted it, since audio.js calls
+  // reg.showNotification() itself, and it rendered whatever it was sent.)
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const data = e.notification.data || {};
-  const target = data.url || './';
+  // Only ever launch into this app. Every url the app sets is a relative
+  // ./?… path; anything resolving off-origin is dropped for the scope root.
+  let target = './';
+  try{
+    const u = new URL(data.url || './', self.registration.scope);
+    if(u.origin === self.location.origin) target = u.href;
+  }catch(_){}
   // A tapped alarm is delivered; stamp it so the page doesn't re-announce it,
   // and take the wake as a chance to flush any sibling that is also overdue.
   if(data.odtaAlarmId && self.OdtaAlarmStore){

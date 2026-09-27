@@ -19,6 +19,14 @@ function makeMergeRun() {
   assert.ok(iMergeDel > 0 && iConn > iMergeDel, 'slice merge block');
 
   const clamp = src.slice(iClamp, iGen);
+  // The merge now routes ids and lists through storage.js's ingress repair
+  // helpers; load the real ones (plus the _str they use) rather than stubs.
+  const storageSrc = readFileSync(join(root, 'js', 'storage.js'), 'utf8');
+  const iR = storageSrc.indexOf('// ── Ingress repair: id counters, lists ──');
+  const jR = storageSrc.indexOf('// ── end ingress repair ──', iR);
+  assert.ok(iR >= 0 && jR > iR, 'slice ingress repair helpers');
+  const strLine = storageSrc.match(/^const _str\s*=.*$/m)[0];
+  const ingressRepair = strLine + '\n' + storageSrc.slice(iR, jR);
   const mergeBlock = src.slice(iMergeDel, iConn);
 
   return new Function(`
@@ -47,6 +55,7 @@ function makeMergeRun() {
     function rebuildTaskIdIndex() { }
     function repairOrphanedTaskParents() { }
     function _repairTask(t) { return t; }
+    ${ingressRepair}
     ${clamp}
     ${mergeBlock}
     return function run(init, remote, opts) {
@@ -247,4 +256,80 @@ test('merge: remote task lastModified is not re-stamped on receive', () => {
     { tasks: [{ id: 1, name: 'from peer', lastModified: remoteLm }], taskIdCtr: 1, stateEpoch: 1 },
   );
   assert.equal(o.tasks[0].lastModified, remoteLm);
+});
+
+// ── Id collisions between devices that created tasks while apart ────────────
+// Both devices number their first task 1. The id-keyed LWW used to keep one
+// task of each pair and drop the other on both devices.
+function pairUp(localA, localB) {
+  const run = makeMergeRun();
+  const clone = (x) => structuredClone(x);
+  const stateA = { tasks: clone(localA.tasks), taskIdCtr: localA.taskIdCtr, stateEpoch: 0 };
+  const stateB = { tasks: clone(localB.tasks), taskIdCtr: localB.taskIdCtr, stateEpoch: 0 };
+  const a = run({ tasks: clone(localA.tasks), taskIdCtr: localA.taskIdCtr }, stateB, { isInitialState: true });
+  const b = run({ tasks: clone(localB.tasks), taskIdCtr: localB.taskIdCtr }, stateA, { isInitialState: true });
+  const view = (o) => o.tasks.map((t) => [t.id, t.name, t.parentId ?? null, (t.blockedBy || []).join('+')]).sort((x, y) => x[0] - y[0]);
+  return { a, b, view };
+}
+
+test('initial merge: same id, different created keeps both tasks, and both devices agree on the ids', () => {
+  const A = { taskIdCtr: 2, tasks: [
+    { id: 1, name: 'A one', created: '2026-09-20 09:00', lastModified: 10 },
+    { id: 2, name: 'A two', created: '2026-09-20 09:05', lastModified: 11, parentId: 1, blockedBy: [1] },
+  ] };
+  const B = { taskIdCtr: 1, tasks: [
+    { id: 1, name: 'B one', created: '2026-09-22 18:00', lastModified: 99 },
+  ] };
+  const { a, b, view } = pairUp(A, B);
+  assert.deepEqual(view(a), view(b), 'both devices converge on the same id → task map');
+  const names = a.tasks.map((t) => t.name).sort();
+  assert.deepEqual(names, ['A one', 'A two', 'B one'], 'nothing is lost');
+  const byName = Object.fromEntries(a.tasks.map((t) => [t.name, t]));
+  assert.equal(byName['A one'].id, 1, 'the older task keeps the id');
+  assert.equal(byName['B one'].id, 3, 'the newer one moves past every id either side holds');
+  assert.equal(byName['A two'].parentId, 1, 'references on the side that kept its id are untouched');
+  assert.ok(a.taskIdCtr >= 3 && b.taskIdCtr >= 3, 'counters move past the new id');
+});
+
+test('initial merge: a moved task takes its own subtasks and blockers with it', () => {
+  const A = { taskIdCtr: 1, tasks: [{ id: 1, name: 'A one', created: '2026-09-20 09:00', lastModified: 1 }] };
+  const B = { taskIdCtr: 3, tasks: [
+    { id: 1, name: 'B parent', created: '2026-09-25 10:00', lastModified: 5 },
+    { id: 2, name: 'B child', created: '2026-09-25 10:01', lastModified: 5, parentId: 1 },
+    { id: 3, name: 'B blocked', created: '2026-09-25 10:02', lastModified: 5, blockedBy: [1] },
+  ] };
+  const { a, b, view } = pairUp(A, B);
+  assert.deepEqual(view(a), view(b));
+  const byName = Object.fromEntries(a.tasks.map((t) => [t.name, t]));
+  // A holds ids up to 1 and B up to 3, so B's parent moves to 4, and its child
+  // (id 2) collides with nothing on A.
+  assert.equal(byName['B parent'].id, 4);
+  assert.equal(byName['B child'].parentId, 4);
+  assert.deepEqual(byName['B blocked'].blockedBy, [4]);
+  assert.equal(byName['A one'].id, 1);
+});
+
+test('initial merge: the same task on both devices is not a collision', () => {
+  const t = { id: 5, name: 'Shared', created: '2026-09-01 08:00', lastModified: 3 };
+  const { a, b } = pairUp({ taskIdCtr: 5, tasks: [t] }, { taskIdCtr: 5, tasks: [{ ...t, name: 'Shared (renamed)', lastModified: 9 }] });
+  assert.equal(a.tasks.length, 1);
+  assert.equal(b.tasks.length, 1);
+  assert.equal(a.tasks[0].name, 'Shared (renamed)', 'normal LWW still applies');
+});
+
+test('initial merge: a task without created is never treated as a collision', () => {
+  const { a } = pairUp(
+    { taskIdCtr: 1, tasks: [{ id: 1, name: 'legacy', created: '', lastModified: 1 }] },
+    { taskIdCtr: 1, tasks: [{ id: 1, name: 'other', created: '2026-09-01 08:00', lastModified: 2 }] },
+  );
+  assert.equal(a.tasks.length, 1, 'unknown created: fall back to plain LWW');
+});
+
+test('a live patch (not the initial state) does not re-id anything', () => {
+  const run = makeMergeRun();
+  const o = run(
+    { tasks: [{ id: 1, name: 'mine', created: '2026-09-20 09:00', lastModified: 1 }], taskIdCtr: 1 },
+    { tasks: [{ id: 1, name: 'theirs', created: '2026-09-22 09:00', lastModified: 2 }], taskIdCtr: 1, stateEpoch: 0 },
+  );
+  assert.equal(o.tasks.length, 1);
 });

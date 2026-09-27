@@ -60,8 +60,12 @@ test('successful connection resets the reconnect attempt counter', () => {
   // Reset on open is what gives the user a fresh full-schedule next time
   // they drop. Without it, two transient drops near each other would
   // exhaust the budget too fast.
+  // Only our own dial resets it: an inbound stranger opening a channel must
+  // not cancel a pending reconnect to the paired device.
   const idx = syncSrc.indexOf('function _wireConn');
   assert.ok(idx > 0, '_wireConn not found');
-  const body = syncSrc.slice(idx, idx + 600);
-  assert.match(body, /_reconnectAttempt\s*=\s*0/, '_wireConn open must reset _reconnectAttempt');
+  const o = syncSrc.indexOf('const onOpen = () => {', idx);
+  assert.ok(o > idx, 'onOpen not found in _wireConn');
+  const body = syncSrc.slice(o, syncSrc.indexOf('\n  };', o));
+  assert.match(body, /if \(role === 'initiator'\) \{[\s\S]*_reconnectAttempt\s*=\s*0/, 'open of our own dial must reset _reconnectAttempt');
 });

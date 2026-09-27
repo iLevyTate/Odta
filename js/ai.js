@@ -815,13 +815,21 @@ function _describeOpStructured(op){
     case 'DUPLICATE_TASK': return { kind: 'simple', title: 'Duplicate', taskName, detail: '', icon: 'copy', danger: false };
     case 'MOVE_TASK': return { kind: 'simple', title: 'Move in tree', taskName, detail: 'Parent #' + (a.newParentId || 'top'), icon: 'chevronRight', danger: false };
     case 'CHANGE_LIST': {
-      const pv = op._preview && typeof op._preview === 'object' ? op._preview : {};
+      // Names come from the ids the op will actually apply, never from
+      // op._preview while those resolve: the snapshot is whatever the
+      // proposer wrote, and a model-written one could show "Buy milk →
+      // Groceries" on a card whose ids move "Tax return" into Archive.
+      // Live lookups are what auto-organize snapshotted anyway, and
+      // applyOpsBatch labels the batch before executing it, so "from" still
+      // reads the pre-move list. The snapshot only fills in for a task
+      // deleted since the proposal (that op then fails on apply).
+      const pv = (!t && op._preview && typeof op._preview === 'object') ? op._preview : {};
       const snapName = pv.taskName ? String(pv.taskName).trim().slice(0, 56) : '';
       return {
         kind: 'listMove',
-        title: snapName || taskName || ('Task #' + a.id),
-        fromList: pv.fromList ? String(pv.fromList) : _listNameById(t ? t.listId : null),
-        toList: pv.toList ? String(pv.toList) : _listNameById(a.listId),
+        title: taskName || snapName || ('Task #' + a.id),
+        fromList: t ? _listNameById(t.listId) : (pv.fromList ? String(pv.fromList) : _listNameById(null)),
+        toList: _listNameById(a.listId),
         icon: 'folder',
         danger: false,
       };
@@ -1554,6 +1562,12 @@ async function applyOpsBatch(selOps, meta, opts){
 
   await _enrichClassifyOps(selOps);
 
+  // Label from the pre-apply state: the summary resolves names from live
+  // ids, and once the batch runs a CHANGE_LIST's task already sits in its
+  // new list ("Rent: Work → Work"), a deleted task has no name, and a
+  // TOGGLE_STAR reads as the opposite action.
+  const labels = summarizeOpsLabels(selOps, 8);
+
   const snaps = [];
   let applied = 0;
   const failures = [];
@@ -1574,8 +1588,6 @@ async function applyOpsBatch(selOps, meta, opts){
       failures.push(`${op.name}: ${(e && e.message ? e.message : 'error').slice(0, 50)}`);
     }
   }
-
-  const labels = summarizeOpsLabels(selOps, 8);
 
   if(snaps.length){
     const sourceTag = source ? ` via ${source}` : '';

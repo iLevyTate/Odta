@@ -45,11 +45,13 @@ test('a newer remote epoch unions the logs instead of replacing them', () => {
 
 test('close / error handlers ignore a connection that has already been replaced', () => {
   const s = src.indexOf("conn.on('close', () => {");
-  const block = src.slice(s, s + 1200);
-  assert.match(block, /if \(_conn && _conn !== conn\) return;/);
+  const block = src.slice(s, s + 1800);
+  // `_conn !== conn` alone is the stricter form: it also ignores a close that
+  // arrives while _conn is null mid-swap (the simultaneous-dial tie-break).
+  assert.match(block, /if \((_conn && )?_conn !== conn\) return;/);
   const errIdx = block.indexOf("conn.on('error'");
   assert.ok(errIdx > 0);
-  assert.match(block.slice(errIdx), /if \(_conn && _conn !== conn\) return;/);
+  assert.match(block.slice(errIdx), /if \((_conn && )?_conn !== conn\) return;/);
 });
 
 test('merged checklist / note ids reseed the allocators', () => {
