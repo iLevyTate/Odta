@@ -214,22 +214,38 @@ function _syncIncomingPayloadInvalid(remote) {
   return false;
 }
 
-function _syncMergeTimeLogsById(a, b) {
+// Union two id-keyed lists (remote wins on an id collision). Entries without
+// an id (legacy rows) are kept from both sides, deduplicated by content, so a
+// union never silently drops what one device logged.
+function _syncUnionById(a, b) {
   const m = new Map();
-  for (const l of a || []) { if (l && l.id != null) m.set(l.id, l); }
-  for (const l of b || []) { if (l && l.id != null) m.set(l.id, l); }
-  return Array.from(m.values());
+  const extra = [];
+  const seen = new Set();
+  for (const x of [...(a || []), ...(b || [])]) {
+    if (!x) continue;
+    if (x.id != null) { m.set(x.id, x); continue; }
+    let k; try { k = JSON.stringify(x); } catch (_) { k = String(x); }
+    if (seen.has(k)) continue;
+    seen.add(k); extra.push(x);
+  }
+  return [...m.values(), ...extra];
 }
+function _syncMergeTimeLogsById(a, b) { return _syncUnionById(a, b); }
 
-function _syncMergeIntervalsById(a, b) {
-  const m = new Map();
-  for (const x of a || []) { if (x && x.id != null) m.set(x.id, x); }
-  for (const x of b || []) { if (x && x.id != null) m.set(x.id, x); }
-  return Array.from(m.values());
-}
+function _syncMergeIntervalsById(a, b) { return _syncUnionById(a, b); }
 
 function _syncMergeSessionHist(a, b) {
-  const out = [...(a || []), ...(b || [])];
+  // sessionHistory entries carry no id ({type:'work'} / {type:'short'}), so
+  // a plain concatenation of two copies of the same history doubled it on
+  // every merge. Treat the shorter list as a prefix of the longer one when
+  // it is, and only append the genuinely new tail.
+  const la = Array.isArray(a) ? a : [], lb = Array.isArray(b) ? b : [];
+  const short = la.length <= lb.length ? la : lb, long = la.length <= lb.length ? lb : la;
+  let prefix = true;
+  for (let i = 0; i < short.length; i++) {
+    if (JSON.stringify(short[i]) !== JSON.stringify(long[i])) { prefix = false; break; }
+  }
+  const out = prefix ? long.slice() : [...la, ...lb];
   return out.length > _SYNC_MAX_SH_MERGE ? out.slice(-_SYNC_MAX_SH_MERGE) : out;
 }
 
@@ -336,6 +352,9 @@ function _mergeState(remote, opts){
   taskIdCtr = Math.max(taskIdCtr, remote.taskIdCtr || 0);
   if (typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
   if (typeof repairOrphanedTaskParents === 'function') repairOrphanedTaskParents();
+  // Merged tasks bring the peer's checklist / note ids; keep the allocators
+  // ahead of them so the next item added here can't collide.
+  if (typeof reseedChecklistAndNoteIdCtrs === 'function') reseedChecklistAndNoteIdCtrs();
 
   const listMap = new Map(lists.map(l => [l.id, l]));
   for (const rl of (remote.lists || [])) {
@@ -378,14 +397,22 @@ function _mergeState(remote, opts){
   const ln = (typeof stateNonce === 'number') ? stateNonce : 0;
   const _remoteWinsExact = (re === le && re > 0 && rn > ln);
   if (re > le || _remoteWinsExact) {
-    if (Array.isArray(remote.timeLog)) timeLog = remote.timeLog;
-    if (Array.isArray(remote.sessionHistory)) sessionHistory = remote.sessionHistory;
-    if (Array.isArray(remote.intervals)) intervals = remote.intervals;
+    // Logs are append-only on both sides: union them by id (and tail-merge
+    // the session history) exactly as the cross-tab path does, instead of
+    // taking the newer device's copy wholesale — that dropped every session
+    // this device had logged since the last sync, and the ack round-trip
+    // then erased them on the peer too.
+    if (Array.isArray(remote.timeLog)) timeLog = _syncMergeTimeLogsById(timeLog, remote.timeLog);
+    if (Array.isArray(remote.sessionHistory)) sessionHistory = _syncMergeSessionHist(sessionHistory, remote.sessionHistory);
+    if (Array.isArray(remote.intervals)) intervals = _syncMergeIntervalsById(intervals, remote.intervals);
     if (remote.totalPomos != null) totalPomos = Math.max(0, parseInt(remote.totalPomos, 10) || 0);
     if (remote.totalBreaks != null) totalBreaks = Math.max(0, parseInt(remote.totalBreaks, 10) || 0);
     if (remote.totalFocusSec != null) totalFocusSec = Math.max(0, parseInt(remote.totalFocusSec, 10) || 0);
-    if (remote.intIdCtr != null) intIdCtr = Math.max(0, parseInt(remote.intIdCtr, 10) || 0);
-    if (remote.logIdCtr != null) logIdCtr = Math.max(0, parseInt(remote.logIdCtr, 10) || 0);
+    // Logs are unioned above, so the id allocators must stay ahead of BOTH
+    // sides' entries — taking the peer's counter verbatim could re-issue an
+    // id a kept local entry already uses.
+    if (remote.intIdCtr != null) intIdCtr = Math.max(intIdCtr, Math.max(0, parseInt(remote.intIdCtr, 10) || 0));
+    if (remote.logIdCtr != null) logIdCtr = Math.max(logIdCtr, Math.max(0, parseInt(remote.logIdCtr, 10) || 0));
     if (remote.pomosInCycle != null) pomosInCycle = Math.max(0, parseInt(remote.pomosInCycle, 10) || 0);
     if (remote.phase && ['work', 'short', 'long'].includes(remote.phase)) phase = remote.phase;
     if (remote.cfg && typeof remote.cfg === 'object') {
@@ -520,6 +547,11 @@ function _wireConn(conn, opts) {
   });
 
   conn.on('close', () => {
+    // PeerJS emits 'close' synchronously from close(). When this connection
+    // was replaced (Connect to a different code, or accepting a new inbound
+    // link) the current _conn is already the NEW one — tearing it down and
+    // scheduling a reconnect here restarted the fresh handshake every 2 s.
+    if (_conn && _conn !== conn) return;
     _conn = null;
     // Don't stomp on a more-specific error message (e.g. "Code not found")
     // that we just set from _peer.on('error', 'peer-unavailable').
@@ -531,6 +563,7 @@ function _wireConn(conn, opts) {
 
   conn.on('error', (err) => {
     console.warn('[sync] conn error', err);
+    if (_conn && _conn !== conn) return;
     _conn = null;
     if (_connectTimeoutId) { clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
     _setSyncStatus('error', _friendlySyncError(err));

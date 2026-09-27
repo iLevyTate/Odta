@@ -81,6 +81,20 @@ async function listTaskAttachments(taskId){
   return rows.sort((a, b) => (a.created || 0) - (b.created || 0));
 }
 
+// A failed IndexedDB write (quota exhausted, private mode, DB unavailable)
+// used to escape as an unhandled rejection from the modal's onchange /
+// recorder.onstop handlers: the photo or voice note silently vanished.
+async function _attachPutOrToast(rec, what){
+  try{
+    await _attachPut(rec);
+    return true;
+  }catch(e){
+    console.warn('[attachments] store failed', e);
+    if(typeof showExportToast === 'function') showExportToast('Could not save the ' + what + ' — storage is full or unavailable.');
+    return false;
+  }
+}
+
 async function addImageAttachment(taskId, file){
   const t = typeof findTask === 'function' ? findTask(taskId) : null;
   if(!t) return null;
@@ -94,7 +108,7 @@ async function addImageAttachment(taskId, file){
     id, taskId, kind: 'image', mime: file.type || 'image/jpeg',
     created: Date.now(), blob: file,
   };
-  await _attachPut(rec);
+  if(!(await _attachPutOrToast(rec, 'photo'))) return null;
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
@@ -115,7 +129,7 @@ async function addAudioAttachment(taskId, blob, mime){
     id, taskId, kind: 'audio', mime: mime || 'audio/webm',
     created: Date.now(), blob,
   };
-  await _attachPut(rec);
+  if(!(await _attachPutOrToast(rec, 'voice note'))) return null;
   if(!Array.isArray(t.attachments)) t.attachments = [];
   if(!t.attachments.includes(id)) t.attachments.push(id);
   if(typeof saveState === 'function') saveState('user');
@@ -138,6 +152,30 @@ async function deleteAttachmentsForTask(taskId){
   await Promise.all(rows.map(r => _attachDelete(r.id)));
 }
 
+/**
+ * Delete attachment rows whose task no longer exists. removeTask defers the
+ * blob purge until its undo window has closed; a tab closed before that
+ * timer fires leaves the rows behind, so app.js runs this sweep at boot
+ * (delayed past any undo window a sibling tab might still have open).
+ */
+async function sweepOrphanAttachments(){
+  if(typeof tasks === 'undefined' || !Array.isArray(tasks)) return 0;
+  const live = new Set(tasks.map(t => t && t.id).filter(id => id != null));
+  let db;
+  try{ db = await _openAttachDb(); }catch(_){ return 0; }
+  const rows = await new Promise((res) => {
+    try{
+      const tx = db.transaction(ATTACH_STORE, 'readonly');
+      const r = tx.objectStore(ATTACH_STORE).getAll();
+      r.onsuccess = () => res(r.result || []);
+      r.onerror = () => res([]);
+    }catch(_){ res([]); }
+  });
+  const orphans = rows.filter(r => r && !live.has(r.taskId) && !live.has(Number(r.taskId)));
+  await Promise.all(orphans.map(r => _attachDelete(r.id)));
+  return orphans.length;
+}
+
 function attachmentObjectUrl(rec){
   if(!rec || rec.blob == null) return null;
   const b = rec.blob;
@@ -152,5 +190,6 @@ window.addImageAttachment = addImageAttachment;
 window.addAudioAttachment = addAudioAttachment;
 window.removeAttachment = removeAttachment;
 window.deleteAttachmentsForTask = deleteAttachmentsForTask;
+window.sweepOrphanAttachments = sweepOrphanAttachments;
 window._attachGet = _attachGet;
 window.attachmentObjectUrl = attachmentObjectUrl;

@@ -1,6 +1,6 @@
 // ========== CONFIG ==========
 function updateConfig(){cfg.work=Math.max(1,parseInt(gid('cfgWork').value)||25);cfg.short=Math.max(1,parseInt(gid('cfgShort').value)||5);cfg.long=Math.max(1,parseInt(gid('cfgLong').value)||15);cfg.cycle=Math.max(2,parseInt(gid('cfgCycle').value)||4);if(getTimerState()==='idle'){setPhaseTime();renderTimerChrome()}saveState('user')}
-function toggleOpt(id){const el=gid(id);el.classList.toggle('on');const on=el.classList.contains('on');el.setAttribute('aria-checked',on?'true':'false');if(id==='togBreak')cfg.autoBreak=on;if(id==='togWork')cfg.autoWork=on;if(id==='togSound'){cfg.sound=on;if(!cfg.sound){cancelScheduledAudio();if(typeof swScheduledIntervalNodes!=='undefined'&&swScheduledIntervalNodes.length&&typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes);if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers))quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)});}else if(running){schedulePhaseAudio()}}if(id==='togLink')cfg.linkTask=on;if(id==='togDueNotify'){cfg.dueNotify=on}if(id==='togNotif'){cfg.notif=on;if(cfg.notif){reqNotifPerm().then(()=>{ if(typeof renderNotifStatus==='function') renderNotifStatus(); })}else{ if(typeof renderNotifStatus==='function') renderNotifStatus(); }}if(id==='togSnpNote')cfg.askSessionNote=on;saveState('user')}
+function toggleOpt(id){const el=gid(id);el.classList.toggle('on');const on=el.classList.contains('on');el.setAttribute('aria-checked',on?'true':'false');if(id==='togBreak')cfg.autoBreak=on;if(id==='togWork')cfg.autoWork=on;if(id==='togSound'){cfg.sound=on;if(!cfg.sound){cancelScheduledAudio();if(typeof swScheduledIntervalNodes!=='undefined'&&swScheduledIntervalNodes.length&&typeof cancelSwIntervalChimes==='function')cancelSwIntervalChimes(swScheduledIntervalNodes);if(typeof quickTimers!=='undefined'&&Array.isArray(quickTimers))quickTimers.forEach(qt=>{if(qt&&typeof cancelQtAudio==='function')cancelQtAudio(qt)});}else if(running){schedulePhaseAudio()}}if(id==='togLink')cfg.linkTask=on;if(id==='togDueNotify'){cfg.dueNotify=on}if(id==='togNotif'){cfg.notif=on;const _rearm=()=>{ if(typeof renderNotifStatus==='function') renderNotifStatus(); if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule({force:true}); };if(cfg.notif){reqNotifPerm().then(_rearm,_rearm)}else{ _rearm(); }}if(id==='togSnpNote')cfg.askSessionNote=on;saveState('user')}
 // ========== STATE ==========
 let cfg={work:25,short:5,long:15,cycle:4,autoBreak:true,autoWork:false,sound:true,linkTask:true,notif:true,timerSub:'pomo',hideHabitsInMainViews:true,askSessionNote:true,focusListMode:false,phasePreset:'classic',qaHintHidden:true,quickAddFields:['entryKind','list','due'],cascadeCompletion:true,dueNotify:true,calMode:'month',timerDock:{}};
 
@@ -165,7 +165,14 @@ function notifyAlarm(alarmId, title, body, opts){
   if(alarmId && typeof window!=='undefined' && window.OdtaAlarms) window.OdtaAlarms.markFiredLocally(alarmId);
 }
 
+// opts.entrySec — optional length to record in the task's sessionEntries
+// instead of "seconds since taskStartedAt". The boot-time catch-up for a
+// phase that ended while the app was closed passes it: only the seconds not
+// yet folded into totalSec at the last save are credited via taskStartedAt,
+// but the session entry should still show the full segment that ran.
 function onPhaseComplete(){
+  const opts=arguments[0];
+  const _entrySecOverride=(opts&&Number.isFinite(opts.entrySec)&&opts.entrySec>=0)?Math.floor(opts.entrySec):null;
   let completedTaskIdForNote = null;
   if(phase==='work'){pomosInCycle++;totalPomos++;totalFocusSec+=totalDuration;sessionHistory.push({type:'work'});
     const pips=gid('pips').children;if(pips[pomosInCycle-1])pips[pomosInCycle-1].classList.add('done','pop');
@@ -176,7 +183,7 @@ function onPhaseComplete(){
       // timer event distinctly, not just the rolling total + counter. Each
       // entry is small (4 fields) so storage growth is bounded by usage.
       if(!Array.isArray(t.sessionEntries)) t.sessionEntries=[];
-      t.sessionEntries.push({ts:timeNowFull(),durationSec:sessSec,type:'work',phase:'work'});
+      t.sessionEntries.push({ts:timeNowFull(),durationSec:_entrySecOverride!=null?_entrySecOverride:sessSec,type:'work',phase:'work'});
       addLog(t.name,totalDuration,'work');completedTaskIdForNote=t.id;
     }}else addLog('Focus',totalDuration,'work')
   }else{totalBreaks++;sessionHistory.push({type:phase});addLog(getPL(phase),getPS(phase),phase)}
@@ -279,6 +286,9 @@ function skipPhase(){
   }
   _scheduleAutoAdvance();
   if(!((phase==='work'&&cfg.autoBreak)||(phase!=='work'&&cfg.autoWork))) maybeStopKeepalive();
+  // The skipped phase's deadline must leave the shared alarm store, or the
+  // service worker fires "Focus Complete" for a phase that no longer exists.
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 async function resetAll(){
   // Mid-cycle "↻ Cycle" mis-taps used to silently wipe pomosInCycle with no
@@ -300,6 +310,7 @@ async function resetAll(){
   if(_pendingStartTimer){ clearTimeout(_pendingStartTimer); _pendingStartTimer = null; }
   if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}
   setPhaseTime();renderAll();saveState('user');
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 // Reset only the current phase (work, short, long) back to its full duration
 // without disturbing the cycle position, the running phase, or other phases'
@@ -315,6 +326,8 @@ function resetPhase(){
   if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}
   setPhaseTime();renderTimerChrome();renderCtrls();_syncRingState();saveState('user');
   if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();
+  // Drop the cancelled deadline from the shared alarm store (see skipPhase).
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 window.resetPhase=resetPhase;
 
@@ -476,7 +489,10 @@ function removeQuickTimer(id){
   // keepalive oscillator, exactly like resetQuickTimer does — otherwise it
   // keeps burning battery with nothing left to count.
   maybeStopKeepalive();
-  renderQuickTimers();saveState('user')
+  renderQuickTimers();saveState('user');
+  // A removed running timer must not keep its "Timer done" alarm parked in
+  // the shared store for the service worker to fire later.
+  if(typeof window!=='undefined'&&window.OdtaAlarms) window.OdtaAlarms.schedule();
 }
 
 function scheduleQtAudio(qt){
@@ -484,6 +500,7 @@ function scheduleQtAudio(qt){
   if(!cfg.sound)return;
   const delay=qt.remaining;
   if(delay<=0)return;
+  if(typeof _audioClockLive==='function'&&!_audioClockLive()){ _audioRescheduleOnPrime=true; return; } // pre-gesture clock: prime() reschedules
   try{
     const x=getAudioCtx(),base=x.currentTime+delay,c=CH[qt.sound]||CH.bell;
     qt._nodes=[];

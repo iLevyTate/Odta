@@ -136,6 +136,13 @@ function scheduleLiveParsePreview(){
     let parsed = { name: raw, props: {} };
     if(typeof parseQuickAddAsync === 'function'){
       try{ parsed = await parseQuickAddAsync(raw); }catch(_){}
+      // The input may have been submitted (and cleared) or retyped while the
+      // parser — possibly still importing chrono on first use — was busy;
+      // chips for text that is no longer in the box are just noise.
+      if(inp.value !== raw){
+        if(inp.value.length < 2 && typeof clearLiveParsePreview === 'function') clearLiveParsePreview();
+        return;
+      }
     } else if(typeof parseQuickAdd === 'function'){
       parsed = parseQuickAdd(raw);
     }
