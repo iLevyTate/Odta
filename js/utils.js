@@ -4,13 +4,17 @@ function gid(id){return document.getElementById(id)}
  * HTML-escape a string for safe insertion into innerHTML.
  * SECURITY: This is the primary XSS boundary. All user-supplied
  * data rendered via innerHTML MUST pass through esc() first.
- * Escapes & < > " ' so the result is safe in text AND quoted attributes.
- * (It used to round-trip through textContent → innerHTML, which serialises
- * a text node's & < > only: every attr="${esc(x)}" could be broken out of
- * with a quote, e.g. a life-area label or an ICS SUMMARY.)
+ * Escapes &, <, >, " and ' — so the result is safe both as a text node
+ * AND inside a double- or single-quoted attribute value. (The previous
+ * textContent→innerHTML implementation only encoded & < >: browsers never
+ * escape quotes when serialising a text node, so every `title="${esc(x)}"`
+ * call site was an attribute-injection hole — a calendar-feed SUMMARY or a
+ * synced list name containing `"` could close the attribute and add
+ * data-action / data-onfocus attributes the delegation dispatcher runs.)
+ * null / undefined render as an empty string, like the old textContent path.
  */
 function esc(s){
-  if(s==null) return '';
+  if(s==null)return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 /** Escape for HTML double-quoted attributes (title=, etc.). */

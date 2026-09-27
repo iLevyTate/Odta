@@ -350,7 +350,15 @@ else console.log(`[CLASSIFICATION]  Focus change handler fires correctly`);
 console.log('\n[RESPONSIVE]');
 for (const w of [960, 640, 360]) {
   await page.setViewport({ width: w, height: Math.min(2200, Math.max(920, Math.round(w * 2))) });
-  await page.click('[data-navtab="tasks"]');
+  // Two elements carry data-navtab="tasks" (sidebar rail + phone bottom
+  // nav); page.click() takes the first match, which is display:none below
+  // the sidebar breakpoint and throws "not clickable". Click whichever is
+  // actually rendered at this width.
+  await page.evaluate(() => {
+    const els = [...document.querySelectorAll('[data-navtab="tasks"]')];
+    const vis = els.find(el => el.offsetParent !== null) || els[0];
+    if (vis) vis.click();
+  });
   await new Promise(r => setTimeout(r, 350));
   const ok = await page.evaluate((tab) => {
     const el = document.querySelector(`[data-tab="${tab}"]`);

@@ -27,6 +27,10 @@ function _loadCalFeeds(){
 }
 
 function _saveCalFeeds(){
+  // The cross-tab listener below nulls the cache; a sync that was mid-fetch
+  // when that happened must not persist the literal string "null" (which
+  // wiped every feed in BOTH tabs on the next load).
+  if(!_calFeeds || typeof _calFeeds !== 'object') return;
   try { localStorage.setItem(CALFEEDS_KEY, JSON.stringify(_calFeeds)); } catch(e) {}
 }
 
@@ -61,8 +65,14 @@ function parseICS(text, stats){
 
   const events = [];
   let current = null;
+  // Depth of nested components inside the current VEVENT (VALARM, and
+  // anything else). Google writes SUMMARY:Alarm notification /
+  // DESCRIPTION:This is an event reminder inside every VALARM, AFTER the
+  // event's own properties — so without skipping the nested block those
+  // overwrote the real title and description.
+  let nested = 0;
   for(const raw of unfolded){
-    if(raw === 'BEGIN:VEVENT'){ current = {}; continue; }
+    if(raw === 'BEGIN:VEVENT'){ current = {}; nested = 0; continue; }
     if(raw === 'END:VEVENT'){
       if(current && current.DTSTART){
         // Per-feed cap (see CAL_FEED_MAX_EVENTS): keep the first N in file
@@ -70,12 +80,18 @@ function parseICS(text, stats){
         if(events.length >= CAL_FEED_MAX_EVENTS){ if(stats) stats.truncated = true; break; }
         events.push(current);
       }
-      current = null; continue;
+      current = null; nested = 0; continue;
     }
     if(!current) continue;
+    if(raw.startsWith('BEGIN:')){ nested++; continue; }
+    if(raw.startsWith('END:')){ if(nested > 0) nested--; continue; }
+    if(nested > 0) continue;
 
-    // Split "KEY;PARAM=VAL:VALUE" → key (ignore params for our subset), value
-    const colonIdx = raw.indexOf(':');
+    // Split "KEY;PARAM=VAL:VALUE" → key (ignore params for our subset), value.
+    // The separator is the first ':' OUTSIDE a double-quoted parameter value:
+    // Outlook/Exchange emit TZID="(UTC-05:00) Eastern Time (US & Canada)",
+    // and splitting at that inner colon produced an unparseable date.
+    const colonIdx = _icsPropSeparator(raw);
     if(colonIdx < 0) continue;
     let keyPart = raw.slice(0, colonIdx);
     const value = raw.slice(colonIdx + 1);
@@ -84,11 +100,11 @@ function parseICS(text, stats){
     let tzid = null;
     let valueType = null;
     if(semi >= 0){
-      const params = keyPart.slice(semi+1).split(';');
+      const params = _splitIcsParams(keyPart.slice(semi+1));
       keyPart = keyPart.slice(0, semi);
       for(const p of params){
-        if(p.startsWith('TZID=')) tzid = p.slice(5);
-        if(p.startsWith('VALUE=')) valueType = p.slice(6);
+        if(p.startsWith('TZID=')) tzid = _stripIcsQuotes(p.slice(5));
+        if(p.startsWith('VALUE=')) valueType = _stripIcsQuotes(p.slice(6));
       }
     }
     if(keyPart === 'EXDATE'){
@@ -106,14 +122,55 @@ function parseICS(text, stats){
     } else {
       current[keyPart] = value;
     }
-    if(keyPart === 'DTSTART' || keyPart === 'DTEND'){
+    if(keyPart === 'DTSTART' || keyPart === 'DTEND' || keyPart === 'RECURRENCE-ID'){
       current[keyPart + '_TZID'] = tzid;
       current[keyPart + '_VALUE'] = valueType;
     }
   }
 
   // Transform raw VEVENTS to our normalized shape
-  return events.map(normaliseEvent).filter(Boolean);
+  const out = events.map(normaliseEvent).filter(Boolean);
+  // RECURRENCE-ID overrides: a rescheduled / retitled instance of a
+  // recurring event is a separate VEVENT with the master's UID plus
+  // RECURRENCE-ID naming the slot it replaces (Google only writes EXDATE for
+  // DELETED instances). Exclude that slot from the master so the calendar
+  // doesn't show both the ghost original and the moved copy.
+  const masters = new Map();
+  for(const ev of out){ if(ev.uid && !ev.recurrenceId && ev.rrule) masters.set(ev.uid, ev); }
+  for(const ev of out){
+    if(!ev.uid || !ev.recurrenceId) continue;
+    const m = masters.get(ev.uid);
+    if(!m) continue;
+    if(!Array.isArray(m.exdateList)) m.exdateList = [];
+    if(!m.exdateList.includes(ev.recurrenceId)) m.exdateList.push(ev.recurrenceId);
+  }
+  return out;
+}
+
+// First ':' that is not inside a double-quoted parameter value.
+function _icsPropSeparator(line){
+  let inQ = false;
+  for(let i = 0; i < line.length; i++){
+    const ch = line[i];
+    if(ch === '"') inQ = !inQ;
+    else if(ch === ':' && !inQ) return i;
+  }
+  return -1;
+}
+// Split "P1=a;P2="x;y"" on ';' outside quotes.
+function _splitIcsParams(s){
+  const out = []; let cur = ''; let inQ = false;
+  for(const ch of String(s)){
+    if(ch === '"'){ inQ = !inQ; cur += ch; }
+    else if(ch === ';' && !inQ){ out.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function _stripIcsQuotes(v){
+  const s = String(v || '');
+  return (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') ? s.slice(1, -1) : s;
 }
 
 // Convert iCal date format to ISO YYYY-MM-DD and HH:MM (local) where possible
@@ -127,7 +184,13 @@ function normaliseEvent(ev){
   const exdateSet = Array.isArray(ev._exdateSpecs) && ev._exdateSpecs.length
     ? _exdateSetFromSpecs(ev._exdateSpecs)
     : (ev.EXDATE ? parseExdateList(ev.EXDATE) : new Set());
+  let recurrenceId = null;
+  if(ev['RECURRENCE-ID']){
+    const rid = parseICSDate(ev['RECURRENCE-ID'], ev['RECURRENCE-ID_VALUE'] === 'DATE', ev['RECURRENCE-ID_TZID']);
+    if(rid && rid.iso) recurrenceId = rid.iso;
+  }
   return {
+    recurrenceId,               // local YYYY-MM-DD of the master slot this VEVENT overrides, or null
     uid:         (ev.UID || '').slice(0, 200),
     title:       unescapeICS(ev.SUMMARY || '(no title)'),
     // Capped at the 8000 chars createTaskFromCalEventCore keeps (its only
@@ -348,18 +411,57 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
   const countActive = countSpecified && Number.isFinite(count) && count > 0;
   // BYDAY — e.g. "MO,WE,FR" — for weekly events that fire on multiple days per week
   // Dedupe + cap: BYDAY=MO,MO,…×100k (300 KB) was walked in full for every
-  // week of the window: 5.8 s / 1.4 GB heap for one event. Ordinals are
-  // dropped below, so at most 7 distinct weekdays survive anyway.
+  // week of the window: 5.8 s / 1.4 GB heap for one event.
   const BY_DAY_MAP = { SU:0, MO:1, TU:2, WE:3, TH:4, FR:5, SA:6 };
-  let byDays = null;
-  if(params.BYDAY){
-    const toks = Array.from(new Set(params.BYDAY.split(','))).slice(0, CAL_RRULE_MAX_BYDAY);
-    byDays = Array.from(new Set(toks.map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null)))
-      .sort((a, b) => a - b);
-  }
+  // Both readers of BYDAY (weekly weekdays, monthly ordinals) share one
+  // deduped, capped token list, so a huge BYDAY can't come back through either.
+  const byDayToks = params.BYDAY
+    ? Array.from(new Set(params.BYDAY.split(',').map(d => d.trim()))).slice(0, CAL_RRULE_MAX_BYDAY)
+    : null;
+  const byDays = byDayToks
+    ? Array.from(new Set(byDayToks.map(d => BY_DAY_MAP[d.replace(/^[+-]?\d+/,'')]).filter(v => v != null))).sort((a, b) => a - b)
+    : null;
   // Set lookup: scanning a 200k-entry EXDATE array on every iteration took 2.5 s.
   const exSet = new Set(Array.isArray(event.exdateList) ? event.exdateList : []);
   const exSorted = Array.from(exSet).filter(x => typeof x === 'string').sort();
+  // Week start for INTERVAL>1 WEEKLY cycles. RFC 5545 defaults to Monday
+  // (Google emits WKST=MO for most locales); Sunday-based cycles put every
+  // Sunday of a "SU,MO every 2 weeks" rule a week late.
+  const wkst = (params.WKST && BY_DAY_MAP[params.WKST] != null) ? BY_DAY_MAP[params.WKST] : 1;
+  const _rel = d => (d - wkst + 7) % 7; // weekday index relative to the week start
+  // MONTHLY / YEARLY day rules. BYMONTHDAY (incl. negatives: -1 = last day)
+  // and ordinal BYDAY (2MO = second Monday, -1FR = last Friday) are stock
+  // Google Calendar options; with neither, the DTSTART day-of-month repeats
+  // and a month that lacks it is skipped (RFC 5545: invalid dates are
+  // dropped, they never roll into the next month).
+  const byMonthDay = params.BYMONTHDAY
+    ? Array.from(new Set(params.BYMONTHDAY.split(',').map(v => parseInt(v, 10)).filter(v => Number.isFinite(v) && v !== 0 && Math.abs(v) <= 31)))
+    : null;
+  const byDayOrd = byDayToks
+    ? byDayToks.map(d => {
+        const m = /^([+-]?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/.exec(d);
+        return m ? { ord: m[1] ? parseInt(m[1], 10) : 0, dow: BY_DAY_MAP[m[2]] } : null;
+      }).filter(Boolean)
+    : null;
+  const _monthCandidates = (y, m, baseDay) => {
+    const last = new Date(y, m + 1, 0).getDate();
+    let days = [];
+    if(byMonthDay && byMonthDay.length){
+      days = byMonthDay.map(v => (v > 0 ? v : last + 1 + v)).filter(d => d >= 1 && d <= last);
+    } else if(byDayOrd && byDayOrd.length){
+      const firstDow = new Date(y, m, 1).getDay();
+      for(const { ord, dow } of byDayOrd){
+        const all = [];
+        for(let d = 1 + ((dow - firstDow + 7) % 7); d <= last; d += 7) all.push(d);
+        if(ord === 0) days.push(...all);
+        else if(ord > 0 && all[ord - 1] != null) days.push(all[ord - 1]);
+        else if(ord < 0 && all[all.length + ord] != null) days.push(all[all.length + ord]);
+      }
+    } else if(baseDay <= last){
+      days = [baseDay];
+    }
+    return Array.from(new Set(days)).sort((a, b) => a - b).map(d => new Date(y, m, d, 12, 0, 0));
+  };
 
   const baseDate = new Date(event.dateISO + 'T12:00:00');
   const results = [];
@@ -438,11 +540,11 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
       if(freq === 'WEEKLY' && byDays && byDays.length){
         // `steps` are whole week-cycles: week 0 contributes only BYDAY days on
         // or after DTSTART's weekday; each later skipped cycle contributes all
-        // of them.
-        occSeen = byDays.filter(d => d >= baseDow).length + (steps - 1) * byDays.length;
+        // of them. (Weekday positions are relative to WKST.)
+        occSeen = byDays.filter(d => _rel(d) >= _rel(baseDow)).length + (steps - 1) * byDays.length;
         occSeen -= exdatedOnGridBefore(d =>
           byDays.includes(d.getDay()) &&
-          Math.floor(Math.round((d - baseDate) / DAY_MS + baseDow) / 7) % interval === 0);
+          Math.floor((Math.round((d - baseDate) / DAY_MS) + _rel(baseDow)) / 7) % interval === 0);
       } else {
         occSeen = steps; // positions 0..steps-1 (position 0 = DTSTART)
         occSeen -= exdatedOnGridBefore(d => Math.round((d - baseDate) / DAY_MS) % stepDays === 0);
@@ -455,13 +557,13 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
   while(iterations < maxIter && current <= future){
     // For WEEKLY with BYDAY: expand each week cycle to all specified weekdays
     if(freq === 'WEEKLY' && byDays && byDays.length){
-      // Find start of this week's cycle (Sunday)
+      // Find start of this week's cycle (WKST — Monday unless the rule says otherwise)
       const weekStart = new Date(current);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      weekStart.setDate(weekStart.getDate() - _rel(weekStart.getDay()));
       let pastStop = false;
       for(const dayOfWeek of byDays){
         const occ = new Date(weekStart);
-        occ.setDate(weekStart.getDate() + dayOfWeek);
+        occ.setDate(weekStart.getDate() + _rel(dayOfWeek));
         if(occ < baseDate) continue; // before the original DTSTART — not an occurrence
         if(occ > future) continue;
         const iso = occ.getFullYear() + '-' +
@@ -476,6 +578,29 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
       }
       if(pastStop || (countActive && occSeen >= count)) break;
       current.setDate(current.getDate() + 7 * interval);
+    } else if(freq === 'MONTHLY' || freq === 'YEARLY'){
+      // Step by calendar month / year and rebuild the day each time.
+      // `setMonth(+1)` from the 29th–31st overflowed a shorter month
+      // (Jan 31 → "Feb 31" → Mar 3) and every later occurrence drifted to
+      // the 3rd; YEARLY from Feb 29 became Mar 1 forever.
+      const y = current.getFullYear(), m = current.getMonth();
+      const cands = (freq === 'YEARLY' && m !== baseDate.getMonth()) ? [] : _monthCandidates(y, m, baseDate.getDate());
+      let stop = false;
+      for(const occ of cands){
+        if(occ < baseDate) continue;
+        if(occ > future){ stop = true; break; }
+        const iso = occ.getFullYear() + '-' +
+                    String(occ.getMonth()+1).padStart(2,'0') + '-' +
+                    String(occ.getDate()).padStart(2,'0');
+        if(until && iso > until.iso){ stop = true; break; }
+        if(!(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso))){
+          occSeen++;
+          if(occ >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
+        }
+        if(countActive && occSeen >= count){ stop = true; break; }
+      }
+      if(stop) break;
+      current = (freq === 'MONTHLY') ? new Date(y, m + interval, 1, 12, 0, 0) : new Date(y + interval, m, 1, 12, 0, 0);
     } else {
       // Standard path — one occurrence per interval
       const iso = current.getFullYear() + '-' +
@@ -490,8 +615,6 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
       if(countActive && occSeen >= count) break;
       if(freq === 'DAILY')        current.setDate(current.getDate() + interval);
       else if(freq === 'WEEKLY')  current.setDate(current.getDate() + 7 * interval);
-      else if(freq === 'MONTHLY') current.setMonth(current.getMonth() + interval);
-      else if(freq === 'YEARLY')  current.setFullYear(current.getFullYear() + interval);
     }
     iterations++;
   }
@@ -615,8 +738,11 @@ function _calFetchUrlOk(urlStr){
   // One trailing dot is the DNS root and resolves identically: "localhost."
   // and "lvh.me." slipped past the exact / suffix matches below.
   if(h.endsWith('.')) h = h.slice(0, -1);
-  // *.localhost is loopback by spec (RFC 6761) and in every modern browser.
-  if(h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::' || h === '::1') return false;
+  // *.localhost is loopback by spec (RFC 6761) and in every modern browser;
+  // /etc/hosts usually maps ip6-localhost / localhost.localdomain too.
+  if(h === 'localhost' || h.endsWith('.localhost')
+     || h === 'ip6-localhost' || h === 'ip6-loopback' || h === 'localhost.localdomain'
+     || h === '0.0.0.0' || h === '::' || h === '::1') return false;
   // Numeric/hex/octal/short IPv4 obfuscations (e.g. http://2130706433/,
   // http://0x7f000001/, http://127.1/) — parse to a real address and block if
   // it lands in a private range. Without this the string checks below miss them.
@@ -776,31 +902,39 @@ async function syncCalFeed(feedId){
   const feed = _calFeeds.feeds.find(f => f.id === feedId);
   if(!feed) throw new Error('Feed not found');
 
+  // Re-resolve the feed object after every await: another tab may have
+  // rewritten CALFEEDS_KEY meanwhile (the storage listener drops this tab's
+  // cache), in which case `feed` is an orphan of a discarded snapshot and
+  // writing results into it — then saving — used to persist a null cache
+  // and wipe every feed. Returns null when the feed no longer exists.
+  const _liveFeed = () => { _loadCalFeeds(); return _calFeeds.feeds.find(f => f.id === feedId) || null; };
   try {
     const content = await fetchICSContent(feed);
     const stats = {};
     const events = parseICS(content, stats);
     // Expand recurring events within window
     const { list: expanded, truncated } = _calExpandCapped(events);
-    feed.events = expanded;
-    feed.lastSync = Date.now();
+    const live = _liveFeed();
+    if(!live) return { count: expanded.length, dropped: true };
+    live.events = expanded;
+    live.lastSync = Date.now();
     // A capped feed still synced, so it's a warning on its status line, not
     // an error: feed.error drives the calendar's "sync failed; events may be
     // stale · Retry" alert, and retrying can't shrink the feed.
     const cut = [];
     if(stats.truncated) cut.push('first ' + CAL_FEED_MAX_EVENTS + ' events');
     if(truncated) cut.push('earliest ' + CAL_FEED_MAX_OCCURRENCES + ' occurrences');
-    feed.error = null;
-    feed.warning = cut.length ? 'Feed too large, showing only its ' + cut.join(' and ') : null;
+    live.error = null;
+    live.warning = cut.length ? 'Feed too large, showing only its ' + cut.join(' and ') : null;
     _saveCalFeeds();
     return { count: expanded.length, truncated: cut.length > 0 };
   } catch(err) {
     // If the feed was removed mid-sync (AbortError from removeCalFeed) the
     // feed object is now an orphan; skip writing error state to it.
-    const stillPresent = _calFeeds.feeds.some(f => f.id === feedId);
-    if(stillPresent){
-      feed.error = String(err.message || err).slice(0, 120);
-      feed.lastSync = Date.now();
+    const live = _liveFeed();
+    if(live){
+      live.error = String(err.message || err).slice(0, 120);
+      live.lastSync = Date.now();
       _saveCalFeeds();
     }
     throw err;
@@ -1024,7 +1158,10 @@ function getWhatNextCalConflictHint(opts){
   const workMin = o.timeMin > 0 ? o.timeMin : 25;
   const workMs = workMin * 60 * 1000;
   const now = Date.now();
-  const evs = getUpcomingEvents(2, 48);
+  // strictFuture:false — a meeting that already started (and ends inside the
+  // focus block) is exactly the overlap this hint exists for; the default
+  // dropped every in-progress event.
+  const evs = getUpcomingEvents(2, 48, { strictFuture: false });
   for(const ev of evs){
     if(!ev || ev.allDay) continue;
     const s = ev._startMs, e2 = ev._endMs;
@@ -1349,6 +1486,9 @@ async function confirmRemoveCalFeed(feedId){
 // every CAL_REFRESH_MS while the tab is open. Long-running PWA sessions used
 // to show stale events all day because the only fetch path was boot-time.
 const CAL_REFRESH_MS = 30 * 60 * 1000; // 30 min — balances freshness vs CORS-proxy load
+// Minimum age of the newest successful sync before a return-to-tab triggers
+// a catch-up refetch (see the visibilitychange listener).
+const CAL_VISIBILITY_MIN_MS = 5 * 60 * 1000;
 let _calRefreshTimer = null;
 function _hasFetchableFeeds(){
   _loadCalFeeds();
@@ -1386,8 +1526,15 @@ function autoSyncCalFeedsOnBoot(){
     document._calRefreshVisListener = true;
     document.addEventListener('visibilitychange', () => {
       // Catch up once on return from hidden so the user doesn't have to wait
-      // up to CAL_REFRESH_MS after unlocking their phone or refocusing.
-      if(!document.hidden) _refreshCalFeedsTick();
+      // up to CAL_REFRESH_MS after unlocking their phone or refocusing — but
+      // not on EVERY return: alt-tabbing twenty times re-fetched every URL
+      // feed twenty times through the proxy. Skip while the newest sync is
+      // still fresh.
+      if(document.hidden) return;
+      _loadCalFeeds();
+      const last = _calFeeds.feeds.reduce((m, f) => Math.max(m, (f && f.url && f.lastSync) || 0), 0);
+      if(last && Date.now() - last < CAL_VISIBILITY_MIN_MS) return;
+      _refreshCalFeedsTick();
     });
   }
 }

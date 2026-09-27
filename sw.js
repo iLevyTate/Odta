@@ -1,6 +1,6 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v79';
+let CACHE_NAME = 'odtaulai-v80';
 try {
   importScripts('./js/version.js');
   // The alarm store is the one piece of state the page and this worker share.
@@ -28,7 +28,7 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v79',
+  './css/main.css?v=v80',
   './js/version.js',
   './js/event-delegation.js',
   './js/alarm-store.js',
@@ -112,6 +112,16 @@ self.addEventListener('install', e => {
           ch.postMessage({ type: 'precache-incomplete', failed, total: ASSETS.length });
           ch.close();
         }catch(_){}
+        // Optional model weights may be absent; the app shell may not. A
+        // shell file that failed to fetch (transient 5xx, flaky network)
+        // used to install anyway, and activate then deleted the previous —
+        // complete — cache, so the next offline start 503'd on a core
+        // script. Failing the install keeps the working old worker; the
+        // browser retries on the next update check.
+        const coreFailed = failed.filter(f => !/assets\/models\//.test(f.url));
+        if(coreFailed.length){
+          throw new Error('[sw] precache failed for core assets: ' + coreFailed.map(f => f.url).join(', '));
+        }
       }
     })
   );
@@ -152,23 +162,37 @@ self.addEventListener('fetch', e => {
   const isNavigation = e.request.mode === 'navigate' || e.request.destination === 'document' ||
     url.pathname === '/' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('index.html');
   if(isNavigation){
+    // Shell-first, like every other precached asset: serve the cached
+    // index.html and refresh the copy in the background. Navigation used to
+    // be network-first while js/*.js stayed cache-first, so the first load
+    // after a deploy ran the NEW index.html against the OLD scripts (a
+    // mixed-version page until the next reload). It also meant a flaky
+    // connection showed a blank page until the fetch finally failed.
     e.respondWith(
-      fetch(e.request)
-        .then(res => {
-          const scopePath = new URL(self.registration.scope).pathname;
-          const isShell = url.pathname === scopePath || url.pathname === scopePath + 'index.html';
-          if(isShell && res && res.status === 200 && res.type === 'basic'){
-            const clone = res.clone();
-            // One key for every shell navigation. Keyed by e.request, each launch
-            // URL (?tab=…&task=…, ?share=1&share_text=…) kept its own copy of
-            // the shell until the next version bump, and a share-target
-            // launch left the shared text in Cache Storage after app.js had
-            // scrubbed it from the address bar.
-            caches.open(CACHE_NAME).then(c => c.put('./index.html', clone).catch(() => {}));
-          }
-          return res;
-        })
-        .catch(() => caches.match('./index.html', { ignoreSearch: true }))
+      (() => {
+        const scopePath = new URL(self.registration.scope).pathname;
+        const isShell = url.pathname === scopePath || url.pathname === scopePath + 'index.html';
+        // Another page in scope (README.md, docs/…) is not the shell: fetch it,
+        // and never let its body land under the shell's cache key, or the
+        // next launch would serve that page as the app.
+        if(!isShell) return fetch(e.request).catch(() => caches.match('./index.html'));
+        return caches.match('./index.html').then(cached => {
+          const net = fetch(e.request).then(res => {
+            if(res && res.status === 200 && res.type === 'basic'){
+              const clone = res.clone();
+              // One key for every shell navigation. Keyed by e.request, each
+              // launch URL (?tab=…&task=…, ?share=1&share_text=…) kept its own
+              // copy of the shell until the next version bump, and a
+              // share-target launch left the shared text in Cache Storage
+              // after app.js had scrubbed it from the address bar.
+              caches.open(CACHE_NAME).then(c => c.put('./index.html', clone).catch(() => {}));
+            }
+            return res;
+          }).catch(() => null);
+          if(cached) return cached;
+          return net.then(r => r || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }));
+        });
+      })()
     );
     return;
   }
@@ -192,7 +216,7 @@ self.addEventListener('fetch', e => {
 // ══════════════════════════════════════════════════════════════════════════
 // Before this, every notification was emitted by the page at the moment the
 // page noticed a deadline had passed, and this worker only ever rendered what
-// it was told (SHOW_NOTIFICATION, below). That made delivery conditional on
+// it was told (a SHOW_NOTIFICATION message, since removed). That made delivery conditional on
 // the page still running — which a backgrounded PWA is not: the browser
 // throttles its timers, then freezes it (suspending its Web Workers too),
 // then discards it. The result was a timer that only reliably rang while the
@@ -324,15 +348,28 @@ self.addEventListener('notificationclick', e => {
   }
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
-      // If the app is already open, focus it and forward the notification data
-      for(const c of clients){
-        if('focus' in c){
-          c.postMessage({ type: 'NOTIFICATION_CLICK', data });
-          return c.focus();
-        }
+      // If the app is already open, focus it and forward the notification
+      // data. Prefer a client that is actually the app shell — the update
+      // banner opens CHANGELOG.md in a same-origin tab, and focusing that
+      // one meant the tapped reminder never opened its task.
+      const isShell = (c) => {
+        try{
+          const p = new URL(c.url).pathname;
+          return p === '/' || p.endsWith('/') || p.endsWith('/index.html') || p.endsWith('index.html');
+        }catch(_){ return false; }
+      };
+      const focusable = clients.filter(c => 'focus' in c);
+      const pick = focusable.find(isShell) || null;
+      if(pick){
+        pick.postMessage({ type: 'NOTIFICATION_CLICK', data });
+        return pick.focus();
       }
       // App isn't open — launch it (with optional target path)
       if(self.clients.openWindow) return self.clients.openWindow(target);
+      if(focusable[0]){
+        focusable[0].postMessage({ type: 'NOTIFICATION_CLICK', data });
+        return focusable[0].focus();
+      }
     })
   );
 });

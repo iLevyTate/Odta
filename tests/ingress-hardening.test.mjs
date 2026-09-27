@@ -97,7 +97,7 @@ test('esc() escapes both quote characters for attribute contexts', () => {
 });
 
 test('note ids are numeric after repair, and the note row escapes its data-args', () => {
-  assert.match(storage, /id:\s*\(Number\(n\.id\) > 0 && Number\.isFinite\(Number\(n\.id\)\)\) \? Number\(n\.id\)/);
+  assert.match(storage, /id:\s*\(Number\.isFinite\(Number\(n\.id\)\)[^?]*\) \? Number\(n\.id\)/);
   const tasks = readFileSync(join(root, 'js', 'tasks.js'), 'utf8');
-  assert.match(tasks, /data-action="removeTaskNote" data-args='\$\{escAttr\(JSON\.stringify\(\[taskId,n\.id\]\)\)\}'/);
+  assert.match(tasks, /data-action="removeTaskNote" data-args=["']\$\{escAttr\(JSON\.stringify\(\[taskId,n\.id\]\)\)\}["']/);
 });

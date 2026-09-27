@@ -839,6 +839,15 @@ function predictMetadataFromVec(queryVec, opts){
   const excludeId = o.excludeId == null ? null : o.excludeId;
   const kk = o.k || 5;
   const heuristic = (o.heuristic && typeof o.heuristic === 'object') ? { ...o.heuristic } : {};
+  // A heuristic category that can't be assigned (hidden by the user, or
+  // 'general') must not short-circuit the centroid / kNN vote: it used to be
+  // kept here, skip both votes, and then be deleted by
+  // _sanitizeMergedCategory — so the task ended up with no category even
+  // when the embeddings had a confident answer.
+  if(heuristic.category && (heuristic.category === 'general'
+      || typeof isAssignableCategory !== 'function' || !isAssignableCategory(heuristic.category))){
+    delete heuristic.category;
+  }
   const merged = { ...heuristic };
   const _confidence = {};
   const hadHeuristicCat = !!(heuristic && heuristic.category);

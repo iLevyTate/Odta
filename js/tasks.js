@@ -452,6 +452,9 @@ async function addTask(){
       if(idx >= 0){
         tasks.splice(idx, 1);
         if(typeof _taskIndexRemove === 'function') _taskIndexRemove(_undoId);
+        // Tombstone it: the add may already have been broadcast to another
+        // tab / paired device, which would otherwise send it straight back.
+        if(typeof syncTaskDels === 'object' && syncTaskDels) syncTaskDels[_undoId] = Date.now();
         renderTaskList();
         saveState('user');
         if(typeof announce === 'function') announce('Task removed');
@@ -1334,14 +1337,25 @@ function _normalizeSiblingOrder(parentId){
   sibs.forEach((s,i)=>{s.order=i*10});
   return sibs;
 }
+// Siblings the user can actually see. Done / snoozed / filtered-out siblings
+// still hold an `order` slot, so "Move up" used to swap with an invisible row
+// (no visible change until the second press) and "Indent" nested the task
+// under a hidden done sibling, which then reappeared as its parent. Outside
+// the list view (no rows rendered) every sibling counts.
+function _visibleSiblings(sibs,selfId){
+  if(typeof document==='undefined')return sibs;
+  if(!document.querySelector('#taskList .task-item[data-task-id]'))return sibs;
+  return sibs.filter(s=>s.id===selfId||!!document.querySelector('#taskList .task-item[data-task-id="'+s.id+'"]'));
+}
 function _moveTask(id,dir){
   const t=findTask(id);if(!t)return;
   _forceManualSort();
   const sibs=_normalizeSiblingOrder(t.parentId||null);
-  const idx=sibs.findIndex(s=>s.id===id);
+  const shown=_visibleSiblings(sibs,id);
+  const idx=shown.findIndex(s=>s.id===id);
   const j=idx+dir;
-  if(idx<0||j<0||j>=sibs.length)return;
-  const other=sibs[j];
+  if(idx<0||j<0||j>=shown.length)return;
+  const other=shown[j];
   const tmp=t.order;t.order=other.order;other.order=tmp;
   if(typeof haptic==='function')haptic(10);
   window._refocusTaskId=id;
@@ -1353,9 +1367,10 @@ function indentTask(id){
   const t=findTask(id);if(!t)return;
   _forceManualSort();
   const sibs=_normalizeSiblingOrder(t.parentId||null);
-  const idx=sibs.findIndex(s=>s.id===id);
-  if(idx<=0)return; // no preceding sibling to nest under
-  const newParent=sibs[idx-1];
+  const shown=_visibleSiblings(sibs,id);
+  const idx=shown.findIndex(s=>s.id===id);
+  if(idx<=0)return; // no preceding (visible) sibling to nest under
+  const newParent=shown[idx-1];
   t.parentId=newParent.id;
   newParent.collapsed=false; // reveal the freshly-nested child
   const kids=getTaskChildren(newParent.id).filter(s=>s.id!==id);
@@ -1534,6 +1549,9 @@ function toggleTask(id, ev){
   if(typeof window._updateActiveTaskTickSchedule==='function')window._updateActiveTaskTickSchedule();
 }
 
+// How long removeTask keeps a deleted task's attachment blobs around: the
+// 5 s Undo toast plus the 60 s Cmd+Z ring (ui.js _UNDO_TTL_MS), with slack.
+const ATTACH_PURGE_DELAY_MS = 65_000;
 async function removeTask(id, ev){
   _stopEvt(ev);
   const task=findTask(id);if(!task)return;
@@ -1557,9 +1575,18 @@ async function removeTask(id, ev){
   const _removedSnaps=[];
   tasks.forEach((t,idx)=>{ if(toRemove.includes(t.id)) _removedSnaps.push({idx, task:{...t}}); });
   for(const rid of toRemove) _taskIndexRemove(rid);
-  if(typeof deleteAttachmentsForTask === 'function'){
-    for(const rid of toRemove) deleteAttachmentsForTask(rid).catch(()=>{});
-  }
+  // Attachment blobs are purged only once the undo window (5 s toast plus
+  // the 60 s Cmd+Z ring) has closed. Deleting them here meant Undo brought
+  // the task back with dangling attachment ids — the photos / voice notes
+  // were already gone. A tab closed before the timer fires leaves orphan
+  // rows; sweepOrphanAttachments() at boot cleans those up.
+  let _attachPurgeTimer=null;
+  const _purgeAttachments=()=>{
+    _attachPurgeTimer=null;
+    if(typeof deleteAttachmentsForTask === 'function'){
+      for(const rid of toRemove) deleteAttachmentsForTask(rid).catch(()=>{});
+    }
+  };
   tasks=tasks.filter(t=>!toRemove.includes(t.id));
   if(typeof syncTaskDels==='object'&&syncTaskDels){
     const ts = Date.now();
@@ -1573,9 +1600,16 @@ async function removeTask(id, ev){
     const _label = descendants.length > 0
       ? `Deleted "${task.name}" + ${descendants.length} subtask${descendants.length===1?'':'s'}`
       : 'Task deleted';
+    _attachPurgeTimer=setTimeout(_purgeAttachments, (typeof ATTACH_PURGE_DELAY_MS==='number')?ATTACH_PURGE_DELAY_MS:65000);
     showActionToast(_label, 'Undo', () => {
+      if(_attachPurgeTimer){ clearTimeout(_attachPurgeTimer); _attachPurgeTimer=null; }
+      // Re-stamp lastModified on the way back: the tombstone written above
+      // may already have reached another tab / paired device, and a restored
+      // task carrying its OLD stamp loses to that tombstone on the next merge
+      // (deleted again on both sides). A fresh stamp beats it everywhere.
+      const _restoredAt = Date.now();
       _removedSnaps.slice().sort((a,b)=>a.idx-b.idx).forEach(({idx, task:snap}) => {
-        tasks.splice(Math.min(idx, tasks.length), 0, {...snap});
+        tasks.splice(Math.min(idx, tasks.length), 0, {...snap, lastModified: _restoredAt});
       });
       if(typeof rebuildTaskIdIndex==='function') rebuildTaskIdIndex();
       if(typeof syncTaskDels==='object'&&syncTaskDels){ for(const rid of toRemove) delete syncTaskDels[rid]; }
@@ -1589,6 +1623,8 @@ async function removeTask(id, ev){
       saveState('user');
       if(typeof announce === 'function') announce('Restored: ' + _name);
     }, 5000);
+  } else {
+    _purgeAttachments();
   }
   window._preserveTaskScroll = true;
   renderTaskList();renderBanner();saveState('user')
@@ -1998,16 +2034,38 @@ function completeHabitCycle(t){
   t.habitLastRecordedTotalSec=nowSec;
   t.status='open';
   t.completedAt=null;
-  t.dueDate=advanceRecurringDate(t.dueDate||todayISO(),t.recur);
+  // Advance to the next occurrence AFTER today. Advancing exactly one cycle
+  // from the previous due date left a habit logged N days late still overdue
+  // (a daily habit due 5 days ago became due 4 days ago) — and, with the
+  // reminder re-armed below, "Missed: <habit>" fired within 30 s of logging.
+  // The catch-up loop keeps the anchor (a weekly habit stays on its weekday,
+  // a monthly one on its day-of-month); afterNd rules already count from
+  // today so they exit on the first pass.
+  const _today=todayISO();
+  let _nextDue=advanceRecurringDate(t.dueDate||_today,t.recur);
+  let _cycles=1;
+  for(let _g=0;_g<1000&&_nextDue<=_today;_g++){
+    const _n=advanceRecurringDate(_nextDue,t.recur);
+    if(!(_n>_nextDue))break; // unknown recur type: no progress, don't spin
+    _nextDue=_n;_cycles++;
+  }
+  t.dueDate=_nextDue;
   // Re-arm the reminder for the new cycle — checkReminders skips any task
   // with reminderFired set, which would make recurring reminders one-shot.
   // An explicit remindAt must roll forward with the cycle too: checkReminders
   // prefers remindAt over dueDate, so a stale past timestamp would re-fire
   // as "Missed:" within 30s of logging the cycle and then block the
-  // due-date branch for every future cycle.
+  // due-date branch for every future cycle. It rolls the same number of
+  // cycles the due date just did, so it keeps its offset from the due date.
   if(typeof t.remindAt==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(t.remindAt)){
     const tPart=t.remindAt.slice(t.remindAt.indexOf('T'));
-    t.remindAt=advanceRecurringDate(t.remindAt.slice(0,10),t.recur)+tPart;
+    let _rDate=t.remindAt.slice(0,10);
+    for(let _i=0;_i<_cycles;_i++){
+      const _n=advanceRecurringDate(_rDate,t.recur);
+      if(!(_n>_rDate))break;
+      _rDate=_n;
+    }
+    t.remindAt=_rDate+tPart;
   }
   t.reminderFired=false;
   t.lastModified=Date.now();
@@ -2105,6 +2163,9 @@ function cycleStatus(id, ev){
   _stopEvt(ev);
   const t=findTask(id);if(!t)return;
   const _wasActiveTimerTask = (activeTaskId === id);
+  // Snapshot BEFORE mutating so Undo restores the previous status (see
+  // toggleTaskDoneQuick).
+  const _pre=JSON.parse(JSON.stringify(t));
   const idx=STATUS_ORDER.indexOf(t.status||'open');
   const next=STATUS_ORDER[(idx+1)%STATUS_ORDER.length];
   let cascade = [];
@@ -2124,8 +2185,6 @@ function cycleStatus(id, ev){
       t.completedAt=null;
     }
   }
-  // Snapshot AFTER mutations so totalSec reflects the timer-folded state.
-  const backup=JSON.parse(JSON.stringify(t));
   // Status cycle may move this card under a sticky group header — FLIP it.
   const list=gid('taskList');
   if(list&&typeof flipReorder==='function')flipReorder(list,()=>renderTaskList());
@@ -2142,7 +2201,7 @@ function cycleStatus(id, ev){
     }
     showActionToast('Status: '+STATUSES[t.status].label + cascadeNote, 'Undo', ()=>{
       const u=findTask(id);
-      if(u){Object.assign(u,backup);}
+      if(u){_restoreTaskSnapshot(u,_pre);}
       _restoreCascade(cascade);
       if(_wasActiveTimerTask && activeTaskId == null){
         activeTaskId = id;
@@ -2162,6 +2221,10 @@ function toggleTaskDoneQuick(id, ev){
   // the task fields AND the timer link (#6 in UX audit).
   const _wasActiveTimerTask = (activeTaskId === id);
   const _wasDone = t.status === 'done';
+  // Snapshot BEFORE mutating: Undo must roll back to the state the task was
+  // in before the click. (The snapshot used to be taken after the mutation,
+  // so Undo re-applied the post-click state and the task stayed done.)
+  const _pre = JSON.parse(JSON.stringify(t));
   let cascade = [];
   let _toastAction = 'reopen';
   // Bump lastModified on every status change. Sync resolves task conflicts by
@@ -2199,10 +2262,6 @@ function toggleTaskDoneQuick(id, ev){
       }
     },10);
   }
-  // Snapshot AFTER all mutations so the backup reflects totalSec that
-  // toggleTask just folded in. Undo rolls back to this — preserving the
-  // accrued seconds rather than losing them.
-  const backup = JSON.parse(JSON.stringify(t));
   window._preserveTaskScroll = true;
   renderTaskList();saveState('user');
   if(typeof showActionToast==='function'){
@@ -2228,7 +2287,7 @@ function toggleTaskDoneQuick(id, ev){
     }
     showActionToast(toastMsg + cascadeNote, 'Undo', ()=>{
       const u=findTask(id);
-      if(u){Object.assign(u,backup);}
+      if(u){_restoreTaskSnapshot(u,_pre);}
       _restoreCascade(cascade);
       // Reattach the active timer if the user was timing this task when they
       // accidentally marked it done. taskStartedAt resets to now so the
@@ -2241,6 +2300,22 @@ function toggleTaskDoneQuick(id, ev){
       renderTaskList();renderBanner();saveState('user');
     }, 4000);
   }
+}
+
+/**
+ * Roll a task back to a pre-mutation snapshot for the status Undo toasts.
+ * Timer seconds that toggleTask folded into totalSec while completing an
+ * active task are kept (the undo re-attaches the timer with a fresh
+ * taskStartedAt, so they would otherwise be lost), and lastModified is
+ * re-stamped so a paired device / other tab doesn't win the merge with the
+ * state we just undid.
+ */
+function _restoreTaskSnapshot(u, pre){
+  if(!u||!pre)return;
+  const keepSec=(typeof u.totalSec==='number')?u.totalSec:null;
+  Object.assign(u, pre);
+  if(keepSec!=null&&keepSec>(u.totalSec||0))u.totalSec=keepSec;
+  u.lastModified=Date.now();
 }
 
 // Haptic helper — vibrate on supporting devices (iOS Safari + all Android)
@@ -3071,6 +3146,10 @@ function matchesFilters(t, includeDone){
   if(smartView==='today'){if(t.dueDate!==today||_doneHidden)return false}
   else if(smartView==='week'){
     if(!t.dueDate||_doneHidden)return false;
+    // Lower bound: overdue tasks have their own view, and the svcWeek chip /
+    // today-banner count only tasks due today or later — without this the
+    // chip said "2" while the view listed 5.
+    if(t.dueDate<today)return false;
     const d=new Date();const w=new Date();w.setDate(d.getDate()+7);
     const weekEnd=w.getFullYear()+'-'+String(w.getMonth()+1).padStart(2,'0')+'-'+String(w.getDate()).padStart(2,'0');
     if(t.dueDate>weekEnd)return false;
@@ -3081,10 +3160,12 @@ function matchesFilters(t, includeDone){
   else if(smartView==='impact'){if(_doneHidden||!_paretoTopSet.has(t.id))return false}
   else if(smartView==='completed'){if(t.status!=='done')return false}
   else if(smartView==='habits'){if(!t.recur||t.archived||_doneHidden)return false}
-  // Inbox: untriaged — no list, no category, no due, no tags, not done.
+  // Inbox: untriaged — no category, no due, no tags, not done. (Every task
+  // carries a list: defaultTaskProps assigns the active one and
+  // ensureDefaultList re-homes orphans on each render, so "no list" was a
+  // criterion nothing could ever satisfy and the Inbox stayed empty forever.)
   else if(smartView==='inbox'){
     if(_doneHidden)return false;
-    if(t.listId)return false;
     if(t.category)return false;
     if(t.dueDate)return false;
     if(Array.isArray(t.tags)&&t.tags.length)return false;
@@ -3308,7 +3389,7 @@ function sortTasks(arr){
       if(aOver!==bOver)return aOver-bOver;
       const aToday=a.dueDate===today?0:1,bToday=b.dueDate===today?0:1;
       if(aToday!==bToday)return aToday-bToday;
-      const pd=(PRIORITY_ORDER[a.priority||'none']||9)-(PRIORITY_ORDER[b.priority||'none']||9);
+      const pd=(PRIORITY_ORDER[a.priority||'none']??9)-(PRIORITY_ORDER[b.priority||'none']??9);
       if(pd!==0)return pd;
       if(!a.dueDate&&b.dueDate)return 1;if(a.dueDate&&!b.dueDate)return -1;
       if(a.dueDate&&b.dueDate)return a.dueDate.localeCompare(b.dueDate);
@@ -3320,10 +3401,10 @@ function sortTasks(arr){
       // Stable tiebreaker: starred, then due, then priority
       if(!!b.starred-!!a.starred) return !!b.starred-!!a.starred;
       if(a.dueDate&&b.dueDate&&a.dueDate!==b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-      return (PRIORITY_ORDER[a.priority||'none']||9)-(PRIORITY_ORDER[b.priority||'none']||9);
+      return (PRIORITY_ORDER[a.priority||'none']??9)-(PRIORITY_ORDER[b.priority||'none']??9);
     }
     if(by==='name')return (a.name||'').localeCompare(b.name||'');
-    if(by==='priority')return (PRIORITY_ORDER[a.priority||'none']||9)-(PRIORITY_ORDER[b.priority||'none']||9);
+    if(by==='priority')return (PRIORITY_ORDER[a.priority||'none']??9)-(PRIORITY_ORDER[b.priority||'none']??9);
     if(by==='due'){
       if(!a.dueDate&&!b.dueDate)return 0;
       if(!a.dueDate)return 1;if(!b.dueDate)return -1;
@@ -3415,7 +3496,7 @@ function renderSmartViewCounts(){
     }
   }
   set('svcHabits',visibleNow.filter(t=>t.recur&&inList(t)).length);
-  set('svcInbox',visibleNow.filter(t=>!t.listId&&!t.category&&!t.dueDate&&!(Array.isArray(t.tags)&&t.tags.length)).length);
+  set('svcInbox',visibleNow.filter(t=>!t.category&&!t.dueDate&&!(Array.isArray(t.tags)&&t.tags.length)).length);
   set('svcWaiting',visibleNow.filter(t=>t.type==='waiting').length);
   const stuckCutoff=Date.now()-(14*86400000);
   set('svcStuck',visibleNow.filter(t=>typeof t.lastModified==='number'&&t.lastModified>0&&t.lastModified<stuckCutoff).length);
@@ -3837,8 +3918,21 @@ function getGroupColor(key){
 function renderGroupedTasks(visibleTasks){
   const list=gid('taskList');
   const visibleSet=new Set(visibleTasks.map(t=>t.id));
-  // Only show root-level in groups (subtasks appear under their parents)
-  const roots=visibleTasks.filter(t=>!t.parentId);
+  // Only show root-level in groups (subtasks appear under their parents) —
+  // but a matching subtask whose ancestors are all filtered out has no parent
+  // row to hang from, so it becomes a group root of its own. Without this a
+  // search that matched only subtasks rendered nothing at all (and the empty
+  // state stayed hidden because visibleTasks was non-empty).
+  const _hasVisibleAncestor=(t)=>{
+    let pid=t.parentId,guard=0;
+    while(pid!=null&&guard++<100){
+      if(visibleSet.has(pid))return true;
+      const p=findTask(pid);
+      pid=p?p.parentId:null;
+    }
+    return false;
+  };
+  const roots=visibleTasks.filter(t=>!t.parentId||!_hasVisibleAncestor(t));
   const groups={};
   roots.forEach(t=>{const k=getGroupKey(t);(groups[k]=groups[k]||[]).push(t)});
   // Order keys
@@ -3875,7 +3969,10 @@ function renderGroupedTasks(visibleTasks){
         if(!t.collapsed){
           function renderKids(pid,depth){
             getTaskChildren(pid).forEach(c=>{
-              if(!_subtaskAllowedUnderShownParent(c)) return;
+              // Same rule as tree mode: a child renders when it matched the
+              // filter itself, has a matching descendant, or is a plain
+              // subtask allowed under its shown parent.
+              if(!visibleSet.has(c.id)&&!hasVisibleDescendant(c.id,visibleSet)&&!_subtaskAllowedUnderShownParent(c)) return;
               renderTaskItem(c,depth);
               if(!c.collapsed) renderKids(c.id, depth+1);
             });
@@ -3925,7 +4022,7 @@ function renderChecklist(taskId){
   const list=document.getElementById('clItems');
   items.forEach(item=>{
     const d=document.createElement('div');d.className='cl-item'+(item.done?' cl-done':'');
-    d.innerHTML=`<button class="cl-check${item.done?' on':''}" data-action="toggleChecklistItem" data-args='[${taskId},${item.id}]' aria-label="${item.done?'Mark item not done':'Mark item done'}" aria-pressed="${item.done?'true':'false'}" title="${item.done?'Mark not done':'Mark done'}">${item.done?'✓':''}</button><span class="cl-text">${esc(item.text)}</span><button class="cl-rm" data-action="removeChecklistItem" data-args='[${taskId},${item.id}]' aria-label="Remove checklist item" title="Remove">×</button>`;
+    d.innerHTML=`<button class="cl-check${item.done?' on':''}" data-action="toggleChecklistItem" data-args="${escAttr(JSON.stringify([taskId,item.id]))}" aria-label="${item.done?'Mark item not done':'Mark item done'}" aria-pressed="${item.done?'true':'false'}" title="${item.done?'Mark not done':'Mark done'}">${item.done?'✓':''}</button><span class="cl-text">${esc(item.text)}</span><button class="cl-rm" data-action="removeChecklistItem" data-args="${escAttr(JSON.stringify([taskId,item.id]))}" aria-label="Remove checklist item" title="Remove">×</button>`;
     list.appendChild(d);
   });
 }
@@ -4121,7 +4218,7 @@ function renderTaskNotes(taskId){
   const list=document.getElementById('noteList');
   (t.notes||[]).forEach(n=>{
     const d=document.createElement('div');d.className='note-item';
-    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args='${escAttr(JSON.stringify([taskId,n.id]))}' aria-label="Remove note" title="Remove">×</button>`;
+    d.innerHTML=`<span class="note-time">${esc(n.createdAt||'')}</span><span class="note-text">${esc(n.text)}</span><button class="note-rm" data-action="removeTaskNote" data-args="${escAttr(JSON.stringify([taskId,n.id]))}" aria-label="Remove note" title="Remove">×</button>`;
     list.appendChild(d);
   });
 }
@@ -4159,7 +4256,7 @@ function renderBlockedBy(taskId){
   blockers.forEach(bid=>{
     const bt=findTask(bid);if(!bt)return;
     const c=document.createElement('span');c.className='blocker-chip'+(bt.status==='done'?' resolved':'');
-    c.innerHTML=`${bt.status==='done'?'✓ ':''}<span>${esc(bt.name.slice(0,30))}</span><button data-action="removeBlockedBy" data-args='[${taskId},${bid}]' aria-label="Remove blocker" title="Remove">×</button>`;
+    c.innerHTML=`${bt.status==='done'?'✓ ':''}<span>${esc(bt.name.slice(0,30))}</span><button data-action="removeBlockedBy" data-args="${escAttr(JSON.stringify([taskId,bid]))}" aria-label="Remove blocker" title="Remove">×</button>`;
     chips.appendChild(c);
   });
 }

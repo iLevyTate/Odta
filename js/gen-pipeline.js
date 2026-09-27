@@ -174,29 +174,40 @@ export function createGenEngine(cfg){
       // ---- WebGPU attempt (only if the device probe succeeds) ----
       const gpuOk = await _probeWebGPU();
       if(gpuOk){
+        let gpuPromise = null;
         try{
           if(signal && signal.aborted) throw new Error('LOAD_ABORTED');
           // Cap the GPU init phase: a hung shader compile / session build must
           // fall back to WASM rather than leave the UI on "Initializing model…"
           // forever (the native build emits no progress and can't be aborted).
-          pipe = await _watchLoad(_withTimeout(
-            pipeline('text-generation', slug, {
-              device: 'webgpu',
-              dtype: webgpuDtype,
-              progress_callback: onProgress,
-            }),
-            GEN_WEBGPU_INIT_TIMEOUT_MS,
-            'WEBGPU_INIT_TIMEOUT'
-          ), { signal }).promise;
+          // The cap starts when the LAST file finishes downloading — the whole
+          // pipeline() call also performs the weight download, so a flat 45 s
+          // timeout on it abandoned every first download slower than ~2.6 MB/s
+          // half-way and dropped a working WebGPU machine onto WASM.
+          let gpuWatch = null;
+          const gpuTouch = (ev) => {
+            if(gpuWatch) gpuWatch.touch(ev && ev.status === 'done' ? GEN_WEBGPU_INIT_TIMEOUT_MS : undefined);
+            onProgress(ev);
+          };
+          gpuPromise = pipeline('text-generation', slug, {
+            device: 'webgpu',
+            dtype: webgpuDtype,
+            progress_callback: gpuTouch,
+          });
+          gpuWatch = _watchLoad(gpuPromise, { signal, idleMs: GEN_LOAD_IDLE_TIMEOUT_MS });
+          pipe = await gpuWatch.promise;
           device = 'webgpu';
           return;
         }catch(e){
           if(signal && signal.aborted) throw new Error('LOAD_ABORTED');
-          if(String(e && e.message) === 'WEBGPU_INIT_TIMEOUT'){
-            console.warn('[gen] WebGPU init timed out — falling back to WASM (CPU)');
+          if(/^LOAD_STALLED/.test(String(e && e.message))){
+            console.warn('[gen] WebGPU load stalled — falling back to WASM (CPU)');
           } else {
             console.warn('[gen] WebGPU pipeline failed, falling back to WASM', e);
           }
+          // If the abandoned GPU build ever completes, release it instead of
+          // leaving a second session resident next to the WASM one.
+          if(gpuPromise){ gpuPromise.then(p => { try{ if(p && typeof p.dispose === 'function') p.dispose(); }catch(_){} }).catch(() => {}); }
           _resetModule();
           try{
             const fresh = await _import();

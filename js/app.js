@@ -414,6 +414,13 @@ setTimeout(() => {
   if(typeof embedStore !== 'undefined' && embedStore.cleanOrphans){
     embedStore.cleanOrphans().catch(() => {});
   }
+  // Attachment blobs of deleted tasks: removeTask keeps them for 65 s so
+  // Undo / Cmd+Z can bring the task back with its photos. Sweep whatever a
+  // closed tab left behind, but only after any such window elsewhere has
+  // certainly expired.
+  if(typeof sweepOrphanAttachments === 'function'){
+    setTimeout(() => { try{ sweepOrphanAttachments().catch(() => {}); }catch(_){} }, 90_000);
+  }
 }, 200);
 // Manifest shortcuts use ?tab= — override saved tab when opening from a shortcut/link (after list bootstrap)
 (function applyTabFromUrl(){
@@ -609,15 +616,26 @@ renderQuickTimers();
 // AudioContext and the keepalive up, or it will finish silently the moment
 // the tab is hidden; one that ran out while the app was closed owes the user
 // the completion flow — chime, notification, session-log entry.
+// Completions owed from while the app was closed are collected here and run
+// by _runRehydrateCompletions() once the alarm layer knows which alarms the
+// service worker already delivered (see the alarm boot block) — announcing them
+// straight away re-showed a "Timer done" / "Focus Complete" the SW had just
+// put on screen (its notification tap is often what launched this page).
+const _rehydrateCompletions = [];
 try{
   quickTimers.forEach(qt=>{
     if(!qt) return;
     if(qt._needsCompletion){
       qt._needsCompletion=false;
-      if(cfg.sound && typeof playChime==='function') playChime(qt.sound);
-      if(typeof notify==='function') notify('Timer done',qt.label,{tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}});
-      qt.flashUntil=Date.now()+2000;
-      if(typeof addLog==='function') addLog(qt.label,qt.totalSec,'quick');
+      _rehydrateCompletions.push(()=>{
+        if(cfg.sound && typeof playChime==='function') playChime(qt.sound);
+        const _opts={tag:'quick-'+qt.id,data:{action:'openTimer',url:'./?tab=focus'}};
+        if(typeof notifyAlarm==='function') notifyAlarm('qt:'+qt.id,'Timer done',qt.label,_opts);
+        else if(typeof notify==='function') notify('Timer done',qt.label,_opts);
+        qt.flashUntil=Date.now()+2000;
+        if(typeof addLog==='function') addLog(qt.label,qt.totalSec,'quick');
+        if(typeof renderQuickTimers==='function') renderQuickTimers();
+      });
     } else if(qt.running){
       if(typeof scheduleQtAudio==='function' && cfg.sound) scheduleQtAudio(qt);
       if(typeof startKeepalive==='function') startKeepalive();
@@ -661,14 +679,42 @@ if(window._timerStateRehydrated){
       // (pip update, log entry, optional auto-advance).
       running = false;
       remaining = 0;
-      try{ onPhaseComplete(); }catch(e){ console.warn('[app] onPhaseComplete on rehydrate', e); }
       window._timerNeedsCompletion = false;
+      // Credit the linked task. taskStartedAt is never persisted (saveState
+      // folds the running burst into the saved totalSec instead), so without
+      // this the phase logged as an anonymous "Focus" and the task got no
+      // session. Only the seconds after the last save are still owed.
+      const _phaseEndMs = (Number.isFinite(startedAt) ? startedAt : 0) + (pausedRemaining || 0) * 1000;
+      const _creditedTo = Math.max(Number.isFinite(startedAt) ? startedAt : 0, window._pomoSavedAt || 0);
+      const _owedSec = Math.max(0, Math.floor((_phaseEndMs - _creditedTo) / 1000));
+      const _segmentSec = Math.max(0, pausedRemaining || 0);
+      _rehydrateCompletions.push(()=>{
+        if(cfg.linkTask && phase==='work' && activeTaskId && !taskStartedAt) taskStartedAt = Date.now() - _owedSec * 1000;
+        try{ onPhaseComplete({ entrySec: _segmentSec }); }catch(e){ console.warn('[app] onPhaseComplete on rehydrate', e); }
+      });
     } else {
       // Paused mid-phase — just refresh the display so the ring and digits
       // show the correct remaining time instead of a stale full phase.
       if(typeof renderTimerChrome === 'function') renderTimerChrome();
     }
   }catch(e){ console.warn('[app] timer rehydrate reconcile', e); }
+}
+// Run the collected catch-up completions exactly once. The alarm boot block
+// (further down) calls this after OdtaAlarms.refreshFired() has loaded the
+// SW-delivered alarm ids (so notifyAlarm can dedupe); the timeout is the
+// fallback for a page the service worker never comes to control
+// (registration failed, unsupported).
+window._runRehydrateCompletions = (function(){
+  let done = false;
+  return function(){
+    if(done) return;
+    done = true;
+    _rehydrateCompletions.splice(0).forEach(fn => { try{ fn(); }catch(e){ console.warn('[app] rehydrate completion', e); } });
+  };
+})();
+if(_rehydrateCompletions.length){
+  if(!window.OdtaAlarms || !('serviceWorker' in navigator)) window._runRehydrateCompletions();
+  else setTimeout(window._runRehydrateCompletions, 2500);
 }
 // Apply saved active tab without scroll
 document.querySelectorAll('[data-tab]').forEach(el=>{el.hidden = !(el.dataset.tab===activeTab)});
@@ -1012,7 +1058,12 @@ if(typeof requestIdleCallback === 'function'){
   if(typeof window === 'undefined' || !window.OdtaAlarms) return;
   const start = () => {
     window.OdtaAlarms.refreshFired()
-      .then(() => window.OdtaAlarms.rebuild({ force: true }))
+      .then(() => {
+        // Now that we know which alarms the SW already showed, announce the
+        // completions owed from while the app was closed (deduped).
+        if(typeof window._runRehydrateCompletions === 'function') window._runRehydrateCompletions();
+        return window.OdtaAlarms.rebuild({ force: true });
+      })
       .catch(err => console.warn('[app] alarm boot', err));
     window.OdtaAlarms.registerPeriodicSync();
   };

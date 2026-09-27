@@ -6,7 +6,9 @@
 
 ---
 
-## v79 wave (2026-09-26)
+## v80 wave (2026-09-27)
+
+Ran in parallel with the v79 bug sweep (#133) and merged after it; rows that v79 also fixed say so.
 
 Request: fix open problems, security first, plus odd UI/UX glitches. There were no open issues and one open PR (a Dependabot bump), so findings came from three read-only audits of the render paths, the data-ingress boundaries and the SW / CSP / LLM pipeline, plus a headless-Chromium walk of every tab at 390×844 and 1440×900 with seeded hostile task text. Each finding below was reproduced or read to its sink before it was fixed. Baseline 789/789.
 
@@ -15,25 +17,25 @@ Request: fix open problems, security first, plus odd UI/UX glitches. There were 
 | AB-1 | P2P sync had no authentication: a device was its PeerJS id alone, claimable on the broker while offline, and the initiator answered any non-hello message with `_packState()`. A squatter got the vault on the next auto-reconnect and could push +5 min tombstones (`js/sync.js`) | High | ✅ Fixed. Accept mints a 256-bit pairing key; later connections prove it both ways (HMAC-SHA256 over the other side's nonce); nothing but hello/auth/pair before proof; reconnects never take a new key. `tests/sync-handshake.test.mjs` |
 | AB-1b | Pairing devices that both had tasks lost one task of every same-id pair: per-device counters + id-keyed LWW (measured over PeerJS: both first tasks were id 1, both devices kept only one) (`js/sync.js`) | High (data loss) | ✅ Fixed on the initial exchange: same id + different `created` → older keeps the id, newer moves to max(counters, ids)+rank on both sides; references follow. Same-minute collisions and list/goal/log counters remain |
 | AB-2 | Delegated dispatcher called any `window[data-action]` with element-supplied JSON args, so any HTML injection could call `syncConnect('<attacker>')` (`js/event-delegation.js`) | High | ✅ Fixed. Closure-local allowlist of the 201 emitted names; `tests/event-delegation-allowlist.test.mjs` |
-| AB-3 | `esc()` never escaped quotes (textContent → innerHTML), so every `attr="${esc(x)}"` could be broken out of: life-area label input, ICS title attribute (`js/utils.js`) | Medium | ✅ Fixed. Five-character replace |
+| AB-3 | `esc()` never escaped quotes (textContent → innerHTML), so every `attr="${esc(x)}"` could be broken out of: life-area label input, ICS title attribute (`js/utils.js`) | Medium | ✅ Fixed (also fixed independently in v79; v79's version kept) |
 | AB-4 | Raw sinks: note ids into `data-args` (`tasks.js`), list names into the list-move summary (`ai.js`), restored archive fields into the history panel and CSV (`app.js`); lists had no repair step anywhere | Medium | ✅ Fixed. Numeric note ids + escaped args, `_repairList` on load/import/cross-tab/sync, `_repairArchives` on restore and read |
 | AB-4b | Ask auto-apply: calendar-made tasks entered the prompt untainted (Context line, `GET_TASK_DETAIL`, replayed prior turn); mass non-destructive batches applied without a prompt; the model could write the list-move card's `_preview` (`js/ask.js`, `js/tool-schema.js`, `js/ai.js`) | Medium | ✅ Fixed. `_ext`-keyed taint on all three paths; ≥5 writes or a quiet rewrite → confirm; bare `{name,args}` ops, card names from live ids. `tests/ask-calendar-task-taint`, `ask-batch-confirm`, `ask-preview-spoof` |
 | AB-5 | `cfg.cycle:1e9` from a peer or backup froze the tab on every boot (`renderPips` loop; load saves before render) (`js/storage.js`) | Medium | ✅ Fixed. Stepper ranges enforced in `normalizeCfg` |
 | AB-6 | ICS expansion unbounded: `INTERVAL=0`, 100k-token BYDAY (5.8 s, 1.4 GB), 10k daily rules → 3.6M occurrences (`js/calfeeds.js`) | Medium | ✅ Fixed. 5000 events / 20000 occurrences, BYDAY dedupe, Set EXDATE; capped feeds show a warning, not the stale-sync alert |
-| AB-7 | Feed fetch timeout and 2 MB cap ended at the headers; the body read had neither and couldn't be cancelled (`js/calfeeds.js`) | Medium | ✅ Fixed. Streamed body read under the same timer, controller and cap |
-| AB-8 | CSP had no `media-src`: every blob: media load was refused, so the v78 keepalive WAV and voice-note playback never played (`index.html`) | Medium | ✅ Fixed. `media-src 'self' blob:`; `tests/csp-sw-hardening.test.mjs` |
+| AB-7 | Feed fetch timeout and 2 MB cap ended at the headers; the body read had neither and couldn't be cancelled (`js/calfeeds.js`) | Medium | ✅ Fixed. v79 extended the timeout over the body; the byte cap is now enforced while streaming |
+| AB-8 | CSP had no `media-src`: every blob: media load was refused, so the v78 keepalive WAV and voice-note playback never played (`index.html`) | Medium | ✅ Fixed (also fixed in v79); `form-action 'none'` added; `tests/csp-sw-hardening.test.mjs` |
 | AB-9 | Ctrl+K dropped typed keys: `.cmdk-panel` transitioned `all`, inherited `visibility` included, so the input was unfocusable on the first frame (`css/main.css`) | Medium (UX) | ✅ Fixed. Named transition properties + `Modal` focus retry; `tests/cmdk-open-focus.test.mjs` |
 | AB-10 | Id counters accepted unsafe values (`taskIdCtr:1e21` → id collisions after reload) (`sync.js`, `storage.js`) | Low | ✅ Fixed. `_reseedIdCtr` |
 | AB-11 | ICS export left a bare `\r` unescaped, allowing event injection (`js/storage.js`) | Low | ✅ Fixed |
 | AB-12 | Private-address block missed `localhost.`, `*.localhost`, IPv4-mapped / NAT64 IPv6, 100.64/10 (`js/calfeeds.js`) | Low | ✅ Fixed |
 | AB-13 | "Open with Odta" `.ics` skipped the size / `BEGIN:VCALENDAR` checks, failed silently and never synced (`js/app.js`) | Low | ✅ Fixed |
-| AB-14 | SW cached navigations per full URL (share text persisted after the URL scrub); `notificationclick` opened any URL; unused `SHOW_NOTIFICATION` handler (`sw.js`) | Low | ✅ Fixed |
+| AB-14 | SW cached navigations per full URL (share text persisted after the URL scrub), and v79's cache-first shell wrote any in-scope navigation (e.g. the update banner's CHANGELOG.md tab) into the shell key; `notificationclick` opened any URL; unused `SHOW_NOTIFICATION` handler (`sw.js`) | Low | ✅ Fixed. Only shell paths read/write the shell key |
 | AB-15 | Gen worker `import()`ed any URL its load message named; workers get no meta CSP (`js/gen-worker.js`) | Low | ✅ Fixed. Same-origin only |
 | AB-16 | `DEPLOY.md` recommended jsDelivr/unpkg in `script-src` and said headers override the meta CSP | Low | ✅ Fixed |
 | AB-17 | Sticky top bar was transparent under its own border; stats row read through the header on phones (`css/main.css`) | Low (UI) | ✅ Fixed |
 | AB-18 | Sub-24 px touch targets: Pomodoro pips 10×10, filter × 14×14, dock grip/min 18×14 / 20×16, detail checkbox 22×22, "Got it", "View Habits" | Low (UI) | ✅ Fixed. Coarse-pointer sizes / invisible hit areas |
 | AB-19 | Calendar cells showed a cryptic "1·0" counter; "Description" flush under Type chips; reminder quick-picks wrapping in a half-width grid cell | Low (UI) | ✅ Fixed |
-| AB-20 | 11 dev-dependency advisories (10 high); the `extract-zip` chain needed puppeteer 25 / Node ≥ 22.12 | Low (dev only) | ✅ Fixed. puppeteer 25.12, CI Node 22, `npm audit` 0 |
+| AB-20 | 11 dev-dependency advisories (10 high); puppeteer 25 needs Node ≥ 22.12 but CI ran Node 20 | Low (dev only) | ✅ Fixed. puppeteer 25.12 (also in v79), CI Node 22, `npm audit` 0 |
 
 **Not fixed (deliberate)**: PeerJS reassembles chunked messages before the app sees them, and its `_handleChunk` has no size limit, so a connected peer can still push memory until the tab dies. That needs a patch to the vendored library. A first pairing is trust-on-first-use: if a user types a code while that device is offline and someone else holds its id, the squatter can accept. A short verification code compared on both screens would close it.
 

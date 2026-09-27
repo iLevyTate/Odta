@@ -1,8 +1,8 @@
 # Changelog
 
-## v79 (2026-09-26)
+## v80 (2026-09-27)
 
-A security and glitch sweep with no open issues to start from, so the list came from reading every ingress path and driving the built app in headless Chromium at 390×844 and 1440×900. The worst finding was P2P sync: a paired device was identified by its PeerJS id alone, and anyone could register that id while the device was offline. The one that users could actually feel was Ctrl+K swallowing whatever you typed after it.
+A security and glitch sweep, run in parallel with v79's module-by-module bug hunt and merged after it. There were no open issues to start from, so the list came from reading every ingress path and driving the built app in headless Chromium at 390×844 and 1440×900. Where both sweeps found the same bug, v79's fix stands and this entry says so. The worst finding was P2P sync: a paired device was identified by its PeerJS id alone, and anyone could register that id while the device was offline. The one that users could actually feel was Ctrl+K swallowing whatever you typed after it.
 
 ### P2P sync now authenticates the other device
 
@@ -14,13 +14,13 @@ Also: an inbound stranger opening a channel no longer resets the reconnect backo
 
 ### Pairing two devices no longer drops tasks
 
-Found while pairing two real browser contexts through PeerJS for the section above. Each device numbers its tasks from its own counter, and the merge keys on id, so two devices that both had tasks lost one of every pair on the first sync: "Task from A" and "Task from B" were both id 1, and both devices ended with only B's. The same thing happened to any two tasks created on paired devices while they were apart. A task's `created` is set once and never rewritten, so the same id with a different `created` is two tasks. On the initial state exchange both devices now resolve each such pair identically without talking about it: the older task keeps the id, the newer moves to one past every id and counter either side holds, and its subtasks, blockers and links follow it. Verified over PeerJS: both devices end with both tasks under the same ids. Tasks created in the same minute on both devices still collide undetected, because `created` has minute precision. Lists, goals and log entries use per-device counters too and aren't covered.
+Found while pairing two real browser contexts through PeerJS for the section above, and the collision v79 listed as left for the maintainers. Each device numbers its tasks from its own counter, and the merge keys on id, so two devices that both had tasks lost one of every pair on the first sync: "Task from A" and "Task from B" were both id 1, and both devices ended with only B's. The same thing happened to any two tasks created on paired devices while they were apart. A task's `created` is set once and never rewritten, so the same id with a different `created` is two tasks. On the initial state exchange both devices now resolve each such pair identically without talking about it: the older task keeps the id, the newer moves to one past every id and counter either side holds, and its subtasks, blockers and links follow it. Verified over PeerJS: both devices end with both tasks under the same ids. Tasks created in the same minute on both devices still collide undetected, because `created` has minute precision. Lists, goals and log entries use per-device counters too and aren't covered.
 
 ### Injection
 
-`esc()` escaped `& < >` only. It round-tripped through `textContent` → `innerHTML`, and serialising a text node never escapes quotes, although its own comment said it did. Every `attr="${esc(x)}"` could be broken out of: a life-area label from a backup, an ICS `SUMMARY` in the month grid's `title`. It's a plain five-character replace now.
+Both sweeps found that `esc()` never escaped quotes, so every `attr="${esc(x)}"` could be broken out of; v79's fix stands, as does its escaping of note-id `data-args`.
 
-That mattered more than it sounds because the click dispatcher called any `window[data-action]` with JSON args from the element, and in classic scripts every top-level function is on `window`. One injected element was "call `syncConnect('<attacker>')` on click". The dispatcher now has an allowlist of the 201 names the app's own markup emits, kept in a closure so a `name=` element can't clobber it; `tests/event-delegation-allowlist.test.mjs` pins it to the sources both ways. The concrete sinks are fixed too: note ids went into `data-args` raw (`_repairTask` passed `notes[].id` through untouched), list names went into the list-move summary's `innerHTML` (lists had no repair step on load, import, cross-tab merge or sync; `_repairList` now does all four), and a restored backup's `archive` string was written verbatim and its numbers rendered into the history panel and its date into a quoted CSV cell (`_repairArchives` now runs on restore and on every read).
+That hole mattered more than it sounds because the click dispatcher called any `window[data-action]` with JSON args from the element, and in classic scripts every top-level function is on `window`. One injected element was "call `syncConnect('<attacker>')` on click". The dispatcher now has an allowlist of the 201 names the app's own markup emits, kept in a closure so a `name=` element can't clobber it; `tests/event-delegation-allowlist.test.mjs` pins it to the sources both ways. The other sinks are fixed too: list names went into the list-move summary's `innerHTML` (lists had no repair step on load, import, cross-tab merge or sync; `_repairList` now does all four), and a restored backup's `archive` string was written verbatim and its numbers rendered into the history panel and its date into a quoted CSV cell (`_repairArchives` now runs on restore and on every read).
 
 ### Things a peer or a backup could break
 
@@ -34,13 +34,13 @@ One auto turn could also apply up to 50 `UPDATE_TASK` / `MARK_DONE` / `DUPLICATE
 
 ### Calendar feeds
 
-A feed could exhaust the tab. `INTERVAL=0` spun each rule's full 2000 iterations on one date; `BYDAY=MO,MO,…` ×100k took 5.8 s and 1.4 GB; 10k copies of a daily rule (580 KB) expanded to 3.6M occurrences, 563 MB, and a save that threw "Invalid string length". This re-ran on every boot and every 30 minutes. Feeds are now capped at 5000 events and 20000 occurrences (10k daily rules: 0.34 s), BYDAY is deduped, EXDATE lookups use a Set, and a capped feed says so on its status line instead of tripping the "sync failed; events may be stale" alert. The 25 s timeout and the 2 MB cap used to stop at the response headers: `res.text()` had no timeout, couldn't be cancelled by removing the feed, and was measured only after it had buffered everything. Both now cover the body, read as a stream. The private-address block missed `localhost.`, `*.localhost`, IPv4-mapped and NAT64 IPv6 forms and 100.64/10. "Open with Odta" on an `.ics` file skipped the paste form's size and `BEGIN:VCALENDAR` checks; it now gets them, says why a file was refused, and syncs the new feed straight away instead of showing 0 events until a manual refresh.
+A feed could exhaust the tab. `INTERVAL=0` spun each rule's full 2000 iterations on one date; `BYDAY=MO,MO,…` ×100k took 5.8 s and 1.4 GB; 10k copies of a daily rule (580 KB) expanded to 3.6M occurrences, 563 MB, and a save that threw "Invalid string length". This re-ran on every boot and every 30 minutes. Feeds are now capped at 5000 events and 20000 occurrences (10k daily rules: 0.34 s), BYDAY is deduped, EXDATE lookups use a Set, and a capped feed says so on its status line instead of tripping the "sync failed; events may be stale" alert. The 25 s timeout and the 2 MB cap used to stop at the response headers: `res.text()` had no timeout, couldn't be cancelled by removing the feed, and was measured only after it had buffered everything. v79 made the timeout cover the body; the cap now does too, counted as the body streams in. The private-address block now strips a trailing dot before every check and covers IPv4-mapped and NAT64 IPv6 forms and 100.64/10, on top of v79's extra loopback names. "Open with Odta" on an `.ics` file skipped the paste form's size and `BEGIN:VCALENDAR` checks; it now gets them, says why a file was refused, and syncs the new feed straight away instead of showing 0 events until a manual refresh.
 
 ### Content-Security-Policy and service worker
 
-The CSP had no `media-src`, so media fell back to `default-src 'self'` and every `blob:` URL was refused. That is the v78 media-element keepalive, the piece meant to keep a backgrounded timer alive, and it is voice-note playback: neither has ever played. Chromium: "Refused to load media from 'blob:…' because it violates … default-src 'self'". Added `media-src 'self' blob:` and `form-action 'none'`.
+v79 added the missing `media-src`, which had silently blocked the background-audio keepalive and voice-note playback; this adds `form-action 'none'`.
 
-The service worker cached each navigation under its full URL, so share-target text that `app.js` scrubs from the address bar stayed in Cache Storage until the next version bump; shell navigations now share one key and other in-scope pages aren't cached as the shell. `notificationclick` only opens same-origin targets, and the unused `SHOW_NOTIFICATION` message path, which rendered whatever it was sent, is gone. The generation worker refuses to `import()` a runtime URL off this origin, since a worker's CSP comes from response headers and static hosting sends none. `DEPLOY.md` told operators to allow jsDelivr and unpkg in `script-src` (they serve any npm package) and said headers override the meta tag (both are enforced); both corrected.
+v79 made shell navigations cache-first, which fixes the new-HTML-with-old-JS mismatch after a deploy, but it wrote whatever any in-scope navigation returned into the shell's cache key. The update banner opens `CHANGELOG.md` in a same-origin tab, and measured on v79 the next launch then rendered the changelog's raw markdown with no working controls; the background refresh repaired it one launch later when online, and not at all while offline. Only the shell paths read or write that key now; other in-scope pages go to the network. Each launch URL (`?tab=…&task=…`, share-target text) used to keep its own cached copy of the shell; they share one key, so shared text doesn't outlive the URL scrub in `app.js`. `notificationclick` only opens same-origin targets, and the unused `SHOW_NOTIFICATION` message path, which rendered whatever it was sent, is gone. The generation worker refuses to `import()` a runtime URL off this origin, since a worker's CSP comes from response headers and static hosting sends none. `DEPLOY.md` told operators to allow jsDelivr and unpkg in `script-src` (they serve any npm package) and said headers override the meta tag (both are enforced); both corrected.
 
 ### UI
 
@@ -51,9 +51,58 @@ The service worker cached each navigation under its full URL, so share-target te
 
 ### Dependencies
 
-`npm audit` reported 11 advisories (10 high) in the dev tooling. `npm audit fix` cleared seven; the rest came through puppeteer's `extract-zip`, fixed only in puppeteer 25, which needs Node ≥ 22.12. Puppeteer is on 25.12 and CI on Node 22 (Node 20 went end-of-life on 2026-04-30); `npm run smoke` and `verify:handlers` pass on it. `npm audit`: 0. None of this ships to users, since the app has no build step.
+v79 already moved puppeteer to 25.12 and took the Dependabot bumps, so `npm audit` is at 0. Puppeteer 25 needs Node ≥ 22.12 while CI still ran Node 20 (end-of-life since 2026-04-30); CI is on Node 22 now. None of this ships to users, since the app has no build step.
 
-Service worker cache rotated to `odtaulai-v79`.
+Service worker cache rotated to `odtaulai-v80`.
+## v79 — 2026-09-26
+
+A bug-hunt release: a static/dynamic sweep of every module (dead references, undo paths, sync merges, the calendar parser, the service worker) with each fix pinned by a regression test. Nothing here changes the data model or the UI layout.
+
+### Tasks and undo
+
+- **Undo actually undid the wrong thing.** `toggleTaskDoneQuick` and `cycleStatus` took their snapshot *after* mutating the task, so the Undo toast (and Cmd+Z) re-applied the post-click state and a completed task stayed completed. The snapshot is now taken first; seconds the timer folded in while completing an active task are kept, and the restored task is re-stamped so a paired device can't win the merge with the undone state.
+- **Urgent sorted last.** `PRIORITY_ORDER[p]||9` turned urgent's rank 0 into 9 in the priority, smart and impact sorts.
+- **Inbox was always empty.** It required "no list", but every task carries one (`defaultTaskProps` + `ensureDefaultList`). Inbox is now "no category, no due date, no tags, not done" — in the view and in the chip count.
+- **"This week" listed overdue tasks its chip didn't count.** Same lower bound on both sides.
+- **Habits logged late stayed overdue.** `completeHabitCycle` advanced exactly one cycle from the stale due date, and with the reminder re-armed the phone showed "Missed:" within 30 s of logging. It now catches up to the first occurrence after today (keeping the weekday / day-of-month anchor); the explicit reminder rolls the same number of cycles.
+- **Grouped view lost search hits on subtasks** whose parent didn't match; they are now promoted to a group root, and children follow the tree-mode visibility rule.
+- **Move up / Indent skipped invisible rows**: they operated on done / snoozed / filtered-out siblings, so "move up" did nothing visible on the first press and "indent" nested under a hidden done task.
+- **Delete purged photos and voice notes immediately**, before the Undo window. The blob purge now waits out the toast plus the Cmd+Z ring (65 s), Undo cancels it, and a boot-time sweep removes rows a closed tab left behind. Undoing a delete or an add also re-stamps / tombstones the task so another tab or peer doesn't re-delete or resurrect it.
+- **Task modal close replaced the task object** with its snapshot: the `_taskById` index then pointed at a ghost, so later edits through the row (checkbox, star, timer) never persisted; notes / checklist items added in the modal, a re-armed reminder and timer seconds were discarded. The revert is gone — everything is already committed as it happens.
+- Six command-palette entries ("Daily brief", "Weekly review", "AI: Rephrase", "AI: Suggest tags", "Save as template", "Apply template") called handlers that were never written and threw on selection. Removed; a test now resolves every palette target against the real globals.
+
+### Storage, cross-tab and P2P sync
+
+- **Two open tabs ping-ponged saves forever.** Every cross-tab apply queued an autosave, which minted a fresh epoch the other tab saw as newer — a full save + `renderAll()` every ~450 ms in both tabs (and the task list jumping to the top). A tab now writes back only when its LWW merge kept something the other tab lacks.
+- **Quota failure could roll data back.** After a localStorage `QuotaExceededError` the next boot loaded the stale LS mirror and the first save overwrote the newer IndexedDB copy. Boot now also reads IDB and applies it when its epoch is newer and nothing has been edited yet.
+- **Encrypted backups could never be restored** — the decrypted payload nests the state under `state`, which `importData` doesn't understand. It is re-wrapped on the way in.
+- Manual order (`order`) is part of the change comparator, so a reorder syncs. `lastModified` stamps are monotonic per task, so a device with a fast clock can't keep reverting the other one's edits.
+- P2P merge with a newer remote epoch **replaced** this device's time log wholesale; it now unions logs like the cross-tab path (and the id-less session history no longer doubles on every merge). Checklist / note id allocators are reseeded after imports and merges. A replaced PeerJS connection's synchronous `close` no longer tears down its successor.
+
+### AI ops
+
+- `DELETE_TASK` wrote no sync tombstones (an Ask delete came straight back on the next merge), left the timer running on the deleted task and kept its embeddings. Undo of an AI batch replays snapshots in reverse (two ops on one task restored the intermediate state). `SPLIT_TASK` siblings shared the source's attachment ids and nested arrays. `MOVE_TASK` could parent a task to itself (infinite render recursion). `SET_RECUR` could never clear a recurrence. `UPDATE_TASK` with an empty name blanked the title. A flattened op's `type` argument was dropped as metadata. JSON repair rewrote True/False/None *inside* task text. Previewed classifications are no longer re-predicted at apply time, and a hidden heuristic category no longer suppresses the embedding vote. `_askLooksDegenerate` tripped on the third op of a pretty-printed batch.
+- Cancelling a model download now terminates the worker (the pipeline kept downloading and built the session anyway; a second model in the same WASM heap then ran out of memory), and the 20 s watchdog can't kill a retry started inside its window. The WebGPU 45 s cap applies to the init phase after the last file downloads, not to the download itself.
+
+### Calendar feeds
+
+- `VALARM` sub-components overwrote the event's title / description ("Alarm notification" / "This is an event reminder" from Google feeds). Colons inside quoted `TZID` parameters split the property in the wrong place. `RECURRENCE-ID` overrides now exclude the slot they replace from the master (no ghost original next to the moved instance).
+- MONTHLY / YEARLY stepped with `setMonth()`, so a rule from the 31st drifted to the 3rd forever and a Feb 29 yearly became Mar 1; months without the day are now skipped, with `BYMONTHDAY` (incl. `-1`) and ordinal `BYDAY` (`2MO`, `-1FR`) support. `WEEKLY;INTERVAL>1` cycles honour `WKST` (Monday by default).
+- A cross-tab feed rewrite during a sync could persist `null` and wipe every feed; the fetch timeout now covers the body read; return-to-tab refreshes are rate-limited; the what-next conflict hint sees in-progress meetings; more loopback host spellings are blocked.
+
+### Escaping
+
+- `esc()` never escaped quotes (a text node serialises only `& < >`), yet several sites used it inside `title="…"` / `value="…"` — a calendar SUMMARY or synced list name with a `"` could inject `data-action` attributes the delegation dispatcher runs. It now escapes `"` and `'` too. Checklist / note / blocker `data-args` are attribute-escaped and imported note ids are coerced to numbers.
+
+### Timer, alarms, audio, service worker
+
+- CSP had no `media-src`, so every `blob:` media source was refused: the media-element keepalive never played and voice notes couldn't be played back.
+- Skip, reset, reset-phase and remove-quick-timer never rewrote the shared alarm store, so the service worker fired "Focus Complete" for a phase that no longer existed. The store also honours the Notifications toggle / permission now.
+- Boot-time catch-up completions (a phase that ended while the app was closed) waited for nothing, so they re-announced the notification the SW had just shown; they now run after the fired-alarm set loads, and a phase that ended while closed credits its linked task.
+- Chimes scheduled at boot before any gesture sat on a frozen AudioContext clock and played late (or never); scheduling waits for a live clock and the first gesture reschedules.
+- Navigation is served from the precached shell (it was network-first while scripts were cache-first, so the first load after a deploy ran the new HTML against the old JS). A failed fetch of a core shell asset now fails the install instead of activating a broken cache. Notification taps prefer an app-shell client over another same-origin tab.
+
+Not changed, for the maintainers to decide: EXDATE'd occurrences still don't consume `COUNT` (pinned by two tests; RFC 5545 and Google count them), and entity ids remain per-device counters (two devices creating a task between syncs can collide on an id).
 
 ## v78 — 2026-09-17
 

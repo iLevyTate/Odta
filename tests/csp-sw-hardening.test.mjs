@@ -49,7 +49,11 @@ test('SW: shell navigations share one cache key; off-shell navigations are not c
   const nav = sw.slice(sw.indexOf('if(isNavigation){'), sw.indexOf('e.respondWith(\n    caches.match(e.request)'));
   assert.match(nav, /c\.put\('\.\/index\.html', clone\)/);
   assert.doesNotMatch(nav, /c\.put\(e\.request/);
-  assert.match(nav, /isShell && res/);
+  // A non-shell page (README.md, the update banner's CHANGELOG.md tab) is
+  // fetched and returned before any code that writes the shell key.
+  const bail = nav.indexOf('if(!isShell) return fetch(e.request)');
+  assert.ok(bail > 0, 'non-shell navigations bail out first');
+  assert.ok(bail < nav.indexOf("c.put('./index.html'"), 'before the shell cache write');
 });
 
 test('SW: notificationclick only opens same-origin targets', () => {

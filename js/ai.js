@@ -449,8 +449,30 @@ function executeIntelOp(op){
       // descendant the moment the user relies on the Undo toast.
       snap = { type: 'deleted', before: { ...t },
                subtree: tasks.filter(x => desc.includes(x.id)).map(x => ({ ...x })) };
-      for(const rid of [t.id, ...desc]){ if(typeof _taskIndexRemove === 'function') _taskIndexRemove(rid); }
+      const removedIds = [t.id, ...desc];
+      // Same bookkeeping as the UI delete (tasks.js removeTask): stop a
+      // timer that was running on one of these tasks, write sync tombstones
+      // so a paired device / other tab doesn't resurrect them, and drop
+      // their embeddings. Without the tombstones an Ask "delete" came back
+      // on the next merge.
+      if(typeof activeTaskId !== 'undefined' && activeTaskId != null && removedIds.includes(activeTaskId)){
+        if(typeof taskStartedAt !== 'undefined' && taskStartedAt){
+          const at = findTask(activeTaskId);
+          if(at) at.totalSec = (at.totalSec || 0) + Math.floor((Date.now() - taskStartedAt) / 1000);
+          taskStartedAt = null;
+        }
+        activeTaskId = null;
+        if(typeof window !== 'undefined' && typeof window._updateActiveTaskTickSchedule === 'function') window._updateActiveTaskTickSchedule();
+      }
+      for(const rid of removedIds){ if(typeof _taskIndexRemove === 'function') _taskIndexRemove(rid); }
       tasks = tasks.filter(x => x.id !== t.id && !desc.includes(x.id));
+      if(typeof syncTaskDels === 'object' && syncTaskDels){
+        const ts = Date.now();
+        for(const rid of removedIds) syncTaskDels[rid] = ts;
+      }
+      if(typeof embedStore !== 'undefined' && embedStore && embedStore.purge){
+        try{ embedStore.purge(removedIds).catch(() => {}); }catch(_){}
+      }
       if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
       break;
     }
@@ -482,6 +504,10 @@ function executeIntelOp(op){
     }
     case 'MOVE_TASK':{
       const t = findTask(a.id); if(!t) return null;
+      // A task can't be its own parent (renderNode recursed forever on
+      // parentId === id and the Tasks tab died until reload) or a
+      // descendant's child.
+      if(a.newParentId != null && a.newParentId === t.id) return null;
       if(a.newParentId && getTaskDescendantIds(t.id).includes(a.newParentId)) return null;
       snap = { type: 'updated', id: t.id, before: { ...t } };
       t.parentId = a.newParentId || null;
@@ -607,14 +633,28 @@ function executeIntelOp(op){
       }
       for(let i = 1; i < names.length; i++){
         const idNew = ++taskIdCtr;
-        const sib = Object.assign({}, src, {
-          id: idNew, name: names[i], totalSec: 0, sessions: 0, created: timeNowFull(),
+        // Deep-clone, then reset history the way DUPLICATE_TASK does: a
+        // shallow copy shared the source's attachments (blob records are
+        // keyed by task id, so removing a photo from one sibling deleted it
+        // under the source), its checklist groups, session log, reminder
+        // and related-task arrays.
+        let base;
+        try{ base = JSON.parse(JSON.stringify(src)); }catch(_){ base = { ...src }; }
+        const sib = Object.assign(base, {
+          id: idNew, name: names[i], totalSec: 0, sessions: 0, sessionEntries: [], created: timeNowFull(),
           completedAt: null, status: 'open', parentId: parId, archived: false, blockedBy: [],
           notes: [],
           checklist: [],
+          checklists: [],
+          attachments: [],
+          relatedTo: [],
+          activity: [],
+          remindAt: null,
+          reminderFired: false,
           tags: Array.isArray(src.tags) ? [...src.tags] : [],
           valuesAlignment: Array.isArray(src.valuesAlignment) ? [...src.valuesAlignment] : [],
           completions: [],
+          habitLastRecordedTotalSec: null,
           lastModified: Date.now(),
           _ext: extBase,
         });
@@ -993,7 +1033,7 @@ function _pendingListMoveSummary(ops){
   const parts = [...destCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([lid, n]) => `${n} → ${esc(_listNameById(lid))}`); // returned as HTML: list names come from peers and imports
+    .map(([lid, n]) => `${n} → ${esc(_listNameById(lid))}`);
   const extra = destCounts.size > 5 ? ` · +${destCounts.size - 5} more lists` : '';
   return `<div class="pending-list-summary" role="note">${moves.length} list moves — ${parts.join(' · ')}${extra}</div>`;
 }
@@ -1136,15 +1176,34 @@ function aiUndo(){
     if(s.type === 'batch' && Array.isArray(s.snaps)) flat.push(...s.snaps);
     else flat.push(s);
   });
-  flat.forEach(s => {
-    if(!s || s.type === 'noop' || s.type === 'noop_read') return;
-    if(s.type === 'created') tasks = tasks.filter(t => t.id !== s.id);
-    else if(s.type === 'updated'){ const t = findTask(s.id); if(t) Object.assign(t, s.before); }
-    else if(s.type === 'deleted'){
-      tasks.push(s.before);
-      if(Array.isArray(s.subtree)) tasks.push(...s.subtree);
+  // Replay in REVERSE apply order. Two ops on the same task in one batch
+  // (UPDATE then MARK_DONE, or UPDATE then DELETE) snapshot the intermediate
+  // state second; restoring forward left that intermediate state in place
+  // instead of the true original.
+  const restoredAt = Date.now();
+  for(let i = flat.length - 1; i >= 0; i--){
+    const s = flat[i];
+    if(!s || s.type === 'noop' || s.type === 'noop_read') continue;
+    if(s.type === 'created'){
+      // The creation may already have been broadcast; tombstone it so a
+      // paired device / other tab doesn't send it back.
+      tasks = tasks.filter(t => t.id !== s.id);
+      if(typeof syncTaskDels === 'object' && syncTaskDels) syncTaskDels[s.id] = restoredAt;
     }
-  });
+    else if(s.type === 'updated'){ const t = findTask(s.id); if(t){ Object.assign(t, s.before); t.lastModified = restoredAt; } }
+    else if(s.type === 'deleted'){
+      // Mirror removeTask's undo: clear the tombstones DELETE_TASK wrote and
+      // re-stamp lastModified so the restored copies beat any tombstone that
+      // already reached a peer.
+      const back = [s.before, ...(Array.isArray(s.subtree) ? s.subtree : [])].filter(Boolean);
+      for(const x of back){
+        x.lastModified = restoredAt;
+        if(typeof syncTaskDels === 'object' && syncTaskDels) delete syncTaskDels[x.id];
+        tasks.push(x);
+      }
+    }
+    if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
+  }
   if(typeof rebuildTaskIdIndex === 'function') rebuildTaskIdIndex();
   saveState('user');
   if(typeof renderTaskList === 'function') renderTaskList();
@@ -1451,7 +1510,10 @@ function _selectedOpsFromPendingDom(pendingOps){
 
 async function _enrichClassifyOps(list){
   const classifyIdx = [];
-  list.forEach((op, i) => { if(op && op.name === 'CLASSIFY_TASK') classifyIdx.push(i); });
+  // Ops that already carry a prediction were previewed with it — re-running
+  // the classifier at apply time could write a category the user never saw
+  // (centroids or neighbours may have changed while the preview was open).
+  list.forEach((op, i) => { if(op && op.name === 'CLASSIFY_TASK' && !op._previewCategory) classifyIdx.push(i); });
   await Promise.all(classifyIdx.map(async (i) => {
     const op = list[i];
     if(typeof predictClassifyCategory !== 'function') return;
