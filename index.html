@@ -45,7 +45,13 @@
      media-src blob: is required: the background-audio keepalive
      (audio.js) and voice-note playback both play blob: URLs, and without
      it media fell back to default-src 'self' and every one was refused.
-     form-action 'none': the app has no <form> that submits anywhere. -->
+     form-action 'none': the app has no <form> that submits anywhere.
+     frame-ancestors is NOT here because a <meta> CSP ignores it and GitHub
+     Pages sends no headers; framing (clickjacking of the sync Accept
+     banner, delete confirmations, import → replace) is refused in script
+     instead: js/pwa.js aborts the parse inside any frame and js/app.js
+     refuses to boot there. Send `frame-ancestors 'none'` as a header too
+     when the host can. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; form-action 'none'; connect-src 'self' http: https: wss://*.peerjs.com wss://0.peerjs.com wss://1.peerjs.com wss://peerjs.com;">
 
 <!-- Icons -->
@@ -74,7 +80,7 @@
 
 <!-- Styles -->
 <!-- Fonts: uses system fonts (see --font-sans in main.css). No external font requests. -->
-<link rel="stylesheet" href="css/main.css?v=v80">
+<link rel="stylesheet" href="css/main.css?v=v81">
 
 </head>
 <body>

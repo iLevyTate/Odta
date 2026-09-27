@@ -74,7 +74,7 @@ test('cascade up: auto-completed parent gets a fresh lastModified', () => {
 function makeMergeRun() {
   const src = readFileSync(join(root, 'js', 'sync.js'), 'utf8');
   const iClamp = src.indexOf('function _clampSyncTs(');
-  const iGen = src.indexOf('function _genCode(', iClamp);
+  const iGen = src.indexOf('function _randChars(', iClamp);
   const iMergeDel = src.indexOf('function _mergeDelMapPair(');
   const iConn = src.indexOf('// ── Connection handling');
   assert.ok(iClamp >= 0 && iGen > iClamp, 'slice _clampSyncTs');

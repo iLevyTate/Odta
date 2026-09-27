@@ -78,7 +78,7 @@
     'submitAddCalFeed', 'submitAppPrompt', 'swLap', 'swReset', 'swToggle', 'switchPhase',
     'switchTaskDetailTab', 'syncAllCalFeedsAndRerender', 'syncConnectFromInput',
     'syncConnectInputKey', 'syncCopyMyCode', 'syncDisconnect', 'syncEnable',
-    'syncOnCodeInputFromInput', 'syncReconnectNow', 'syncRegenerateCode',
+    'syncNewPairingCode', 'syncOnCodeInputFromInput', 'syncReconnectNow', 'syncRegenerateCode',
     'taskBlockerAddFromSelect', 'taskInputLiveUpdate', 'taskNoteAddFromButton',
     'toggleBoardExpand', 'toggleBreakdownAccordion', 'toggleChecklistItem', 'toggleCollapse',
     'toggleGenEnabled', 'toggleOpt', 'toggleQuickAddPanel', 'toggleReorderMode',

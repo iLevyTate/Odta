@@ -3,8 +3,8 @@
  *  sw.js and pwa.js both read `swCache` from here. */
 (function(scope){
   scope.ODTAULAI_RELEASE = {
-    version: 'v80',
+    version: 'v81',
     buildDate: '2026-09-27',
-    swCache: 'odtaulai-v80',
+    swCache: 'odtaulai-v81',
   };
 })(typeof self !== 'undefined' ? self : this);

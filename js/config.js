@@ -56,6 +56,7 @@ window.ODTAULAI_CONFIG = Object.freeze({
     SYNC_PEER:          'stupind_peer_id_v2',
     SYNC_PEER_V1:       'stupind_peer_id',
     SYNC_ROOM:          'stupind_sync_room',
+    SYNC_PAIRS:         'stupind_sync_pairs',
     ARCHIVED_PREFIX:    'stupind_archived_',
     CAL_FEEDS:          'stupind_calfeeds',
     CAL_FEEDS_PROXY:    'stupind_calfeeds_proxy',
