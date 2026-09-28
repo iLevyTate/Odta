@@ -1,6 +1,6 @@
 // Odta Service Worker — CACHE_NAME pulled from the single source in
 // js/version.js so version bumps don't require editing three files.
-let CACHE_NAME = 'odtaulai-v80';
+let CACHE_NAME = 'odtaulai-v81';
 try {
   importScripts('./js/version.js');
   // The alarm store is the one piece of state the page and this worker share.
@@ -28,7 +28,7 @@ const ASSETS = [
   './index.html',
   './manifest.json',
   './favicon.ico',
-  './css/main.css?v=v80',
+  './css/main.css?v=v81',
   './js/version.js',
   './js/event-delegation.js',
   './js/alarm-store.js',

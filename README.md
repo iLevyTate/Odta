@@ -194,8 +194,8 @@ A derived impact score ranks every active task from signals you already have —
 
 ### Optional P2P sync (off by default)
 
-- **WebRTC via PeerJS** — paste a short code on your second device, they're linked.
-- **Zero server-side state** — the PeerJS signalling server brokers the handshake; your task payload goes direct device-to-device.
+- **WebRTC via PeerJS** — generate a pairing code on one device (`STU-XXX-XXX-YYYY-YYYY-YYYY`), enter it on the other, tap Accept on the first. The code carries a secret both devices must prove they hold before anything is shared; a device you've paired before reconnects with just its 6-character id.
+- **Zero server-side state** — the PeerJS signalling server brokers the handshake; your task payload goes direct device-to-device, end-to-end encrypted (AES-256-GCM under a key derived from the pairing secret).
 - **Beta** — you can turn it off, wipe, and forget it ever existed.
 
 ### Data portability
@@ -419,7 +419,7 @@ Yes — grant **persistent storage** in Settings to prevent this. Or export JSON
 <details>
 <summary><b>Can I sync across devices without the cloud?</b></summary>
 
-Yes — the beta P2P sync uses WebRTC. Your data goes peer-to-peer; only the handshake touches a signalling server.
+Yes — the beta P2P sync uses WebRTC. Your data goes peer-to-peer, encrypted end to end with a key derived from the one-time pairing code; only the handshake touches a signalling server, which never sees task data.
 
 </details>
 

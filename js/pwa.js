@@ -1,4 +1,52 @@
 (function(){
+  // ── Clickjacking guard ──────────────────────────────────────────────────
+  // The CSP is delivered in a <meta> tag (GitHub Pages sets no response
+  // headers) and frame-ancestors is ignored in meta CSPs, so nothing stops
+  // another site from framing odta.app and overlaying invisible controls on
+  // the sync Accept banner, a delete confirmation or Import → Replace. This
+  // is the first script that runs only in a window (js/version.js is shared
+  // with the service worker), so if we are inside any frame we abort the
+  // parse before the app scripts run and swap the document for a short
+  // notice with a link that opens the app in the top-level window.
+  // Comparing window.top to window.self is allowed cross-origin, and a
+  // sandboxed frame cannot undo a change to its own document. js/app.js
+  // refuses to boot in a frame too, in case the parser carries on.
+  if (window.top !== window.self) {
+    try { window.stop(); } catch (_) {}
+    try {
+      const head = document.createElement('head');
+      const meta = document.createElement('meta');
+      meta.setAttribute('charset', 'utf-8');
+      head.appendChild(meta);
+      const title = document.createElement('title');
+      title.textContent = 'Odta';
+      head.appendChild(title);
+      const body = document.createElement('body');
+      body.style.cssText = 'margin:0;padding:24px;font:16px/1.5 system-ui,sans-serif;background:#0a1019;color:#e9eff7;';
+      const p = document.createElement('p');
+      p.textContent = 'Odta can’t be shown inside another website.';
+      body.appendChild(p);
+      const a = document.createElement('a');
+      a.href = location.href;
+      a.target = '_top';
+      a.rel = 'noopener';
+      a.textContent = 'Open Odta directly';
+      a.style.cssText = 'color:#1a8cff;font-weight:600;';
+      body.appendChild(a);
+      document.documentElement.replaceChildren(head, body);
+      // Should the parser carry on regardless (window.stop() is honoured by
+      // every current engine, but belt and braces), anything it appends next
+      // to the notice is removed at the next microtask, so a body it opens is
+      // detached before its scripts could become connected.
+      new MutationObserver(() => {
+        for (const n of Array.from(document.documentElement.childNodes)) {
+          if (n !== head && n !== body) n.remove();
+        }
+      }).observe(document.documentElement, { childList: true });
+    } catch (_) { /* document not writable — nothing to render anyway */ }
+    return;
+  }
+
   const isFileProtocol = location.protocol === 'file:';
 
   // Inline fallback icon (for file:// where external PNGs can't be fetched by manifest)
@@ -133,7 +181,7 @@
       // Fallback: inline SW via blob URL (cache name tracks js/version.js via ODTAULAI_RELEASE)
       const swBase = (typeof window !== 'undefined' && window.ODTAULAI_RELEASE && window.ODTAULAI_RELEASE.swCache)
         ? window.ODTAULAI_RELEASE.swCache
-        : 'odtaulai-v80';
+        : 'odtaulai-v81';
       const swCode = `
         const CACHE = '${swBase}-inline';
         self.addEventListener('install', e => self.skipWaiting());

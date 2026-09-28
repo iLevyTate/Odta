@@ -2,7 +2,33 @@
 // Devices sync directly — no server sees your data.
 // PeerJS cloud only handles the initial handshake (SDP/ICE exchange).
 // After that, data flows device-to-device via RTCDataChannel.
-
+//
+// ── Pairing + wire protocol (v3) ─────────────────────────────────────────
+// PeerJS ids are first-come on a public broker with no proof of ownership, so
+// an id on its own is never trusted. Pairing carries a secret:
+//
+//   pairing code = STU-XXX-XXX-YYYY-YYYY-YYYY. ROOM (XXX-XXX) is this device's
+//                  6-character id suffix, unchanged from earlier versions;
+//                  SECRET (YYYY-YYYY-YYYY) is 12 random characters shown only
+//                  on the device that generated it, replaced by "Generate new
+//                  pairing code" and consumed by the first pairing made with it.
+//   pair key     = PBKDF2-SHA256(SECRET, "odta-sync-v3:" + ROOM, 100 000
+//                  iterations, 256 bits), stored per peer id in
+//                  `stupind_sync_pairs`. v79/v80 pairs already hold a shared
+//                  256-bit key there and keep working.
+//   handshake    = both ends send {type:"hello", v:3, nonce}; the dialer sends
+//                  {type:"auth", v:3, mac} = HMAC-SHA256(key, role | ids | both
+//                  nonces); the acceptor verifies it against the key stored
+//                  for that id, or the key of its active pairing code, and only
+//                  then answers with its own auth (after its user taps Accept
+//                  when the pairing code was used). Anything else, a bad proof
+//                  or another version gets {type:"refuse", v:3, reason} and the
+//                  connection is closed.
+//   transport    = after readiness every message is {type:"enc", v:3, iv, ct}:
+//                  AES-256-GCM under HKDF(pair key), with both nonces and the
+//                  sender's role as additional data, decrypted before the
+//                  merge runs. Plaintext after readiness closes the link.
+//
 // Peer ID format: `stupind-<6 alphanumeric>` (never includes "stu" as suffix).
 // Displayed as `STU-XXX-XXX` where the first "STU" is branding only.
 // A legacy v1 bug produced 9-char ids starting with "stu" (the brand accidentally
@@ -11,12 +37,16 @@ const SYNC_PEER_KEY    = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORA
 const SYNC_PEER_KEY_V1 = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.SYNC_PEER_V1) || 'stupind_peer_id';    // legacy — detected & migrated
 const SYNC_ROOM_KEY    = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.SYNC_ROOM) || 'stupind_sync_room';
 const SYNC_VERSION     = 1;
-const CODE_ALPHABET    = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Crockford-ish, no 0/O/1/I
+const CODE_ALPHABET    = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Crockford-ish, no 0/O/1/I (32 symbols)
+const SYNC_ROOM_LEN    = 6;    // characters of a device id suffix (the "XXX-XXX" part of a code)
+const SYNC_SECRET_LEN  = 12;   // characters of the pairing secret (60 bits)
+const SYNC_CODE_LEN    = SYNC_ROOM_LEN + SYNC_SECRET_LEN;
 
 let _peer        = null;   // PeerJS instance
 let _conn        = null;   // active DataConnection
 let _syncEnabled = false;
-let _syncStatus  = 'off';  // 'off' | 'waiting' | 'connected' | 'error'
+let _syncStatus  = 'off';  // 'off' | 'loading' | 'unpaired' | 'waiting' | 'connecting' | 'connected' | 'error'
+let _syncStatusMsg = '';   // detail behind an 'error' status, kept across panel re-renders
 let _myRoomCode  = null;
 let _lastSyncAt  = null;
 let _connectTimeoutId = null;
@@ -47,17 +77,20 @@ function _clampSyncTs(ts){
   return n;
 }
 
-function _genCode() {
-  let code = '';
-  for (let i = 0; i < 6; i++) code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
-  return code.slice(0,3) + '-' + code.slice(3); // e.g. "AB3-C9D"
+// Crypto-strong random string over CODE_ALPHABET. Its 32 symbols divide 256
+// evenly, so `byte % 32` is exactly uniform. Used for the device id suffix
+// and for the 12-character pairing secret.
+function _randChars(len) {
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  let s = '';
+  for (let i = 0; i < len; i++) s += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+  return s;
 }
 
 function _genPeerId() {
   // 6 random chars → stable peer id. No "stu" baked in.
-  let s = '';
-  for (let i = 0; i < 6; i++) s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
-  return 'stupind-' + s.toLowerCase();
+  return 'stupind-' + _randChars(SYNC_ROOM_LEN).toLowerCase();
 }
 
 // Map a PeerJS / DataConnection error to a human-readable string.
@@ -75,7 +108,7 @@ function _friendlySyncError(err){
     'disconnected':         'Disconnected from the broker — reconnecting.',
     'browser-incompatible': 'Browser does not support WebRTC data channels.',
     'webrtc':               'WebRTC negotiation failed — try Reconnect or pairing again.',
-    'unavailable-id':       'Code conflict — generating a new one.',
+    'unavailable-id':       "This device's sync id is busy on the broker — retrying.",
   };
   if(t && map[t]) return map[t];
   if(err && err.message) return String(err.message);
@@ -84,6 +117,9 @@ function _friendlySyncError(err){
 
 function _setSyncStatus(status, msg) {
   _syncStatus = status;
+  // Remember the detail so re-rendering the panel (closing and reopening
+  // Settings) doesn't degrade a specific error to a generic "Error".
+  _syncStatusMsg = msg || (status === 'error' ? _syncStatusMsg : '');
   const el = document.getElementById('syncStatus');
   const dot = document.getElementById('syncDot');
   if (!el) return;
@@ -93,32 +129,64 @@ function _setSyncStatus(status, msg) {
   const labels = {
     off:       '○ Sync off',
     loading:   '◌ Loading…',
+    unpaired:  '○ Not paired — enter the pairing code from your other device',
     waiting:   '◌ Waiting for peer…',
-    connecting:'◌ Connecting…',
+    connecting:'◌ ' + (msg || 'Connecting…'),
     connected: peerCode ? ('● Synced with ' + peerCode) : '● Synced',
-    error:     '✕ ' + (msg || 'Error'),
+    error:     '✕ ' + (_syncStatusMsg || 'Error'),
   };
   el.textContent = labels[status] || status;
   if (dot) dot.className = 'sync-dot sync-dot--' + status;
+  // The Reconnect button depends on the status; keep it in step.
+  if (typeof _renderSyncActionRow === 'function') _renderSyncActionRow();
 }
 
-/** Normalize input: uppercase, strip whitespace/dashes, tolerate legacy "STU…" prefix. */
+/**
+ * Normalize input: uppercase, strip everything but letters and digits, and
+ * drop the "STU" display prefix when what remains is a whole code. A room
+ * that itself starts with S-T-U is left alone because only the lengths 9
+ * (prefix + room) and 21 (prefix + full code) trigger the strip.
+ */
 function _normalizeCode(code) {
-  const raw = String(code || '').toUpperCase().replace(/[\s-]/g, '');
-  // Legacy codes were displayed as "STU-STU-XXXXXX" — 9 letters after stripping
-  // dashes and starting with "STU". Drop the accidental STU prefix so we land on
-  // the actual 6-char id suffix.
-  if (raw.length === 9 && raw.startsWith('STU')) return raw.slice(3);
+  const raw = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (raw.startsWith('STU') && (raw.length === SYNC_ROOM_LEN + 3 || raw.length === SYNC_CODE_LEN + 3)) return raw.slice(3);
   return raw;
 }
 
+/**
+ * Parse a typed code. A full code (room + secret) pairs; a bare room only
+ * addresses a device we already hold a key for (see syncConnect).
+ * → {ok:true, room, secret|null} | {ok:false, message}
+ */
+function _parseCode(code) {
+  const n = _normalizeCode(code);
+  if (!n) return { ok: false, message: 'Enter a pairing code' };
+  if (![...n].every(c => CODE_ALPHABET.includes(c))) {
+    return { ok: false, message: 'Invalid code — pairing codes only use the digits 2-9 and letters other than I and O.' };
+  }
+  if (n.length === SYNC_ROOM_LEN) return { ok: true, room: n, secret: null };
+  if (n.length === SYNC_CODE_LEN) return { ok: true, room: n.slice(0, SYNC_ROOM_LEN), secret: n.slice(SYNC_ROOM_LEN) };
+  return { ok: false, message: 'Invalid code — expected ' + SYNC_CODE_LEN + ' letters/digits after STU- (' + n.length + ' entered)' };
+}
+
+/** True for a well-formed code of either length (a bare room still needs a stored key to connect). */
+function _isValidCode(code) {
+  return _parseCode(code).ok;
+}
+
+/** Peer id for a code or room ("STU-AB3-C9D", "AB3C9D…" → "stupind-ab3c9d"). */
 function _codeToId(code) {
-  const suffix = _normalizeCode(code);
-  return 'stupind-' + suffix.toLowerCase();
+  const room = _normalizeCode(code).slice(0, SYNC_ROOM_LEN);
+  return 'stupind-' + room.toLowerCase();
+}
+
+/** Upper-case id suffix ("stupind-ab3c9d" → "AB3C9D"): the ROOM half of a code and the KDF salt. */
+function _idToRoom(id) {
+  return String(id || '').replace(/^stupind-/, '').toUpperCase();
 }
 
 function _idToCode(id) {
-  const raw = String(id || '').replace(/^stupind-/, '').toUpperCase();
+  const raw = _idToRoom(id);
   // Display legacy 9-char ids (starting with STU) as clean "STU-XXX-XXX" too —
   // the embedded STU is branding noise, not an address component.
   const suffix = (raw.length === 9 && raw.startsWith('STU')) ? raw.slice(3) : raw;
@@ -128,10 +196,10 @@ function _idToCode(id) {
   return 'STU-' + suffix.slice(0, half) + '-' + suffix.slice(half);
 }
 
-/** True if the code parses to a 6-char suffix (the only shape we should ever accept). */
-function _isValidCode(code) {
-  const n = _normalizeCode(code);
-  return n.length === 6 && [...n].every(c => CODE_ALPHABET.includes(c));
+/** Full pairing code for display: STU-XXX-XXX-YYYY-YYYY-YYYY. */
+function _formatPairingCode(room, secret) {
+  const s = String(secret || '');
+  return _idToCode('stupind-' + String(room || '').toLowerCase()) + '-' + s.slice(0, 4) + '-' + s.slice(4, 8) + '-' + s.slice(8, 12);
 }
 
 /** True if the stored peer id is a legacy "stupind-stuXXXXXX" entry (double-STU bug). */
@@ -286,8 +354,7 @@ function _scheduleSyncAck(){
   _syncAckTimer = setTimeout(() => {
     _syncAckTimer = null;
     if(!_conn || !_conn.open || !_conn._syncReady || _syncApplying) return;
-    try { _conn.send({ type: 'patch', payload: _packState() }); }
-    catch(e){ console.warn('[Sync] ack patch', e); }
+    _syncSend(_conn, { type: 'patch', payload: _packState() });
   }, 300);
 }
 
@@ -517,22 +584,31 @@ function _mergeState(remote, opts){
 // ── Pairing authentication ──────────────────────────────────────────────────
 // A device used to be identified by its PeerJS id alone (`stupind-` + 6
 // characters), which anyone can register on the public broker while it is
-// free, and an initiator counted ANY non-hello message as "the other user
-// accepted" and answered with its whole state. So while a paired device was
-// offline, whoever registered its id got the full vault on this device's next
-// auto-reconnect by sending {type:'ping'}, and could push tombstones back.
+// free. v79 gave each pair a shared 256-bit key, proved both ways with an
+// HMAC over the other side's fresh nonce before anything else is processed —
+// but the FIRST pairing, and every manual re-pair, still took that key from
+// whoever answered the dialled id (the acceptor minted it on Accept and sent
+// it over the channel). While a device was offline a squatter on its id got a
+// key handed to it, or got the other user to tap Accept on a banner.
 //
-// The first pairing is still consent: the acceptor's user clicks Accept. That
-// click now mints a 256-bit key, sent once over the DTLS-encrypted channel and
-// stored by both devices against the other's peer id. Every later connection
-// proves possession in both directions with an HMAC over the other side's
-// fresh nonce. Until that proof (or the Accept click) nothing but
-// hello / auth / pair is processed: no state, no patch, no ping. A reconnect
-// that already holds a key never takes a new one, so a squatter can't re-pair
-// itself in; only a code the user types again may replace a key.
+// v3 turns that around: the key is derived from a secret that only ever
+// appears on the screen of the device that generated it (the pairing code),
+// so whoever answers the dialled id must already know the secret to prove
+// anything. The acceptor never mints keys and never signs for a stranger: it
+// verifies the dialer's proof first — against the key stored for that id, or
+// the key of its active pairing code — and only then proves itself. A dialer
+// that fails its proof, a stranger with no active pairing code, an older
+// protocol version or plaintext before readiness are refused and closed,
+// never shown a banner. Once ready, every message travels AES-GCM encrypted
+// under a key derived from the pair key, so a broker or a peer on the wire
+// sees no task data and can't replay a message into another session.
 const SYNC_PAIRS_KEY = (window.ODTAULAI_CONFIG && window.ODTAULAI_CONFIG.STORAGE_KEYS && window.ODTAULAI_CONFIG.STORAGE_KEYS.SYNC_PAIRS) || 'stupind_sync_pairs';
-const SYNC_PROTO = 2;
-const SYNC_AUTH_WAIT_MS = 5000;   // acceptor: how long a device that says it's paired gets to prove it
+const SYNC_PROTO = 3;
+const SYNC_KDF_ITERATIONS = 100000;
+const SYNC_KDF_SALT_PREFIX = 'odta-sync-v3:';
+const SYNC_HANDSHAKE_TIMEOUT_MS = 45000;   // room for the other user to tap Accept
+// Base64 of AES-GCM over a max-size JSON payload, plus envelope headroom.
+const _SYNC_MAX_WIRE_CHARS = Math.ceil(_SYNC_MAX_MSG_CHARS * 1.4) + 1024;
 const _HEX64 = /^[0-9a-f]{64}$/;
 const _HEX32 = /^[0-9a-f]{32}$/;
 
@@ -551,21 +627,49 @@ function _setPairKey(peerId, hex){
   if (hex) o[String(peerId)] = hex; else delete o[String(peerId)];
   try { localStorage.setItem(SYNC_PAIRS_KEY, JSON.stringify(o)); } catch(e) { /* LS fire-and-forget */ }
 }
+function _pairCount(){
+  return Object.keys(_loadSyncPairs()).filter(id => _HEX64.test(String(_loadSyncPairs()[id] || ''))).length;
+}
 function _randHex(nBytes){
   const a = new Uint8Array(nBytes);
   crypto.getRandomValues(a);
-  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+  return _bytesToHex(a);
+}
+function _bytesToHex(bytes){
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+function _hexToBytes(hex){
+  return new Uint8Array(String(hex).match(/../g).map(h => parseInt(h, 16)));
+}
+function _b64(bytes){
+  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = '';
+  for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+  return btoa(s);
+}
+// Strict base64 → bytes, or null. Wire fields are attacker-controlled, so a
+// malformed string must never throw its way out of the handler.
+function _unb64(str){
+  if (typeof str !== 'string' || str.length > _SYNC_MAX_WIRE_CHARS || str.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(str)) return null;
+  try {
+    const bin = atob(str);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  } catch(e) { return null; }
 }
 function _syncCryptoOk(){
   return typeof crypto !== 'undefined' && !!crypto.subtle && typeof crypto.getRandomValues === 'function';
 }
 /** HMAC-SHA256(key, parts.join('|')) as hex. `role` in parts stops reflection. */
 async function _syncMac(keyHex, parts){
-  const raw = new Uint8Array(keyHex.match(/../g).map(h => parseInt(h, 16)));
-  const key = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const key = await crypto.subtle.importKey('raw', _hexToBytes(keyHex), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(parts.join('|')));
-  return Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, '0')).join('');
+  return _bytesToHex(new Uint8Array(sig));
 }
+// Constant-time comparison: the accumulated XOR never short-circuits on the
+// first differing character, so timing reveals nothing about how much of a
+// proof matched. (A length mismatch is not secret.)
 function _macEq(a, b){
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
   let d = 0;
@@ -574,21 +678,158 @@ function _macEq(a, b){
 }
 function _myPeerId(){ return (_peer && _peer.id) || ''; }
 
+// ── Key derivation + message crypto ─────────────────────────────────────────
+
+/** Pair key from a pairing code: PBKDF2-SHA256(secret, "odta-sync-v3:" + ROOM, 100 000 iterations, 256 bits), hex. */
+async function _derivePairKey(secret, room){
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(String(secret).toUpperCase()), { name: 'PBKDF2' }, false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode(SYNC_KDF_SALT_PREFIX + String(room).toUpperCase()), iterations: SYNC_KDF_ITERATIONS, hash: 'SHA-256' },
+    base, 256);
+  return _bytesToHex(new Uint8Array(bits));
+}
+
+/** AES-256-GCM transport key from a pair key: HKDF-SHA256(ikm = the 32 key bytes, salt "odta-sync-v3", info "enc"). */
+async function _deriveEncKey(keyHex){
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', _hexToBytes(keyHex), { name: 'HKDF' }, false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: enc.encode('odta-sync-v3'), info: enc.encode('enc') },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+// Additional data binds every ciphertext to this session (both nonces) and
+// to its direction, so a message can't be replayed into a later session or
+// reflected back at its sender.
+function _syncAad(initiatorNonce, acceptorNonce, senderRole){
+  return new TextEncoder().encode('odta-sync-v3|' + initiatorNonce + '|' + acceptorNonce + '|' + senderRole);
+}
+
+async function _syncEncrypt(aesKey, aad, inner){
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const pt = new TextEncoder().encode(JSON.stringify(inner));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aesKey, pt);
+  return { type: 'enc', v: SYNC_PROTO, iv: _b64(iv), ct: _b64(new Uint8Array(ct)) };
+}
+
+// Throws on anything that isn't a well-formed, authentic ciphertext.
+async function _syncDecrypt(aesKey, aad, msg){
+  if (!msg || msg.type !== 'enc' || msg.v !== SYNC_PROTO) throw new Error('not an enc message');
+  if (typeof msg.ct !== 'string' || msg.ct.length > _SYNC_MAX_WIRE_CHARS) throw new Error('oversized ciphertext');
+  const iv = _unb64(msg.iv);
+  const ct = _unb64(msg.ct);
+  if (!iv || iv.length !== 12 || !ct || ct.length < 16) throw new Error('bad iv/ct');
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad }, aesKey, ct);
+  const inner = JSON.parse(new TextDecoder().decode(pt));
+  if (!inner || typeof inner !== 'object' || Array.isArray(inner) || typeof inner.type !== 'string') throw new Error('bad inner message');
+  return inner;
+}
+
+// ── Pairing offer (this device's current pairing code) ──────────────────────
+// {secret, createdAt}, held in memory only: the secret is never written to
+// localStorage (or anywhere else), so a fresh code is minted each time sync
+// starts on an unpaired device. It is shown in the panel while the offer
+// exists, so anyone who copies the code can pair until a new one is generated;
+// the first successful pairing made with it removes it.
+
+function _validSecret(s){
+  return typeof s === 'string' && s.length === SYNC_SECRET_LEN && [...s].every(c => CODE_ALPHABET.includes(c));
+}
+let _syncOffer = null;   // { secret, createdAt } or null; memory only
+function _loadSyncOffer(){
+  const o = _syncOffer;
+  if (!o || !_validSecret(o.secret)) return null;
+  return { secret: o.secret, createdAt: o.createdAt };
+}
+function _clearSyncOffer(){
+  _syncOffer = null;
+  _offerKeyCache = null;
+}
+function _mintSyncOffer(){
+  const o = { secret: _randChars(SYNC_SECRET_LEN), createdAt: Date.now() };
+  _syncOffer = o;
+  _offerKeyCache = null;
+  return { secret: o.secret, createdAt: o.createdAt };
+}
+/** This device's stored id without minting one (null before the first sync init). */
+function _storedPeerId(){
+  try { return localStorage.getItem(SYNC_PEER_KEY) || null; } catch(e) { return null; }
+}
+function _myRoom(){
+  return _idToRoom(_myPeerId() || _storedPeerId() || '');
+}
+/** The full pairing code to show, or null when no offer is active. Never logged. */
+function _myPairingCode(){
+  const o = _loadSyncOffer();
+  const room = _myRoom();
+  return (o && room.length === SYNC_ROOM_LEN) ? _formatPairingCode(room, o.secret) : null;
+}
+// The offer's key, derived once per (secret, room) and cached, so repeated
+// strangers don't cost a 100k-iteration PBKDF2 each. Null when no offer.
+let _offerKeyCache = null;   // { secret, room, promise }
+function _offerKeyPromise(){
+  const o = _loadSyncOffer();
+  const room = _myRoom();
+  if (!o || room.length !== SYNC_ROOM_LEN) return null;
+  if (_offerKeyCache && _offerKeyCache.secret === o.secret && _offerKeyCache.room === room) return _offerKeyCache.promise;
+  const promise = _derivePairKey(o.secret, room);
+  const entry = { secret: o.secret, room, promise };
+  _offerKeyCache = entry;
+  promise.catch(() => { if (_offerKeyCache === entry) _offerKeyCache = null; });
+  return promise;
+}
+
+// ── Handshake failure throttle ──────────────────────────────────────────────
+// Every failed inbound handshake backs off inbound connections: 2 s, 4 s, …
+// up to 60 s, and ten failures inside 15 minutes stop answering altogether
+// until they age out. A peer guessing secrets is closed on arrival instead of
+// being handed anything to test against.
+
+let _hsFailTimes = [];
+let _hsBlockedUntil = 0;
+const _HS_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const _HS_FAIL_MAX = 10;
+
+function _pruneHsFailures(){
+  const now = Date.now();
+  _hsFailTimes = _hsFailTimes.filter(t => now - t < _HS_FAIL_WINDOW_MS);
+  return now;
+}
+function _recordHandshakeFailure(){
+  const now = _pruneHsFailures();
+  _hsFailTimes.push(now);
+  const n = _hsFailTimes.length;
+  _hsBlockedUntil = now + Math.min(2000 * Math.pow(2, n - 1), 60000);
+}
+function _inboundBlocked(){
+  const now = _pruneHsFailures();
+  return now < _hsBlockedUntil || _hsFailTimes.length >= _HS_FAIL_MAX;
+}
+
+// ── Incoming-connection consent banner ──────────────────────────────────────
+
 function syncHideIncomingBanner(){
   const b = document.getElementById('syncIncomingBar');
   if(b) b.remove();
 }
 
-/** kind: 'new' (never paired) | 'unverified' (we hold a key for this id but it didn't prove it). */
+/**
+ * Shown only for a peer that has already proved it holds this device's
+ * current pairing code. kind: 'new' (no key stored for this id yet) |
+ * 'repair' (a key is stored for this id; Accept replaces it — the other
+ * device was reset or reinstalled and pairs again with a fresh code).
+ */
 function syncShowIncomingBanner(peerLabel, kind){
   syncHideIncomingBanner();
   const bar = document.createElement('div');
   bar.id = 'syncIncomingBar';
   bar.className = 'sync-incoming-bar';
   const safePeer = (typeof esc === 'function') ? esc(String(peerLabel || 'unknown')) : String(peerLabel || 'unknown');
-  const msg = kind === 'unverified'
-    ? '<strong>Re-pair request</strong> from <code>'+safePeer+'</code>. It could not prove it is the device you paired before. Accept only if you reset or reinstalled that device.'
-    : '<strong>Incoming sync</strong> from <code>'+safePeer+'</code>. Accept only if this is your device.';
+  const msg = kind === 'repair'
+    ? '<strong>Re-pair request</strong> from <code>'+safePeer+'</code>. It holds your current pairing code, but this device was paired with that id before; accepting replaces the old pairing. Accept only if you reset or reinstalled that device.'
+    : '<strong>Incoming sync</strong> from <code>'+safePeer+'</code>. It holds your current pairing code. Accept only if this is your device.';
   bar.innerHTML = '<div class="sync-incoming-inner">'+msg+'</div>'
     +'<div class="sync-incoming-actions">'
     +'<button type="button" class="btn-primary btn-sm" id="syncAcceptInbound">Accept</button>'
@@ -598,30 +839,33 @@ function syncShowIncomingBanner(peerLabel, kind){
   document.getElementById('syncRejectInbound').onclick = () => syncRejectInbound();
 }
 
-/** The user clicked Accept: mint a fresh key for this device and pair. */
+/** The user clicked Accept: store the key the peer proved, retire the offer, finish the handshake. */
 function syncAcceptInbound(){
   const conn = _pendingInboundConn;
-  if(!conn) return;
+  if(!conn || typeof conn._syncAccept !== 'function') return;
   _pendingInboundConn = null;
   syncHideIncomingBanner();
-  if (conn._authTimer) { clearTimeout(conn._authTimer); conn._authTimer = null; }
-  if(_conn && _conn !== conn){ try{ _conn.close(); }catch(e){} }
-  _conn = conn;
+  // Remember the peer for reconnects; the handshake stores its key.
   _lastConnectCode = _idToCode(conn.peer);
-  const key = _randHex(32);
-  _setPairKey(conn.peer, key);
-  try { conn.send({ type: 'pair', key }); } catch(e) { console.warn('[Sync] send pair', e); }
-  _syncMarkReady(conn);
+  conn._syncAccept();
 }
 
 function syncRejectInbound(){
   const conn = _pendingInboundConn;
   _pendingInboundConn = null;
   syncHideIncomingBanner();
-  if(conn){ if (conn._authTimer) clearTimeout(conn._authTimer); try{ conn.close(); }catch(e){} }
+  if(conn && typeof conn._syncReject === 'function') conn._syncReject();
+  else if(conn){ try{ conn.close(); }catch(e){} }
 }
 
-/** Proof accepted (or Accept clicked): unlock the channel and exchange state once. */
+/** Encrypt-and-send on a ready connection; false when the link isn't ready. */
+function _syncSend(conn, inner){
+  if (!conn || !conn._syncReady || typeof conn._syncSend !== 'function') return false;
+  conn._syncSend(inner);
+  return true;
+}
+
+/** Proof accepted both ways (and Accept clicked when needed): unlock the channel and exchange state once. */
 function _syncMarkReady(conn){
   if (conn._syncReady) return;
   conn._syncReady = true;
@@ -634,156 +878,305 @@ function _syncMarkReady(conn){
   // The counter this state carries is one input to _syncResolveIdCollisions;
   // the peer uses the same value from the payload, so both agree on new ids.
   _syncSentTaskIdCtr = taskIdCtr;
-  try { conn.send({ type: 'state', payload: _packState() }); } catch(e) { console.warn('[Sync] send state', e); }
+  _syncSend(conn, { type: 'state', payload: _packState() });
 }
 
 /**
  * Wire a DataConnection for the handshake. role 'initiator' = we dialled
- * (opts.manual: the user typed this code just now, so a 'pair' may replace a
- * stored key); role 'acceptor' = an inbound connection, which shows the Accept
- * banner unless the peer proves it already holds our key.
+ * (syncConnect has already stored the pair key for this id); role
+ * 'acceptor' = an inbound connection, held in _pendingInboundConn until the
+ * peer proves a stored key (auto-accept, no banner) or the active pairing
+ * code (Accept banner).
  */
 function _wireConn(conn, opts) {
   const role = (opts && opts.role) || 'initiator';
-  const manual = !!(opts && opts.manual);
-  if (role === 'initiator') _conn = conn;
-  conn._myNonce = _randHex(16);
-  conn._peerNonce = null;
-  conn._sentAuth = false;
-  let chain = Promise.resolve();
+  const initiator = role === 'initiator';
+  if (initiator) _conn = conn;
+  const peerLabel = _idToCode(conn.peer);
+  const sess = {
+    myNonce: _randHex(16),
+    peerNonce: null,
+    sentAuth: false,
+    peerProved: false,   // the other side's proof verified
+    keyHex: null,        // the key this session was verified with
+    keyMode: null,       // acceptor: 'stored' | 'offer'
+    storedKey: null,     // acceptor: key on file for this id, if any
+    offerKey: null,      // acceptor: promise of the active offer's key, if any
+    ready: false,
+    failed: false,
+    aadOut: null,
+    aadIn: null,
+    encKey: null,        // Promise<CryptoKey>
+    inbox: Promise.resolve(),
+    outbox: Promise.resolve(),
+    timer: null,
+  };
 
-  const fail = (msg) => {
-    _setSyncStatus('error', msg);
-    if (role === 'initiator') _lastConnectCode = null; // don't auto-retry into the same refusal
-    try { conn.close(); } catch(e) {}
+  const clearTimer = () => { if (sess.timer) { clearTimeout(sess.timer); sess.timer = null; } };
+
+  // Close without answering further, never auto-redial into the same refusal,
+  // and (for an inbound peer) count the failure towards the throttle.
+  const fail = (userMsg, reason, deferClose) => {
+    if (sess.failed) return;
+    sess.failed = true;
+    clearTimer();
+    console.warn('[sync] link failed (' + role + '):', reason || userMsg);
+    // Only a failed inbound HANDSHAKE feeds the throttle: it exists to slow a
+    // peer guessing at secrets, not to lock out a paired device whose link
+    // broke after it had proved itself.
+    if (!initiator && !sess.ready) _recordHandshakeFailure();
+    if (_pendingInboundConn === conn) { _pendingInboundConn = null; syncHideIncomingBanner(); }
+    if (initiator) {
+      _lastConnectCode = null;
+      if (_connectTimeoutId) { clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
+    }
+    // Null out _conn BEFORE closing: PeerJS emits 'close' synchronously, and
+    // the close handler must not flip the status or schedule a reconnect.
+    const wasCurrent = _conn === conn;
+    if (wasCurrent) _conn = null;
+    const close = () => { try { conn.close(); } catch(e) {} };
+    if (deferClose) setTimeout(close, 100); else close();
+    // Don't stomp on a live link with another device.
+    if (initiator || wasCurrent || !(_conn && _conn._syncReady)) _setSyncStatus('error', userMsg);
+  };
+
+  // Acceptor: tell the dialer why before hanging up (after a beat, so the
+  // message leaves the channel first).
+  const refuse = (reason, userMsg) => {
+    try { conn.send({ type: 'refuse', v: SYNC_PROTO, reason }); } catch(e) { /* closing anyway */ }
+    fail(userMsg, 'refused: ' + reason, true);
+  };
+
+  const armTimeout = () => {
+    clearTimer();
+    sess.timer = setTimeout(() => {
+      if (sess.ready || sess.failed) return;
+      fail(initiator
+        ? peerLabel + ' did not finish pairing in time. Make sure it runs the same Odta version, then try again (and tap Accept on it if it asks).'
+        : 'Sync pairing timed out — ' + peerLabel + ' did not complete the handshake.', 'timeout');
+    }, SYNC_HANDSHAKE_TIMEOUT_MS);
+  };
+
+  // Encrypt-then-send, serialised so messages leave in the order queued even
+  // though AES-GCM is asynchronous.
+  const send = (inner) => {
+    sess.outbox = sess.outbox.then(async () => {
+      if (sess.failed || !sess.ready) return;
+      const wire = await _syncEncrypt(await sess.encKey, sess.aadOut, inner);
+      if (!sess.failed && conn.open) conn.send(wire);
+    }).catch(e => console.warn('[Sync] send', e));
   };
 
   const sendAuth = async () => {
-    const key = _getPairKey(conn.peer);
-    if (!key || !conn._peerNonce || conn._sentAuth) return;
-    conn._sentAuth = true;
-    const mac = await _syncMac(key, ['odta-sync', role === 'initiator' ? 'i' : 'a', _myPeerId(), conn.peer, conn._peerNonce]);
-    try { conn.send({ type: 'auth', mac }); } catch(e) { console.warn('[Sync] send auth', e); }
+    if (sess.sentAuth || !sess.peerNonce) return;
+    const key = initiator ? _getPairKey(conn.peer) : sess.keyHex;
+    if (!key) return;
+    sess.sentAuth = true;
+    const mac = await _syncMac(key, ['odta-sync-v3', role, _myPeerId(), conn.peer, sess.peerNonce, sess.myNonce]);
+    if (sess.failed) return;
+    try { conn.send({ type: 'auth', v: SYNC_PROTO, mac }); } catch(e) { console.warn('[Sync] send auth', e); }
   };
 
-  const verifyAuth = async (mac) => {
-    const key = _getPairKey(conn.peer);
-    if (!key || typeof mac !== 'string') return false;
-    const want = await _syncMac(key, ['odta-sync', role === 'initiator' ? 'a' : 'i', conn.peer, _myPeerId(), conn._myNonce]);
+  const verifyMac = async (keyHex, mac) => {
+    if (!keyHex || typeof mac !== 'string' || !_HEX64.test(mac)) return false;
+    const want = await _syncMac(keyHex, ['odta-sync-v3', initiator ? 'acceptor' : 'initiator', conn.peer, _myPeerId(), sess.myNonce, sess.peerNonce]);
     return _macEq(mac, want);
   };
 
-  const showBanner = () => {
-    if (conn._syncReady || _pendingInboundConn !== conn || conn._bannerShown) return;
-    conn._bannerShown = true;
-    if (conn._authTimer) { clearTimeout(conn._authTimer); conn._authTimer = null; }
-    syncShowIncomingBanner(_idToCode(conn.peer), _getPairKey(conn.peer) ? 'unverified' : 'new');
+  // Make this the live connection (replacing any other) and remember the peer.
+  const adopt = () => {
+    if (_pendingInboundConn === conn) _pendingInboundConn = null;
+    syncHideIncomingBanner();
+    if (_conn && _conn !== conn) { const old = _conn; _conn = null; try { old.close(); } catch(e) {} }
+    _conn = conn;
+    _lastConnectCode = _idToCode(conn.peer);
+  };
+
+  const becomeReady = () => {
+    if (sess.ready || sess.failed) return;
+    sess.ready = true;
+    clearTimer();
+    const iNonce = initiator ? sess.myNonce : sess.peerNonce;
+    const aNonce = initiator ? sess.peerNonce : sess.myNonce;
+    sess.aadOut = _syncAad(iNonce, aNonce, role);
+    sess.aadIn  = _syncAad(iNonce, aNonce, initiator ? 'acceptor' : 'initiator');
+    sess.encKey = _deriveEncKey(sess.keyHex);
+    sess.encKey.catch(() => { /* surfaced by the first send / receive */ });
+    conn._syncSend = send;
+    _syncMarkReady(conn);
+  };
+
+  // Accept / Reject from the banner, queued behind whatever is in flight so
+  // they can't interleave with a message being verified.
+  conn._syncAccept = () => {
+    sess.inbox = sess.inbox.then(async () => {
+      if (sess.failed || sess.ready || !sess.peerProved || !sess.keyHex) return;
+      _setPairKey(conn.peer, sess.keyHex);
+      if (sess.keyMode === 'offer') _clearSyncOffer();
+      adopt();
+      await sendAuth();
+      if (sess.failed) return;
+      becomeReady();
+      if (typeof renderSyncPanel === 'function') renderSyncPanel();
+    }).catch(e => console.warn('[Sync] accept', e));
+  };
+  conn._syncReject = () => {
+    sess.inbox = sess.inbox.then(() => {
+      if (sess.failed || sess.ready) return;
+      try { conn.send({ type: 'refuse', v: SYNC_PROTO, reason: 'rejected' }); } catch(e) { /* closing anyway */ }
+      sess.failed = true;
+      clearTimer();
+      if (_conn === conn) _conn = null;
+      setTimeout(() => { try { conn.close(); } catch(e) {} }, 100);
+    }).catch(e => console.warn('[Sync] reject', e));
+  };
+
+  const showBanner = (kind) => {
+    if (sess.ready || sess.failed || _pendingInboundConn !== conn) return;
+    syncShowIncomingBanner(peerLabel, kind);
+  };
+
+  // Plain handlers for authenticated, decrypted messages.
+  const dispatch = (inner) => {
+    if (inner.type === 'state') {
+      _mergeState(inner.payload, { isInitialState: true });
+    } else if (inner.type === 'patch') {
+      _mergeState(inner.payload);
+    } else if (inner.type === 'ping') {
+      send({ type: 'pong' });
+    }
+    // Unknown authenticated types are ignored (forward compatibility).
   };
 
   const onOpen = () => {
+    if (sess.failed) return;
     // Our own dial opened: reset the backoff. (Not for inbound: a stranger
     // dialling in must not cancel a pending reconnect to the paired device.)
     if (role === 'initiator') {
       if(_reconnectTimerId){ clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
       _reconnectAttempt = 0;
     }
-    try { conn.send({ type: 'hello', v: SYNC_PROTO, nonce: conn._myNonce, paired: !!_getPairKey(conn.peer) }); }
+    try { conn.send({ type: 'hello', v: SYNC_PROTO, nonce: sess.myNonce }); }
     catch(e) { console.warn('[Sync] send hello', e); }
     if (role === 'initiator') _setSyncStatus('connecting', 'Waiting for the other device to accept…');
+    if (!sess.ready) armTimeout();
   };
-  conn.on('open', onOpen);
-  // PeerJS doesn't replay 'open' for listeners attached after it fired.
-  if (conn.open) onOpen();
 
-  const handle = async (msg) => {
-    if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+  const handleHandshake = async (msg) => {
     if (msg.type === 'hello') {
-      if (msg.v !== SYNC_PROTO || typeof msg.nonce !== 'string' || !_HEX32.test(msg.nonce)) {
-        // A pre-v79 device can't authenticate. As acceptor we can still pair
-        // it by Accept (it treats our 'pair' as acceptance); as initiator we
-        // would wait forever for a proof it can't give.
-        if (role === 'initiator') fail('The other device runs an older Odta. Update it, then connect again');
-        else showBanner();
-        return;
+      if (msg.v !== SYNC_PROTO) {
+        if (initiator) return fail(peerLabel + ' runs a different Odta sync version. Update Odta on the other device, then pair again.', 'version ' + String(msg.v));
+        return refuse('version', peerLabel + ' runs a different Odta sync version — refused. Update Odta on the other device.');
       }
-      if (conn._peerNonce) return;
-      conn._peerNonce = msg.nonce;
-      // The acceptor proves itself only to a caller that says it holds a key:
-      // no reason to sign nonces for strangers.
-      if (role === 'initiator' || msg.paired) await sendAuth();
-      if (role === 'acceptor' && !conn._syncReady) {
-        if (!msg.paired || !_getPairKey(conn.peer)) showBanner();
-        else conn._authTimer = setTimeout(showBanner, SYNC_AUTH_WAIT_MS);
+      if (typeof msg.nonce !== 'string' || !_HEX32.test(msg.nonce)) {
+        if (initiator) return fail(peerLabel + ' sent a malformed handshake — connection closed.', 'bad nonce');
+        return refuse('bad-proof', peerLabel + ' sent a malformed handshake — refused.');
       }
-      return;
+      if (sess.peerNonce) return;   // duplicate hello
+      sess.peerNonce = msg.nonce;
+      if (initiator) { await sendAuth(); return; }   // the dialer proves itself first
+      // Acceptor: what could this id prove against?
+      sess.storedKey = _getPairKey(conn.peer);
+      sess.offerKey = _offerKeyPromise();
+      if (!sess.storedKey && !sess.offerKey) {
+        return refuse('no-pairing', peerLabel + ' tried to connect but is not paired with this device and no pairing code is active — refused.');
+      }
+      return;   // wait for its auth
     }
     if (msg.type === 'auth') {
-      if (conn._syncReady) return;
-      if (!(await verifyAuth(msg.mac))) {
-        if (role === 'initiator') fail('Could not verify ' + _idToCode(conn.peer) + '. It may not be your device. Enter its code again to re-pair.');
-        else showBanner();
+      if (sess.peerProved) return;
+      if (!sess.peerNonce || typeof msg.mac !== 'string') {
+        if (initiator) return fail(peerLabel + ' sent a malformed proof — connection closed.', 'auth before hello');
+        return refuse('bad-proof', peerLabel + ' sent a malformed proof — refused.');
+      }
+      if (initiator) {
+        const key = _getPairKey(conn.peer);
+        const ok = await verifyMac(key, msg.mac);
+        if (sess.failed) return;
+        if (!ok) return fail(peerLabel + ' could not prove it is the device you paired. If you reset it, generate a new pairing code on it and enter that here.', 'bad acceptor proof');
+        sess.peerProved = true;
+        sess.keyHex = key;
+        becomeReady();
         return;
       }
-      if (role === 'acceptor') {
-        if (_pendingInboundConn !== conn) return;
-        _pendingInboundConn = null;
-        if (conn._authTimer) { clearTimeout(conn._authTimer); conn._authTimer = null; }
-        syncHideIncomingBanner();
-        if (_conn && _conn !== conn) { try { _conn.close(); } catch(e) {} }
-        _conn = conn;
-        _lastConnectCode = _idToCode(conn.peer);
+      // Acceptor: the stored key for this id first, then the active offer.
+      let mode = null, key = null;
+      if (sess.storedKey && await verifyMac(sess.storedKey, msg.mac)) { mode = 'stored'; key = sess.storedKey; }
+      else if (sess.offerKey) {
+        let offerKey = null;
+        try { offerKey = await sess.offerKey; } catch(e) { offerKey = null; }
+        if (offerKey && await verifyMac(offerKey, msg.mac)) { mode = 'offer'; key = offerKey; }
+      }
+      if (sess.failed) return;
+      if (!mode) return refuse('bad-proof', peerLabel + ' could not prove it holds a pairing with this device — refused.');
+      sess.peerProved = true;
+      sess.keyHex = key;
+      sess.keyMode = mode;
+      if (mode === 'stored') {
+        // A device we already paired with: no banner, take over as the live link.
+        adopt();
         await sendAuth();
-      }
-      _syncMarkReady(conn);
-      return;
-    }
-    if (msg.type === 'pair') {
-      // Only the acceptor's user can mint a key, and only for a code we dialled.
-      if (role !== 'initiator' || conn._syncReady) return;
-      if (typeof msg.key !== 'string' || !_HEX64.test(msg.key)) return;
-      if (_getPairKey(conn.peer) && !manual) {
-        fail(_idToCode(conn.peer) + ' asked to pair again. If you reset that device, enter its code to re-pair.');
+        if (sess.failed) return;
+        becomeReady();
         return;
       }
-      _setPairKey(conn.peer, msg.key);
-      _syncMarkReady(conn);
+      // Pairing-code path: the user decides. The handshake timer keeps running.
+      showBanner(sess.storedKey ? 'repair' : 'new');
       return;
     }
-    if (!conn._syncReady) {
-      // A v78 acceptor never says hello: its user's Accept just sends state.
-      // Say so rather than wait forever on a proof it can't give.
-      if (role === 'initiator' && (msg.type === 'state' || msg.type === 'patch')) {
-        fail("The other device didn't pair securely. If it runs an older Odta, update it, then connect again");
-      }
-      return;
+    if (msg.type === 'refuse') {
+      if (!initiator) return fail(peerLabel + ' refused the connection.', 'refuse from dialer');
+      const why = {
+        'no-pairing': peerLabel + " is not paired with this device and has no pairing code active. Generate a pairing code on it and enter that here.",
+        'bad-proof':  peerLabel + ' refused this device: it could not verify the pairing. If either device was reset, generate a new pairing code on ' + peerLabel + ' and enter that here.',
+        'version':    peerLabel + ' runs a different Odta sync version — update Odta on the other device, then pair again.',
+        'rejected':   peerLabel + ' declined the pairing.',
+      };
+      return fail(why[msg.reason] || (peerLabel + ' refused to pair.'), 'refused by peer: ' + String(msg.reason));
     }
-    if (msg.type === 'state') {
-      _mergeState(msg.payload, { isInitialState: true });
-    } else if (msg.type === 'patch') {
-      _mergeState(msg.payload);
-    } else if (msg.type === 'ping') {
-      try { conn.send({ type: 'pong' }); } catch(e) { console.warn('[Sync] send pong', e); }
-    }
+    // Anything else before readiness: a pre-v3 device (hello v2's 'pair',
+    // a v78 acceptor's plaintext state) or a probe. Never processed.
+    if (initiator) return fail(peerLabel + ' runs an older Odta. Update Odta on the other device, then pair again.', 'pre-v3 message ' + msg.type);
+    return refuse('version', peerLabel + ' sent an unencrypted ' + msg.type + ' before pairing — refused. Update Odta on the other device.');
   };
-  // Serialise: auth verification is async, and the state that follows a
+
+  const handle = async (msg) => {
+    if (sess.failed) return;
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.type !== 'string') {
+      return fail('Sync message from ' + peerLabel + ' could not be read — connection closed.', 'malformed');
+    }
+    if (!sess.ready) return handleHandshake(msg);
+    // After readiness nothing but ciphertext is acceptable.
+    if (msg.type !== 'enc') return fail(peerLabel + ' sent an unencrypted message after pairing — connection closed.', 'plaintext after ready');
+    if (typeof msg.ct !== 'string' || msg.ct.length > _SYNC_MAX_WIRE_CHARS) return fail('Sync message from ' + peerLabel + ' is too large — connection closed.', 'oversized ciphertext');
+    let inner;
+    try { inner = await _syncDecrypt(await sess.encKey, sess.aadIn, msg); }
+    catch(e) { return fail(peerLabel + ' sent a message this device could not decrypt — connection closed.', 'decrypt failed'); }
+    if (sess.failed) return;
+    dispatch(inner);
+  };
+  // Serialise: proofs and decryption are async, and the state that follows a
   // proof must not be handled (and dropped) before the proof lands.
   conn.on('data', (msg) => {
-    chain = chain.then(() => handle(msg)).catch(e => console.warn('[Sync] handle', e));
+    sess.inbox = sess.inbox.then(() => handle(msg)).catch(e => {
+      console.warn('[Sync] handle', e);
+      fail('Sync hit an internal error — connection closed.', 'internal');
+    });
   });
 
   conn.on('close', () => {
-    if (conn._authTimer) { clearTimeout(conn._authTimer); conn._authTimer = null; }
+    clearTimer();
     if (_pendingInboundConn === conn) { _pendingInboundConn = null; syncHideIncomingBanner(); }
     // PeerJS emits 'close' synchronously from close(). When this connection
     // was replaced (Connect to a different code, accepting a new inbound
-    // link, or the simultaneous-dial tie-break, which clears _conn first) the
-    // current _conn is not this one; tearing it down and scheduling a
-    // reconnect here restarted the fresh handshake every 2 s.
+    // link, the simultaneous-dial tie-break or a handshake failure, which all
+    // clear _conn first) the current _conn is not this one; tearing it down
+    // and scheduling a reconnect here restarted the fresh handshake every 2 s.
     if (_conn !== conn) return;
     _conn = null;
     // Don't stomp on a more-specific error message (e.g. "Code not found")
     // that we just set from _peer.on('error', 'peer-unavailable').
-    if (_syncStatus !== 'error' && _syncStatus !== 'connected') _setSyncStatus('waiting');
+    if (_syncStatus !== 'error') _setSyncStatus('waiting');
     // Connection went down. If the user didn't disconnect intentionally,
     // schedule an auto-reconnect with backoff.
     if (_lastConnectCode) _scheduleSyncReconnect();
@@ -791,6 +1184,7 @@ function _wireConn(conn, opts) {
 
   conn.on('error', (err) => {
     console.warn('[sync] conn error', err);
+    clearTimer();
     if (_pendingInboundConn === conn) { _pendingInboundConn = null; syncHideIncomingBanner(); }
     if (_conn !== conn) return;
     _conn = null;
@@ -798,6 +1192,13 @@ function _wireConn(conn, opts) {
     _setSyncStatus('error', _friendlySyncError(err));
     if (_lastConnectCode) _scheduleSyncReconnect();
   });
+
+  // The acceptor waits for the dialer's hello from the moment it's wired; the
+  // initiator arms its timer when the channel opens and hello goes out.
+  if (!initiator) armTimeout();
+  conn.on('open', onOpen);
+  // PeerJS doesn't replay 'open' for listeners attached after it fired.
+  if (conn.open) onOpen();
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -832,7 +1233,19 @@ function _resolvePeerId() {
   return saved;
 }
 
+function _storedRoom(){
+  try { return localStorage.getItem(SYNC_ROOM_KEY) || null; } catch(e) { return null; }
+}
+
+function _destroyPeer(){
+  if (!_peer) return;
+  const p = _peer;
+  _peer = null;
+  try { p.destroy(); } catch(e) { console.warn('[Sync] peer destroy', e); }
+}
+
 let _syncInitPromise = null;
+let _idRetry = 0;
 async function syncInit() {
   if (_peer) return;
   // Re-entry guard: parallel calls (e.g. rapid Connect clicks before the
@@ -846,12 +1259,13 @@ async function syncInit() {
   let Peer;
   try { Peer = await _loadPeerJS(); }
   catch(e) { _setSyncStatus('error', 'PeerJS unavailable'); return; }
+  if (_peer || !_syncEnabled) return;
 
   const myId = _resolvePeerId();
   _myRoomCode = _idToCode(myId);
-
-  const codeEl = document.getElementById('syncMyCode');
-  if (codeEl) codeEl.textContent = _myRoomCode;
+  // A device that is paired with nothing and offers nothing gets a pairing
+  // code straight away, so the panel has something to show the other device.
+  if (!_loadSyncOffer() && !_pairCount()) _mintSyncOffer();
 
   _peer = new Peer(myId, {
     config: {
@@ -864,16 +1278,24 @@ async function syncInit() {
   });
 
   _peer.on('open', () => {
+    _idRetry = 0;
     _setSyncStatus('waiting');
-    // Auto-reconnect to last room if we have one
-    const lastRoom = localStorage.getItem(SYNC_ROOM_KEY);
+    // Auto-reconnect to the last room — only when we hold a key for it. A
+    // room we can't prove ourselves to is forgotten rather than dialled.
+    const lastRoom = _storedRoom();
     if (lastRoom && lastRoom !== _myRoomCode) {
-      syncConnect(lastRoom);
+      if (_getPairKey(_codeToId(lastRoom))) syncConnect(lastRoom);
+      else {
+        try { localStorage.removeItem(SYNC_ROOM_KEY); } catch(e) {}
+        _setSyncStatus('unpaired');
+      }
     }
   });
 
   _peer.on('connection', (conn) => {
     if(!_syncEnabled){ try{ conn.close(); }catch(e){} return; }
+    // Back-off after failed handshakes: close without answering.
+    if(_inboundBlocked()){ try{ conn.close(); }catch(e){} return; }
     if(_conn && _conn.open && _conn._syncReady){ try{ conn.close(); }catch(e){} return; }
     if(_pendingInboundConn){ try{ conn.close(); }catch(e){} return; }
     if(_conn && _conn.peer === conn.peer){
@@ -884,8 +1306,9 @@ async function syncInit() {
       const mine = _conn; _conn = null;
       try{ mine.close(); }catch(e){}
     }
-    // Held pending until the peer proves it holds our key (auto-accept, no
-    // banner) or our user clicks Accept on the banner _wireConn raises.
+    // Held pending until the peer proves a stored key (auto-accept, no
+    // banner) or the active pairing code (Accept banner). Nothing else gets
+    // a banner.
     _pendingInboundConn = conn;
     _wireConn(conn, { role: 'acceptor' });
   });
@@ -894,10 +1317,20 @@ async function syncInit() {
     console.warn('[sync] peer error', err);
     const t = err && err.type;
     if (t === 'unavailable-id') {
-      // Our own id is already registered — mint a new one.
-      try { localStorage.removeItem(SYNC_PEER_KEY); } catch(e) {}
-      _peer = null;
-      syncInit();
+      // Another session still holds this device's id on the broker (a tab
+      // that just closed, or someone squatting it). Rotating to a fresh id —
+      // the pre-v81 behaviour — silently broke every pairing, since the id is
+      // what the other devices dial and key their pairing on. Wait and retry
+      // instead; "Reset sync identity" stays the explicit escape hatch.
+      _destroyPeer();
+      _idRetry += 1;
+      if (_idRetry <= 3) {
+        const wait = 5000 * _idRetry;
+        _setSyncStatus('error', "This device's sync id is busy on the broker (another Odta tab?) — retrying in " + Math.round(wait / 1000) + 's.');
+        setTimeout(() => { if (_syncEnabled && !_peer) syncInit().then(() => renderSyncPanel()).catch(() => {}); }, wait);
+      } else {
+        _setSyncStatus('error', "This device's sync id is in use on the broker. Close other Odta tabs and tap Reconnect, or reset the sync identity for a new id (every device must then pair again).");
+      }
       return;
     }
     if (t === 'peer-unavailable') {
@@ -925,10 +1358,15 @@ async function syncInit() {
     _setSyncStatus('error', _friendlySyncError(err));
   });
 
+  const thisPeer = _peer;
   _peer.on('disconnected', () => {
+    // destroy() also emits 'disconnected'; a peer we replaced must neither
+    // flip the status nor be asked to reconnect.
+    if (_peer !== thisPeer) return;
     _setSyncStatus('waiting');
-    try { _peer.reconnect(); } catch(e) { console.warn('[Sync] reconnect', e); }
+    try { thisPeer.reconnect(); } catch(e) { console.warn('[Sync] reconnect', e); }
   });
+  renderSyncPanel();
   })();
   try { await _syncInitPromise; } finally { _syncInitPromise = null; }
 }
@@ -941,6 +1379,12 @@ function _scheduleSyncReconnect(){
   if(_reconnectTimerId){ clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
   if(!_lastConnectCode || !_syncEnabled){
     _setSyncStatus('error', 'Lost connection — Reconnect to retry');
+    return;
+  }
+  // Never redial a device we can't prove ourselves to.
+  if(!_getPairKey(_codeToId(_lastConnectCode))){
+    _lastConnectCode = null;
+    _setSyncStatus('unpaired');
     return;
   }
   if(_reconnectAttempt >= SYNC_RECONNECT_BACKOFFS_MS.length){
@@ -964,30 +1408,70 @@ function _scheduleSyncReconnect(){
 function syncReconnectNow(){
   if(_reconnectTimerId){ clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
   _reconnectAttempt = 0;
-  if(_lastConnectCode){
-    _setSyncStatus('connecting', 'Reconnecting…');
-    try { syncConnect(_lastConnectCode); } catch(e){ console.warn('[Sync] reconnect failed', e); }
-  }
-}
-
-function syncConnect(code, opts) {
-  if (!_peer) { syncInit().then(() => { if (_peer) syncConnect(code, opts); }).catch(e => console.warn('[Sync] init failed', e)); return; }
-  if (!_isValidCode(code)) {
-    _setSyncStatus('error', 'Invalid code — expected 6 letters/digits after STU-');
+  if(!_syncEnabled) return;
+  if(!_peer){
+    // The engine was torn down (busy id on the broker): bring it back; its
+    // 'open' handler redials the stored room.
+    _setSyncStatus('loading');
+    syncInit().then(() => renderSyncPanel()).catch(e => console.warn('[Sync] init failed', e));
     return;
   }
-  const targetId = _codeToId(code);
+  const target = _lastConnectCode || _storedRoom();
+  if(!target) return;
+  if(!_getPairKey(_codeToId(target))){ _lastConnectCode = null; _setSyncStatus('unpaired'); return; }
+  _setSyncStatus('connecting', 'Reconnecting…');
+  try { syncConnect(target); } catch(e){ console.warn('[Sync] reconnect failed', e); }
+}
+
+/**
+ * Connect to another device. A full pairing code (room + secret) derives the
+ * pair key for that id and installs it before dialling — the legitimate
+ * re-pair path after a device reset, which is why it always replaces a stored
+ * key. A bare 6-character room only reaches a device we already hold a key
+ * for; it never creates or replaces one.
+ */
+function syncConnect(code, opts) {
+  if (!_peer) { syncInit().then(() => { if (_peer) syncConnect(code, opts); }).catch(e => console.warn('[Sync] init failed', e)); return; }
+  const parsed = _parseCode(code);
+  if (!parsed.ok) {
+    _setSyncStatus('error', parsed.message);
+    return;
+  }
+  const targetId = _codeToId(parsed.room);
   if (targetId === _peer.id) {
     _setSyncStatus('error', "That's this device's own code");
     return;
   }
-  // Remember the code so we can re-establish on socket-closed without
-  // requiring the user to retype it. Cleared on syncDisconnect.
-  _lastConnectCode = code;
+  if (!parsed.secret) {
+    if (!_getPairKey(targetId)) {
+      _setSyncStatus('error', 'Enter the full pairing code shown on the other device (18 characters after STU-). Older 6-character codes can no longer pair.');
+      return;
+    }
+    _dialPeer(targetId);
+    return;
+  }
+  _setSyncStatus('connecting', 'Deriving the pairing key…');
+  _derivePairKey(parsed.secret, parsed.room).then(key => {
+    if (!_peer || !_syncEnabled) return;
+    _setPairKey(targetId, key);
+    _dialPeer(targetId);
+  }).catch(e => {
+    console.warn('[Sync] key derivation failed', e);
+    _setSyncStatus('error', 'Could not derive the pairing key — try again');
+  });
+}
+
+/** Place an outbound dial; the pair key for `targetId` is already stored. */
+function _dialPeer(targetId) {
+  if (!_peer) return;
+  // Remember the room (never the secret) so we can re-establish on
+  // socket-closed without requiring the user to retype it. Cleared on
+  // syncDisconnect and on a refused handshake.
+  _lastConnectCode = _idToCode(targetId);
   _setSyncStatus('connecting');
 
   // If we have a stale dead connection, drop it before making a new one.
-  if (_conn) { try { _conn.close(); } catch(e) {} _conn = null; }
+  if (_conn) { const old = _conn; _conn = null; try { old.close(); } catch(e) {} }
 
   const conn = _peer.connect(targetId, { reliable: true });
 
@@ -1001,6 +1485,7 @@ function syncConnect(code, opts) {
   _connectTimeoutId = setTimeout(() => {
     _connectTimeoutId = null;
     if (conn && !conn.open) {
+      if (_conn === conn) _conn = null;
       try { conn.close(); } catch(e) {}
       _setSyncStatus('error',
         'No response — the other device may be on a different network ' +
@@ -1016,23 +1501,36 @@ function syncConnect(code, opts) {
     if (_connectTimeoutId) { clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
   });
 
-  _wireConn(conn, { role: 'initiator', manual: !!(opts && opts.manual) });
+  _wireConn(conn, { role: 'initiator' });
 }
 
-/** Mint a fresh peer id (escape hatch if pairing is stuck on a bad code). */
+/** Mint a new pairing secret for this device. The id and existing pairs are untouched. */
+function syncNewPairingCode() {
+  if (!_syncEnabled || !_syncCryptoOk()) return;
+  _mintSyncOffer();
+  renderSyncPanel();
+}
+
+/** Reset the sync identity: new peer id, every pairing dropped. The escape hatch, not the everyday path. */
 async function syncRegenerateCode() {
-  // Regenerating destroys the existing pairing — any device that stored this
-  // code will be orphaned (#14 in UX audit). Confirm before nuking.
-  const msg = 'Regenerating your code unpairs every device that knows the current code. They\'ll need the new code to reconnect. Continue?';
+  const msg = "Reset this device's sync identity? It gets a new id, every device paired with it is unpaired, and the current pairing code stops working. You'll need to pair each device again. Continue?";
   if (typeof showAppConfirm === 'function'){
-    if (!(await showAppConfirm(msg))) return;
+    if (!(await showAppConfirm(msg, { destructive: true, okLabel: 'Reset' }))) return;
   } else if (!confirm(msg)) return;
+  if (_connectTimeoutId) { clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
+  if (_reconnectTimerId) { clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
+  _reconnectAttempt = 0;
+  _lastConnectCode = null;
+  if (_pendingInboundConn) { const p = _pendingInboundConn; _pendingInboundConn = null; try { p.close(); } catch(e) {} }
+  syncHideIncomingBanner();
   try { localStorage.removeItem(SYNC_PEER_KEY); } catch(e) {}
   try { localStorage.removeItem(SYNC_ROOM_KEY); } catch(e) {}
   // Every pairing is keyed to the old id on the other side, so drop ours too.
   try { localStorage.removeItem(SYNC_PAIRS_KEY); } catch(e) {}
-  if (_conn) { try { _conn.close(); } catch(e) {} _conn = null; }
-  if (_peer) { try { _peer.destroy(); } catch(e) {} _peer = null; }
+  _clearSyncOffer();
+  if (_conn) { const old = _conn; _conn = null; try { old.close(); } catch(e) {} }
+  _destroyPeer();
+  _idRetry = 0;
   _setSyncStatus('loading');
   syncInit().then(() => renderSyncPanel()).catch(e => console.warn('[Sync] init failed', e));
 }
@@ -1044,8 +1542,10 @@ function syncDisconnect() {
   if (_reconnectTimerId) { clearTimeout(_reconnectTimerId); _reconnectTimerId = null; }
   _reconnectAttempt = 0;
   _lastConnectCode = null;
-  if (_conn) { try { _conn.close(); } catch(e) { console.warn('[Sync] conn close', e); } _conn = null; }
-  if (_peer) { try { _peer.destroy(); } catch(e) { console.warn('[Sync] peer destroy', e); } _peer = null; }
+  if (_pendingInboundConn) { const p = _pendingInboundConn; _pendingInboundConn = null; try { p.close(); } catch(e) {} }
+  syncHideIncomingBanner();
+  if (_conn) { const old = _conn; _conn = null; try { old.close(); } catch(e) { console.warn('[Sync] conn close', e); } }
+  _destroyPeer();
   try { localStorage.removeItem(SYNC_ROOM_KEY); } catch(e) { /* LS fire-and-forget */ }
   _setSyncStatus('off');
   _syncEnabled = false;
@@ -1066,8 +1566,9 @@ let _broadcastTimer = null;
 let _lastBroadcastAt = 0;
 function syncBroadcast() {
   if(_syncApplying) return;
-  // _syncReady gates on the accept handshake — local edits must not leak to a
-  // peer whose user hasn't accepted the pairing yet.
+  // _syncReady gates on the proven handshake — local edits must not leak to a
+  // peer that hasn't proved the pairing yet, and every patch goes out
+  // encrypted through the link's sender.
   if (!_conn || !_conn.open || !_conn._syncReady) return;
   // Throttle: max 1 broadcast per 500ms to avoid flooding on rapid saves
   const now = Date.now();
@@ -1076,15 +1577,29 @@ function syncBroadcast() {
     _broadcastTimer = setTimeout(() => {
       _lastBroadcastAt = Date.now();
       _broadcastTimer = null;
-      try { _conn.send({ type: 'patch', payload: _packState() }); } catch(e) { console.warn('[Sync] broadcast', e); }
+      if (_conn && _conn.open && _conn._syncReady) _syncSend(_conn, { type: 'patch', payload: _packState() });
     }, 500);
     return;
   }
   _lastBroadcastAt = now;
-  try { _conn.send({ type: 'patch', payload: _packState() }); } catch(e) { console.warn('[Sync] broadcast', e); }
+  _syncSend(_conn, { type: 'patch', payload: _packState() });
 }
 
 // ── UI ───────────────────────────────────────────────────────────────────────
+
+// "Reconnect now" appears whenever there is something to redial and we're in
+// error or counting down a backoff, so the user can skip the wait without
+// retyping the code. Also after the engine was torn down by a busy id.
+function _renderSyncActionRow(){
+  const row = document.getElementById('syncActionRow');
+  if(!row) return;
+  const canRetry = !!_lastConnectCode || (_syncEnabled && !_peer) || !!(_storedRoom() && _getPairKey(_codeToId(_storedRoom())));
+  if(canRetry && (_syncStatus === 'error' || _reconnectTimerId)){
+    row.innerHTML = '<button class="btn-primary btn-sm" data-action="syncReconnectNow">Reconnect now</button>';
+  } else {
+    row.innerHTML = '';
+  }
+}
 
 function renderSyncPanel() {
   const panel = document.getElementById('syncPanel');
@@ -1093,7 +1608,7 @@ function renderSyncPanel() {
   if (!_syncEnabled) {
     panel.innerHTML = `
       <div class="sync-off-state">
-        <p class="sync-desc">Sync tasks between your devices directly — no server stores your data.</p>
+        <p class="sync-desc">Sync tasks between your devices directly — no server stores your data. Devices pair with a one-time code and every message is end-to-end encrypted.</p>
         <p class="sync-desc">
           ℹ Best effort: works reliably on same WiFi; may fail on some cellular networks due to NAT restrictions.
         </p>
@@ -1102,107 +1617,147 @@ function renderSyncPanel() {
     return;
   }
 
+  // Preserve a half-typed pairing code across re-renders (a status change or
+  // an incoming patch must not blank the input mid-entry).
+  const prevInput = document.getElementById('syncCodeInput');
+  const prevCode = prevInput ? prevInput.value : '';
+  const prevFocused = !!(prevInput && document.activeElement === prevInput);
+
+  const safe = (s) => (typeof esc === 'function') ? esc(String(s)) : String(s);
+  const pairingCode = _myPairingCode();
+  const pairs = _pairCount();
+  let codeBlock;
+  if (pairingCode) {
+    // The secret is shown here and only here, until a device has paired with it.
+    codeBlock = `
+      <div class="sync-my-code-block">
+        <label>Your pairing code</label>
+        <div class="sync-code sync-code--long" id="syncMyCode">${safe(pairingCode)}</div>
+        <div class="sync-input-hint">Enter this code on your other device. It contains a secret: anyone who copies it can pair with this device until you generate a new one. It disappears from here once a device has paired with it.</div>
+        <div class="sync-code-actions">
+          <button class="btn-ghost btn-sm" data-action="syncCopyMyCode">Copy</button>
+          <button class="btn-ghost btn-sm" data-action="syncNewPairingCode" title="Mint a new pairing code (the current one stops working; paired devices are kept)">Generate new pairing code</button>
+          <button class="btn-ghost btn-sm" data-action="syncRegenerateCode" title="New device id — unpairs every device">Reset sync identity…</button>
+        </div>
+      </div>`;
+  } else {
+    const pairedLine = pairs
+      ? 'Paired with ' + pairs + ' device' + (pairs === 1 ? '' : 's') + '. Paired devices reconnect on their own.'
+      : 'Not paired with any device yet.';
+    codeBlock = `
+      <div class="sync-my-code-block">
+        <label>This device</label>
+        <div class="sync-code" id="syncMyCode">${safe(_myRoomCode || '…')}</div>
+        <div class="sync-input-hint">${safe(pairedLine)} To pair another device, generate a pairing code and enter it there.</div>
+        <div class="sync-code-actions">
+          <button class="btn-primary btn-sm" data-action="syncNewPairingCode">Generate pairing code</button>
+          <button class="btn-ghost btn-sm" data-action="syncRegenerateCode" title="New device id — unpairs every device">Reset sync identity…</button>
+        </div>
+      </div>`;
+  }
+
   panel.innerHTML = `
     <div class="sync-active">
       <div class="sync-status-row">
         <span class="sync-dot sync-dot--${_syncStatus}" id="syncDot"></span>
         <span id="syncStatus"></span>
       </div>
-      <div class="sync-my-code-block">
-        <label>Your code</label>
-        <div class="sync-code" id="syncMyCode">${_myRoomCode || '…'}</div>
-        <div class="sync-code-actions">
-          <button class="btn-ghost btn-sm" data-action="syncCopyMyCode">Copy</button>
-          <button class="btn-ghost btn-sm" data-action="syncRegenerateCode" title="Mint a new pairing code (unpairs this device)">Regenerate</button>
-        </div>
-      </div>
+      ${codeBlock}
       <div class="sync-connect-block">
         <label>Connect to device</label>
         <div class="sync-input-row">
-          <input id="syncCodeInput" type="text" placeholder="STU-XXX-XXX" maxlength="11"
+          <input id="syncCodeInput" type="text" placeholder="STU-XXX-XXX-XXXX-XXXX-XXXX" maxlength="40"
                  autocomplete="off" autocapitalize="characters" spellcheck="false"
                  data-oninput="syncOnCodeInputFromInput"
                  data-onkeydown="syncConnectInputKey">
           <button class="btn-primary btn-sm" id="syncConnectBtn" data-action="syncConnectFromInput" disabled>Connect</button>
         </div>
-        <div class="sync-input-hint" id="syncInputHint">Enter the 6-character code shown on the other device (e.g. <code>STU-AB3-C9D</code>).</div>
+        <div class="sync-input-hint" id="syncInputHint">Enter the pairing code shown on the other device (${SYNC_CODE_LEN} characters after <code>STU-</code>; dashes and case don't matter). A device paired before can be reached with its 6-character code alone.</div>
       </div>
       <div class="sync-action-row" id="syncActionRow"></div>
       <button class="btn-ghost btn-sm sync-disable" data-action="syncDisconnect">Disable sync</button>
     </div>`;
-  // Show "Reconnect now" inline whenever we have a remembered target and
-  // we're either in error or in connecting+backoff. Lets the user skip the
-  // wait without having to retype the pairing code.
-  const actionRow = document.getElementById('syncActionRow');
-  if(actionRow){
-    if(_lastConnectCode && (_syncStatus === 'error' || _reconnectTimerId)){
-      actionRow.innerHTML = '<button class="btn-primary btn-sm" data-action="syncReconnectNow">Reconnect now</button>';
-    } else {
-      actionRow.innerHTML = '';
+
+  const input = document.getElementById('syncCodeInput');
+  if (input && prevCode) {
+    input.value = prevCode;
+    syncOnCodeInput(input);
+    if (prevFocused) {
+      try { input.focus(); const n = input.value.length; input.setSelectionRange(n, n); } catch(e) { /* noop */ }
     }
   }
-
+  _renderSyncActionRow();
   _setSyncStatus(_syncStatus);
 }
 
-/** Live validation + auto-format while typing a pairing code. */
+/** Live validation + auto-format while typing a pairing code (STU-XXX-XXX-YYYY-YYYY-YYYY). */
 function syncOnCodeInput(el) {
   if (!el) return;
-  // Strip anything that isn't a code letter or a dash, uppercase as we go.
-  let raw = String(el.value || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
-  // Collapse multiple dashes and trim leading/trailing
-  raw = raw.replace(/-+/g, '-').replace(/^-|-$/g, '');
-  // Live-format STU-XXX-XXX: re-insert dashes as the user types so paste
-  // without dashes and bare-typed codes match the displayed format (#15
-  // in UX audit). Strip all dashes, then reinsert at positions 3 and 6
-  // of the body (after STU).
-  const compact = raw.replace(/-/g, '');
-  if (compact.startsWith('STU') && compact.length > 3) {
-    const body = compact.slice(3);
-    let formatted = 'STU';
-    if (body.length > 0) formatted += '-' + body.slice(0, 3);
-    if (body.length > 3) formatted += '-' + body.slice(3, 6);
-    raw = formatted;
-  } else if (!compact.startsWith('STU') && compact.length >= 3) {
-    // User pasted bare body — treat as STU-prefix code.
-    let formatted = 'STU';
-    if (compact.length > 0) formatted += '-' + compact.slice(0, 3);
-    if (compact.length > 3) formatted += '-' + compact.slice(3, 6);
-    raw = formatted;
+  let compact = String(el.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // "STU" is the display prefix, re-added below; the formatter is a no-op on
+  // the compact form, so a room that itself starts with S-T-U still parses.
+  if (compact.startsWith('STU')) compact = compact.slice(3);
+  compact = compact.slice(0, SYNC_CODE_LEN);
+  let formatted = '';
+  if (compact) {
+    formatted = 'STU';
+    let at = 0;
+    for (const g of [3, 3, 4, 4, 4]) {
+      if (at >= compact.length) break;
+      formatted += '-' + compact.slice(at, at + g);
+      at += g;
+    }
   }
-  el.value = raw;
+  // Only rewrite the field when formatting changed it — rewriting
+  // unconditionally jumps the caret to the end on every keystroke.
+  if (el.value !== formatted) el.value = formatted;
   const btn = document.getElementById('syncConnectBtn');
   const hint = document.getElementById('syncInputHint');
-  const ok = _isValidCode(raw);
+  const parsed = _parseCode(formatted);
+  const n = compact.length;
+  let ok = parsed.ok, text = '', err = false;
+  if (!n) {
+    text = 'Enter the pairing code shown on the other device (' + SYNC_CODE_LEN + ' characters after STU-; dashes and case don\'t matter).';
+  } else if (n === SYNC_ROOM_LEN) {
+    // A bare room only reaches a device we already hold a key for.
+    if (_getPairKey(_codeToId(compact))) {
+      text = 'Ready — a device paired before. Press Connect.';
+    } else {
+      ok = false;
+      text = 'Keep typing — ' + n + '/' + SYNC_CODE_LEN + ' characters so far. A 6-character code only reaches a device that is already paired with this one.';
+    }
+  } else if (!ok) {
+    text = n < SYNC_CODE_LEN ? ('Keep typing — ' + n + '/' + SYNC_CODE_LEN + ' characters so far.') : parsed.message;
+    err = true;
+  } else {
+    text = 'Ready — press Connect.';
+  }
   if (btn) btn.disabled = !ok;
   if (hint) {
-    if (!raw) {
-      hint.textContent = 'Enter the 6-character code shown on the other device (e.g. STU-AB3-C9D).';
-      hint.classList.remove('sync-input-hint--err');
-    } else if (!ok) {
-      const n = _normalizeCode(raw).length;
-      hint.textContent = n < 6
-        ? `Keep typing — ${n}/6 characters so far.`
-        : 'Too long — pairing codes are 6 letters/digits after STU-.';
-      hint.classList.add('sync-input-hint--err');
-    } else {
-      hint.textContent = 'Ready — press Connect.';
-      hint.classList.remove('sync-input-hint--err');
-    }
+    hint.textContent = text;
+    hint.classList.toggle('sync-input-hint--err', err);
   }
 }
 
 function syncEnable() {
   _syncEnabled = true;
   renderSyncPanel();
-  syncInit();
+  syncInit().then(() => renderSyncPanel()).catch(e => console.warn('[Sync] init failed', e));
 }
 
 function syncConnectFromInput() {
-  const val = (document.getElementById('syncCodeInput')?.value || '').trim();
-  if (!_isValidCode(val)) {
-    _setSyncStatus('error', 'Invalid code — expected 6 letters/digits after STU-');
+  const el = document.getElementById('syncCodeInput');
+  const val = (el?.value || '').trim();
+  const parsed = _parseCode(val);
+  if (!parsed.ok) {
+    _setSyncStatus('error', parsed.message);
     return;
   }
-  syncConnect(val, { manual: true });
+  if (!parsed.secret && !_getPairKey(_codeToId(parsed.room))) {
+    _setSyncStatus('error', 'Enter the full pairing code shown on the other device (18 characters after STU-). Older 6-character codes can no longer pair.');
+    return;
+  }
+  // The secret has done its job; don't leave it on screen.
+  if (el) { el.value = ''; syncOnCodeInput(el); }
+  syncConnect(val);
 }

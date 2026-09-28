@@ -1,3 +1,12 @@
+// ── Frame guard ─────────────────────────────────────────────────────────────
+// Second line of defence behind the clickjacking guard in js/pwa.js: the
+// meta CSP can't carry frame-ancestors, so if this document is somehow still
+// being parsed inside another site's frame, refuse to boot before a single
+// byte of state is read (loadState() below never runs).
+if (window.top !== window.self) {
+  throw new Error('Odta refuses to boot inside a frame');
+}
+
 // ── Global error safety net ─────────────────────────────────────────────────
 // Catches unhandled exceptions and promise rejections so they never vanish
 // silently.  Logs to console (no user-facing toast to avoid spam).
