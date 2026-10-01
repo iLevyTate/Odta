@@ -139,3 +139,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .cursor/
 .playwright-mcp/
+
+# Rendered promo films (tools/promo). They go to posts and release notes, never the repository.
+*.mp4
