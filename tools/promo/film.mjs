@@ -702,7 +702,7 @@ export async function record(cut, argv) {
         await s.page.screenshot({ path: file }).catch(() => {});
         log(`  ${s.kind} at the failure: ${file}`);
       }
-      throw new Error(`frame ${f}: ${e.message.split('\n')[0]}`);
+      throw new Error(`frame ${f}: ${e.message.split('\n')[0]}`, { cause: e });
     }
     async function play() {
     for (const beat of cut.beats) {
