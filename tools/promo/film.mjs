@@ -9,13 +9,21 @@
  * requestAnimationFrame callbacks fire when their time comes, and every CSS
  * animation and transition is paused and seeked to the frame's time before
  * the screenshot. A slow machine renders slower, never choppier, and the two
- * screens cannot drift apart because neither has a clock of its own.
+ * screens cannot drift apart because neither has a clock of its own. Random
+ * numbers are seeded per screen, so a pairing code or a fresh id comes out the
+ * same on every render.
+ *
+ * Around the walkthrough the film can carry a title card, an end card, timed
+ * captions in a band under the devices, a ground that changes between scenes,
+ * and a soundtrack laid under the picture. Captions and grounds are timed in
+ * walkthrough seconds, the clock the beats run on.
  *
  * A cut supplies what is app-specific: the directory to serve, the moment the
  * film pretends it is, how to seed and settle each page, the beats, the
- * frame's colours and the end card. See promo.mjs beside this file.
+ * frame's colours, and whatever cards and captions it wants. See promo.mjs
+ * beside this file.
  *
- * Requires Chromium (via playwright) and ffmpeg with H.264.
+ * Requires Chromium (via playwright) and ffmpeg with H.264 and AAC.
  */
 
 import { spawn } from 'node:child_process';
@@ -25,19 +33,39 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 
-/*
- * Geometry, on a 1920x1080 canvas. Both screens are scaled by 0.9, so a CSS
- * pixel is the same size on each and the phone reads as the same page at a
- * narrower width rather than a zoomed one. The phone's bezel covers the
- * desktop page from x=1429 to its right edge at 1440, so a cut whose desktop
- * layout reaches past 1428 loses that strip behind the phone.
- */
 export const WIDE = { w: 1920, h: 1080 };
 export const DESKTOP = { width: 1440, height: 900 };
 export const HANDSET = { width: 393, height: 852 };
-const WIN = { x: 128, y: 114, w: 1296, bar: 42, r: 14 };
-const VIEWPORT = { x: WIN.x, y: WIN.y + WIN.bar, w: 1296, h: 810 };
-const PHONE = { x: 1426, y: 157, w: 354, h: 767, bezel: 12, r: 34 };
+
+/**
+ * Where the window and the phone sit on the canvas. Both screens share one
+ * scale, so a CSS pixel is the same size on each and the phone reads as the
+ * same page at a narrower width rather than a zoomed one. The phone's bezel
+ * overlaps the window by a few pixels, covering only the desktop page's last
+ * 11 or so CSS pixels. At the default 0.9 the pair is centred; a captioned cut
+ * shrinks it and lifts it to `top`, leaving a band beneath for the words.
+ */
+export function geometry({ scale = 0.9, top = null } = {}) {
+  const k = scale / 0.9;
+  const vw = Math.round(DESKTOP.width * scale);
+  const vh = Math.round(DESKTOP.height * scale);
+  const bar = Math.round(42 * k);
+  const pw = Math.round(HANDSET.width * scale);
+  const ph = Math.round(HANDSET.height * scale);
+  const bezel = Math.round(12 * k);
+  const overlap = bezel - 2;
+  const group = vw + pw + 2 * bezel - overlap;
+  const x = Math.round((WIDE.w - group) / 2);
+  const y = top ?? Math.round((WIDE.h - bar - vh) / 2);
+  const WIN = { x, y, w: vw, bar, r: Math.round(14 * k) };
+  const VIEWPORT = { x, y: y + bar, w: vw, h: vh };
+  const bodyX = x + vw - overlap;
+  const bodyY = Math.round(y + (bar + vh - ph - 2 * bezel) / 2);
+  const PHONE = { x: bodyX + bezel, y: bodyY + bezel, w: pw, h: ph, bezel, r: Math.round(34 * k) };
+  return { WIN, VIEWPORT, PHONE, band: { x, y: y + bar + vh, w: group } };
+}
+
+let G = geometry();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -56,12 +84,17 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-/** Serves the app's directory, plus pages held in memory for the stills. */
+/**
+ * Serves the app's directory, plus pages held in memory: the stills, and any
+ * file the cut replaces (`{ type, body }` by exact path).
+ */
 function serve(root, pages) {
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (pages.has(path)) {
-      res.writeHead(200, { 'Content-Type': MIME['.html'] }).end(pages.get(path));
+      const p = pages.get(path);
+      const { type, body } = typeof p === 'string' ? { type: MIME['.html'], body: p } : p;
+      res.writeHead(200, { 'Content-Type': type }).end(body);
       return;
     }
     let target = resolve(root, path.replace(/^\/+/, ''));
@@ -106,17 +139,49 @@ export const ease = (t) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
 const clamp = (t) => Math.min(1, Math.max(0, t));
 
 /**
- * Installed in every page before its own scripts. It owns two things: the
- * seek that holds CSS animations to the film's time, and the pointer and tap
- * marks, which live in a closed shadow root so the app's styles cannot reach
- * them and its code cannot find them.
+ * Beats from cue times. Each entry is `[seconds, beat]`, the moment in the
+ * walkthrough the beat starts; it lasts until the next entry, and the last
+ * one until `end`. A voiceover's word timings drop straight in.
  */
-function inPage() {
+export function cue(entries, end) {
+  return entries.map(([at, beat], i) => {
+    const next = i + 1 < entries.length ? entries[i + 1][0] : end;
+    if (next <= at) throw new Error(`cue at ${at}s is not before the next one at ${next}s`);
+    return { ...beat, seconds: next - at };
+  });
+}
+
+/**
+ * Installed in every page before its own scripts. It owns three things: the
+ * seek that holds CSS animations to the film's time, seeded randomness, and
+ * the pointer and tap marks, which live in a closed shadow root so the app's
+ * styles cannot reach them and its code cannot find them.
+ */
+function inPage({ seed }) {
   // Taken before the fake clock is installed (the recorder adds this script
   // first), so a frame can wait in real time for the browser.
   const realTimeout = window.setTimeout.bind(window);
   const seen = new WeakMap();
   let marks = null;
+
+  // mulberry32. A pairing code, a fresh id or a shuffled tip comes out the
+  // same on every render, and different on the two screens.
+  let a = seed >>> 0;
+  const rand = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  Math.random = rand;
+  if (window.crypto?.getRandomValues) {
+    Crypto.prototype.getRandomValues = function getRandomValues(view) {
+      const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+      for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(rand() * 256);
+      return view;
+    };
+  }
 
   // A View Transition's animations are created a real frame after it starts
   // and run for a few hundred ms, which a slow screenshot can outlast. They
@@ -128,8 +193,8 @@ function inPage() {
       const t = native.apply(this, args);
       transitions.add(t);
       t.ready.then(() => {
-        for (const a of document.getAnimations()) {
-          if (String(a.effect?.pseudoElement ?? '').startsWith('::view-transition')) a.pause();
+        for (const anim of document.getAnimations()) {
+          if (String(anim.effect?.pseudoElement ?? '').startsWith('::view-transition')) anim.pause();
         }
       }).catch(() => {});
       t.finished.catch(() => {}).finally(() => transitions.delete(t));
@@ -178,23 +243,23 @@ function inPage() {
       // instant rather than wherever real time had got to.
       const pending = [...transitions].map((t) => t.ready.catch(() => {}));
       if (pending.length) await Promise.race([Promise.all(pending), new Promise((r) => realTimeout(r, 3000))]);
-      for (const a of document.getAnimations()) {
-        let s = seen.get(a);
+      for (const anim of document.getAnimations()) {
+        let s = seen.get(anim);
         // An animation is timed from the first frame that sees it; one the
         // app restarts after it finished starts its clock again.
-        if (!s || (s.done && a.playState !== 'finished')) {
+        if (!s || (s.done && anim.playState !== 'finished')) {
           s = { start: now, done: false };
-          seen.set(a, s);
+          seen.set(anim, s);
         }
         if (s.done) continue;
-        const end = a.effect ? a.effect.getComputedTiming().endTime : Infinity;
-        const local = (now - s.start) * (a.playbackRate || 1);
+        const end = anim.effect ? anim.effect.getComputedTiming().endTime : Infinity;
+        const local = (now - s.start) * (anim.playbackRate || 1);
         if (Number.isFinite(end) && local >= end) {
           s.done = true;
-          a.finish();
+          anim.finish();
         } else {
-          a.pause();
-          a.currentTime = local;
+          anim.pause();
+          anim.currentTime = local;
         }
       }
       const el = ensure();
@@ -333,22 +398,31 @@ function makeContext(screen, k, n, fps) {
       }, { sel: selector, y });
     },
     /**
-     * Eases the page so the target ends up centred (or `block: 'start'`, its
-     * top `offset` px from the viewport's top) over the first `share` of the
-     * beat. The distance is measured on the beat's first frame.
+     * Eases a scroller so the target ends up centred in it (or, with
+     * `block: 'start'`, its top `offset` px below the scroller's top) over the
+     * first `share` of the beat. The scroller is the page unless `within`
+     * names one, such as a modal. The distance is measured on the first frame.
      */
-    async bring(target, { block = 'center', offset = 0, share = 0.85 } = {}) {
+    async bring(target, { block = 'center', offset = 0, share = 0.85, within = null } = {}) {
       if (k === 0) {
-        screen.scrollFrom = await page.evaluate(() => window.scrollY);
-        screen.scrollTo = await page.locator(target).first().evaluate((el, { block, offset }) => {
+        const plan = await page.locator(target).first().evaluate((el, { block, offset, within }) => {
+          const box = within ? document.querySelector(within) : null;
+          const sc = box ?? document.scrollingElement;
           const r = el.getBoundingClientRect();
-          const y = block === 'start' ? r.top - offset : r.top - (innerHeight - r.height) / 2;
-          const max = document.scrollingElement.scrollHeight - innerHeight;
-          return Math.max(0, Math.min(max, window.scrollY + y));
-        }, { block, offset });
+          const top = box ? box.getBoundingClientRect().top : 0;
+          const height = box ? box.clientHeight : window.innerHeight;
+          const d = block === 'start' ? r.top - top - offset : r.top - top - (height - r.height) / 2;
+          const max = sc.scrollHeight - height;
+          return { from: sc.scrollTop, to: Math.max(0, Math.min(max, sc.scrollTop + d)) };
+        }, { block, offset, within });
+        screen.bringPlan = plan;
       }
-      const y = screen.scrollFrom + (screen.scrollTo - screen.scrollFrom) * ease(clamp(p / share));
-      await page.evaluate((top) => window.scrollTo({ top, behavior: 'instant' }), y);
+      const { from, to } = screen.bringPlan;
+      const y = from + (to - from) * ease(clamp(p / share));
+      await page.evaluate(({ within, y }) => {
+        const sc = within ? document.querySelector(within) : document.scrollingElement;
+        if (sc) sc.scrollTo({ top: y, behavior: 'instant' });
+      }, { within, y });
     },
     /** Desktop: puts the pointer, and the real mouse, at a page point. */
     async pointAt({ x, y }, { down = false } = {}) {
@@ -413,8 +487,12 @@ function holes(path) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
-/** A still: the cut's ground and fonts under whatever the layer draws. */
+/**
+ * A still: the cut's fonts, and `.ground` painted in its ground, under
+ * whatever the layer draws. `band` is the caption band's box, for captions.
+ */
 function sheet(look, css, body) {
+  const { band } = G;
   return `<!doctype html><meta charset="utf-8"><style>
     ${look.fonts ?? ''}
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -422,6 +500,7 @@ function sheet(look, css, body) {
     body { font-family: ${look.sans}; -webkit-font-smoothing: antialiased; }
     .mono { font-family: ${look.mono}; }
     .ground { position: absolute; inset: 0; overflow: hidden; background: ${look.ground}; }
+    .band { position: absolute; left: ${band.x}px; top: ${band.y}px; width: ${band.w}px; height: ${WIDE.h - band.y}px; }
     ${css}
   </style>${body}`;
 }
@@ -432,30 +511,32 @@ function sheet(look, css, body) {
  * and an address pill.
  */
 function backHtml(look, address) {
+  const { WIN, VIEWPORT } = G;
   const slash = address.indexOf('/');
   const host = slash < 0 ? address : address.slice(0, slash);
   const rest = slash < 0 ? '' : address.slice(slash);
   const c = look.chrome;
+  const pill = Math.round(WIN.bar * 0.62);
   return sheet(look, `
     .cut { position: absolute; inset: 0; -webkit-mask-image: ${holes(roundRect(VIEWPORT, WIN.r, false))}; }
     .window {
       position: absolute; left: ${WIN.x}px; top: ${WIN.y}px;
       width: ${WIN.w}px; height: ${WIN.bar + VIEWPORT.h}px; border-radius: ${WIN.r}px;
       background: ${c.page};
-      box-shadow: 0 0 0 1px ${c.edge}, 0 40px 110px -30px rgba(0,0,0,.75), ${c.glow};
+      box-shadow: 0 0 0 1px ${c.edge}, 0 40px 110px -30px ${c.shadow ?? 'rgba(0,0,0,.75)'}, ${c.glow};
     }
     .bar {
       position: absolute; left: 0; right: 0; top: 0; height: ${WIN.bar}px;
       border-radius: ${WIN.r}px ${WIN.r}px 0 0;
       background: ${c.bar}; border-bottom: 1px solid ${c.rule};
     }
-    .dots { position: absolute; left: 18px; top: 15px; display: flex; gap: 8px; }
+    .dots { position: absolute; left: 18px; top: ${Math.round((WIN.bar - 12) / 2)}px; display: flex; gap: 8px; }
     .dots i { width: 12px; height: 12px; border-radius: 50%; background: ${c.dots}; }
     .address {
-      position: absolute; left: 50%; top: 8px; transform: translateX(-50%);
-      min-width: 520px; height: 26px; padding: 0 22px; border-radius: 13px;
+      position: absolute; left: 50%; top: ${Math.round((WIN.bar - pill) / 2)}px; transform: translateX(-50%);
+      min-width: 480px; height: ${pill}px; padding: 0 22px; border-radius: ${pill / 2}px;
       background: ${c.pill}; border: 1px solid ${c.pillEdge};
-      font-size: 13px; line-height: 24px; text-align: center; letter-spacing: .01em;
+      font-size: 13px; line-height: ${pill - 2}px; text-align: center; letter-spacing: .01em;
       color: ${c.path}; white-space: nowrap;
     }
     .address span { color: ${c.host}; }`, `
@@ -476,6 +557,7 @@ function backHtml(look, address) {
  * window as well as the ground.
  */
 function phoneHtml(look) {
+  const { PHONE } = G;
   const b = {
     x: PHONE.x - PHONE.bezel,
     y: PHONE.y - PHONE.bezel,
@@ -488,7 +570,7 @@ function phoneHtml(look) {
       position: absolute; left: ${b.x}px; top: ${b.y}px; width: ${b.w}px; height: ${b.h}px;
       border-radius: ${PHONE.r + PHONE.bezel}px;
       background: linear-gradient(148deg, #5d6470 0%, #262b33 16%, #0e1116 46%, #0b0e13 72%, #474e59 100%);
-      box-shadow: 0 0 0 1px rgba(255,255,255,.10), -18px 30px 70px -10px rgba(0,0,0,.7), ${look.chrome.phoneGlow};
+      box-shadow: 0 0 0 1px rgba(255,255,255,.10), -18px 30px 70px -10px rgba(0,0,0,.6), ${look.chrome.phoneGlow};
     }
     .rim {
       position: absolute;
@@ -499,6 +581,15 @@ function phoneHtml(look) {
     }`, `
     <div class="cut"><div class="body"></div></div>
     <div class="rim"></div>`);
+}
+
+/**
+ * The scenes' grounds: `cut.scenes` when the ground or the address changes
+ * along the way, otherwise one scene from `cut.look` and `cut.addresses`.
+ */
+function scenesOf(cut) {
+  if (cut.scenes) return cut.scenes.map((s) => ({ fade: 0, ...s, look: s.look ?? cut.look }));
+  return (cut.addresses ?? [{ at: 0, text: '' }]).map((a) => ({ at: a.at, address: a.text, look: cut.look, fade: 0 }));
 }
 
 async function drawStills(browser, origin, pages, dir, cut) {
@@ -514,65 +605,136 @@ async function drawStills(browser, origin, pages, dir, cut) {
     return file;
   };
   const backs = [];
-  for (const [i, a] of cut.addresses.entries()) backs.push({ at: a.at, file: await draw(`back-${i}`, backHtml(cut.look, a.text), true) });
+  for (const [i, s] of scenesOf(cut).entries()) {
+    backs.push({ at: s.at, fade: s.fade, file: await draw(`back-${i}`, backHtml(s.look, s.address), true) });
+  }
   const phone = await draw('phone', phoneHtml(cut.look), true);
+  const captions = [];
+  for (const [i, c] of (cut.captions ?? []).entries()) {
+    const look = c.look ?? cut.look;
+    captions.push({ ...c, file: await draw(`caption-${i}`, sheet(look, cut.captionCss ?? '', c.html), true) });
+  }
   const card = cut.card ? await draw('card', sheet(cut.look, cut.card.css, cut.card.html), false) : null;
+  const intro = cut.intro ? await draw('intro', sheet(cut.look, cut.intro.css, cut.intro.html), false) : null;
   await page.close();
-  return { backs, phone, card };
+  return { backs, phone, captions, card, intro };
 }
 
 const H264 = ['-c:v', 'libx264', '-preset', 'slow', '-crf', '18',
-  '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.1',
-  '-movflags', '+faststart', '-an'];
+  '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.1', '-movflags', '+faststart'];
 
-/** One ffmpeg pass: both screens scaled into their holes, the stills over them. */
-async function compose(ffmpeg, { desk, phone, stills, out, fps, frames, outro, dip, start }) {
+/**
+ * One ffmpeg pass. Both screens are scaled into their holes and the stills
+ * laid over them; the captions go on top, each fading in and out; then a
+ * title card before and an end card after, each meeting the walkthrough
+ * through black; then the soundtrack under the lot.
+ */
+async function compose(ffmpeg, { desk, phone, stills, out, fps, frames, start, cut, audio }) {
+  const { VIEWPORT, PHONE } = G;
   await mkdir(dirname(resolve(out)), { recursive: true });
   const seconds = frames / fps;
-  const still = (file, length) => ['-loop', '1', '-framerate', String(fps), '-t', String(length), '-i', file];
-  const inputs = [
-    '-framerate', String(fps), '-i', join(desk, 'f%06d.png'),
-    '-framerate', String(fps), '-i', join(phone, 'f%06d.png'),
-  ];
+  const f3 = (n) => n.toFixed(3);
+  const inputs = [];
+  let n = 0;
+  const input = (...args) => {
+    inputs.push(...args);
+    return n++;
+  };
+  const still = (file, length) => input('-loop', '1', '-framerate', String(fps), '-t', String(length), '-i', file);
+
+  const deskIn = input('-framerate', String(fps), '-i', join(desk, 'f%06d.png'));
+  const phoneIn = input('-framerate', String(fps), '-i', join(phone, 'f%06d.png'));
   const filter = [
-    `[0:v]scale=${VIEWPORT.w}:${VIEWPORT.h}:flags=lanczos,setsar=1,` +
+    `[${deskIn}:v]scale=${VIEWPORT.w}:${VIEWPORT.h}:flags=lanczos,setsar=1,` +
       `pad=${WIDE.w}:${WIDE.h}:${VIEWPORT.x}:${VIEWPORT.y}:color=black[l0]`,
   ];
-  // Each address owns the stretch until the next one, in output seconds.
+  // Grounds stack in order, each from its moment on, fading in over the one
+  // before when it has a fade.
+  let layer = 'l0';
   stills.backs.forEach((b, i) => {
-    inputs.push(...still(b.file, seconds));
-    const from = (b.at - start).toFixed(4);
-    const to = i + 1 < stills.backs.length ? (stills.backs[i + 1].at - start).toFixed(4) : '1e9';
-    filter.push(`[${i + 2}:v]format=rgba[b${i}]`);
-    filter.push(`[l${i}][b${i}]overlay=0:0:format=auto:enable='between(t,${from},${to})'[l${i + 1}]`);
+    const idx = still(b.file, seconds);
+    const at = Math.max(0, b.at - start);
+    const fade = b.fade > 0 && b.at > 0 ? `,fade=t=in:st=${f3(at)}:d=${b.fade}:alpha=1` : '';
+    filter.push(`[${idx}:v]format=rgba${fade}[b${i}]`);
+    filter.push(`[${layer}][b${i}]overlay=0:0:format=auto:enable='gte(t,${f3(at)})'[g${i}]`);
+    layer = `g${i}`;
   });
-  const nb = stills.backs.length;
-  inputs.push(...still(stills.phone, seconds));
-  filter.push(`[1:v]scale=${PHONE.w}:${PHONE.h}:flags=lanczos,setsar=1[screen]`);
-  filter.push(`[l${nb}][screen]overlay=${PHONE.x}:${PHONE.y}[held]`);
-  filter.push(`[${nb + 2}:v]format=rgba[body]`);
-  const card = stills.card && outro > 0;
-  filter.push(`[held][body]overlay=0:0:format=auto,format=yuv420p,setsar=1` +
-    (card ? `,fade=t=out:st=${(seconds - dip).toFixed(3)}:d=${dip}[main]` : '[v]'));
-  if (card) {
-    inputs.push(...still(stills.card, outro));
-    filter.push(`[${nb + 3}:v]format=yuv420p,setsar=1,fade=t=in:st=0:d=${dip}[card]`);
-    filter.push('[main][card]concat=n=2:v=1:a=0[v]');
+  const bodyIn = still(stills.phone, seconds);
+  filter.push(`[${phoneIn}:v]scale=${PHONE.w}:${PHONE.h}:flags=lanczos,setsar=1[screen]`);
+  filter.push(`[${layer}][screen]overlay=${PHONE.x}:${PHONE.y}[held]`);
+  filter.push(`[${bodyIn}:v]format=rgba[body]`);
+  filter.push('[held][body]overlay=0:0:format=auto[dev]');
+  layer = 'dev';
+  stills.captions.forEach((c, i) => {
+    const from = c.from - start;
+    const to = c.to - start;
+    if (to <= 0 || from >= seconds) return;
+    const fi = c.fadeIn ?? 0.35;
+    const fo = c.fadeOut ?? 0.35;
+    const begin = Math.max(0, from);
+    // Only as long as it is on screen, shifted to its moment: twenty captions
+    // looped for the whole film would each be decoded on every frame.
+    const idx = still(c.file, Math.min(to, seconds) - begin);
+    filter.push(`[${idx}:v]format=rgba,setpts=PTS+${f3(begin)}/TB` +
+      (fi > 0 && from >= 0 ? `,fade=t=in:st=${f3(begin)}:d=${fi}:alpha=1` : '') +
+      (fo > 0 ? `,fade=t=out:st=${f3(to - fo)}:d=${fo}:alpha=1` : '') + `[c${i}]`);
+    filter.push(`[${layer}][c${i}]overlay=0:0:format=auto:eof_action=pass[k${i}]`);
+    layer = `k${i}`;
+  });
+
+  const whole = start === 0 && frames > 0;
+  const intro = whole && stills.intro ? cut.intro : null;
+  const card = stills.card && cut.outro > 0 ? cut : null;
+  const fadeIn = cut.fade?.in ?? 0;
+  const fadeOut = cut.fade?.out ?? 0;
+  const dip = cut.dip ?? 0.6;
+  // The walkthrough's own ends: a dip where it meets a card, the film's
+  // fade where it is the first or last thing on screen.
+  const mainIn = intro ? dip / 2 : whole ? fadeIn : 0;
+  const mainOut = card ? dip : fadeOut;
+  filter.push(`[${layer}]format=yuv420p,setsar=1` +
+    (mainIn > 0 ? `,fade=t=in:st=0:d=${mainIn}` : '') +
+    (mainOut > 0 ? `,fade=t=out:st=${f3(seconds - mainOut)}:d=${mainOut}` : '') + '[main]');
+  const parts = [];
+  let total = seconds;
+  if (intro) {
+    const idx = still(stills.intro, intro.seconds);
+    filter.push(`[${idx}:v]format=yuv420p,setsar=1` +
+      (fadeIn > 0 ? `,fade=t=in:st=0:d=${fadeIn}` : '') +
+      `,fade=t=out:st=${f3(intro.seconds - dip / 2)}:d=${dip / 2}[intro]`);
+    parts.push('[intro]');
+    total += intro.seconds;
   }
-  await run(ffmpeg, ['-y', ...inputs, '-filter_complex', filter.join(';'), '-map', '[v]', ...H264, out]);
-  return seconds + (card ? outro : 0);
+  parts.push('[main]');
+  if (card) {
+    const idx = still(stills.card, cut.outro);
+    filter.push(`[${idx}:v]format=yuv420p,setsar=1,fade=t=in:st=0:d=${dip}` +
+      (fadeOut > 0 ? `,fade=t=out:st=${f3(cut.outro - fadeOut)}:d=${fadeOut}` : '') + '[card]');
+    parts.push('[card]');
+    total += cut.outro;
+  }
+  filter.push(parts.length > 1 ? `${parts.join('')}concat=n=${parts.length}:v=1:a=0[v]` : '[main]null[v]');
+
+  const sound = audio && whole ? input('-i', audio) : null;
+  await run(ffmpeg, [
+    '-y', ...inputs, '-filter_complex', filter.join(';'), '-map', '[v]',
+    ...(sound === null ? ['-an'] : ['-map', `${sound}:a:0`, '-c:a', 'aac', '-b:a', '192k', '-ar', '48000']),
+    ...H264, '-t', f3(total), out,
+  ]);
+  return total;
 }
 
 /* ═══════════════════════════════════════════════════════════════ record ══ */
 
 function parseArgs(argv, cut) {
-  const o = { out: cut.out, fps: 30, ffmpeg: 'ffmpeg', from: 0, to: Infinity, card: true, quiet: false };
+  const o = { out: cut.out, fps: 30, ffmpeg: 'ffmpeg', from: 0, to: Infinity, card: true, quiet: false, audio: null };
   for (let i = 0; i < argv.length; i += 1) {
     switch (argv[i]) {
       case '--out': o.out = argv[++i]; break;
       case '--fps': o.fps = Number(argv[++i]); break;
       case '--from': o.from = Number(argv[++i]); break;
       case '--to': o.to = Number(argv[++i]); break;
+      case '--audio': o.audio = argv[++i]; break;
       case '--no-end-card': o.card = false; break;
       case '--ffmpeg': o.ffmpeg = argv[++i]; break;
       case '--quiet': o.quiet = true; break;
@@ -591,11 +753,14 @@ Usage
 
 Options
   --out <file>      .mp4                          (default ${cut.out})
+  --audio <file>    lay this file's first audio track under the film; a
+                    video file is fine, only its sound is used
   --fps <n>         frames per second                         (default 30)
-  --from <s>        start the output this many seconds in      (default 0)
-  --to <s>          end the output here                   (default the end)
+  --from <s>        start the walkthrough this many seconds in (default 0)
+  --to <s>          end it here                           (default the end)
                     Frames outside the window are still played, only not
                     shot, so a preview of the middle shows the same state.
+                    A window leaves out the cards and the soundtrack.
   --no-end-card     end on the walkthrough
   --ffmpeg <path>   ffmpeg binary                          (default ffmpeg)
   --quiet           only print the output path
@@ -626,16 +791,17 @@ export async function record(cut, argv) {
     process.exit(1);
   }
 
-  const pages = new Map();
+  G = geometry(cut.layout);
+  const pages = new Map(Object.entries(cut.replace ?? {}));
   const { server, origin } = await serve(resolve(cut.root), pages);
-  const frameDir = await mkdtemp(join(tmpdir(), `${cut.name}-promo-`));
+  const frameDir = await mkdtemp(join(tmpdir(), `${cut.name.toLowerCase()}-promo-`));
   const browser = await chromium.launch({ args: ['--hide-scrollbars', '--force-color-profile=srgb'] });
   const fps = opts.fps;
   const now = Date.parse(cut.now);
 
   try {
     const screens = [];
-    for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', HANDSET]]) {
+    for (const [kind, viewport, seed] of [['desktop', DESKTOP, 0x0dd1], ['phone', HANDSET, 0x0dd2]]) {
       const context = await browser.newContext({
         viewport,
         deviceScaleFactor: 1,
@@ -650,7 +816,7 @@ export async function record(cut, argv) {
       // The film is offline: anything off this origin fails fast rather than
       // landing on whichever frame the network happens to answer by.
       await context.route((url) => !url.href.startsWith(origin), (route) => route.abort());
-      await context.addInitScript(inPage);
+      await context.addInitScript(inPage, { seed });
       await context.clock.install({ time: now });
       if (cut.seed) await context.addInitScript(cut.seed, { kind, now });
       const page = await context.newPage();
@@ -693,6 +859,28 @@ export async function record(cut, argv) {
 
     let f = 0;
     let shot = 0;
+    const play = async () => {
+      for (const beat of cut.beats) {
+        const n = Math.max(1, Math.round(beat.seconds * fps));
+        for (let k = 0; k < n; k += 1) {
+          const tick = Math.round(((f + 1) * 1000) / fps) - Math.round((f * 1000) / fps);
+          const filmMs = Math.round(((f + 1) * 1000) / fps);
+          const shoot = f >= first && f < last;
+          const name = `f${String(shot).padStart(6, '0')}.png`;
+          await Promise.all(screens.map(async (s) => {
+            s.frame = f;
+            const handler = beat[s.kind] ?? beat.both;
+            if (handler) await handler(makeContext(s, k, n, fps));
+            await s.page.clock.runFor(tick);
+            await s.page.evaluate(({ t, m }) => window.__promo.frame(t, m), { t: filmMs, m: marksFor(s, fps) });
+            if (shoot) await s.page.screenshot({ path: join(s.dir, name) });
+          }));
+          if (shoot) shot += 1;
+          f += 1;
+          if (!opts.quiet && f % 30 === 0) process.stderr.write(`\r  ${f}/${total} frames`);
+        }
+      }
+    };
     try {
       await play();
     } catch (e) {
@@ -703,28 +891,6 @@ export async function record(cut, argv) {
         log(`  ${s.kind} at the failure: ${file}`);
       }
       throw new Error(`frame ${f}: ${e.message.split('\n')[0]}`, { cause: e });
-    }
-    async function play() {
-    for (const beat of cut.beats) {
-      const n = Math.max(1, Math.round(beat.seconds * fps));
-      for (let k = 0; k < n; k += 1) {
-        const tick = Math.round(((f + 1) * 1000) / fps) - Math.round((f * 1000) / fps);
-        const filmMs = Math.round(((f + 1) * 1000) / fps);
-        const shoot = f >= first && f < last;
-        const name = `f${String(shot).padStart(6, '0')}.png`;
-        await Promise.all(screens.map(async (s) => {
-          s.frame = f;
-          const handler = beat[s.kind] ?? beat.both;
-          if (handler) await handler(makeContext(s, k, n, fps));
-          await s.page.clock.runFor(tick);
-          await s.page.evaluate(({ t, m }) => window.__promo.frame(t, m), { t: filmMs, m: marksFor(s, fps) });
-          if (shoot) await s.page.screenshot({ path: join(s.dir, name) });
-        }));
-        if (shoot) shot += 1;
-        f += 1;
-        if (!opts.quiet && f % 30 === 0) process.stderr.write(`\r  ${f}/${total} frames`);
-      }
-    }
     }
     if (!opts.quiet) process.stderr.write('\n');
     for (const s of screens) {
@@ -745,9 +911,9 @@ export async function record(cut, argv) {
       out,
       fps,
       frames: shot,
-      outro: cut.outro ?? 5,
-      dip: cut.dip ?? 0.8,
       start: first / fps,
+      cut: { ...cut, outro: opts.card && last === total ? cut.outro ?? 5 : 0 },
+      audio: opts.audio ?? cut.audio ?? null,
     });
     const size = (await stat(out)).size;
     if (opts.quiet) console.log(out);
