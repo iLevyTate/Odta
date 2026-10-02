@@ -225,6 +225,11 @@
     if(window.Dropdown && typeof Dropdown.isOpen === 'function' && Dropdown.isOpen()) return;
     const top = topmost();
     if(!top) return;
+    // Attachment lightbox: a plain overlay above the task sheet, not on this
+    // stack. Its own Escape handler closes it; this one must not also close
+    // the task sheet underneath.
+    const lb = document.getElementById('attachLightbox');
+    if(lb && lb.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
     const s = _state.get(top);

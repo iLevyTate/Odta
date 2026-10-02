@@ -408,9 +408,16 @@ function executeIntelOp(op){
     }
     case 'UPDATE_TASK':{
       const t = findTask(a.id); if(!t) return null;
-      snap = { type: 'updated', id: t.id, before: { ...t } };
+      // Small models emit UPDATE_TASK {status:"done"} where MARK_DONE was
+      // meant. On a recurring task that permanently completed the habit
+      // instead of logging a cycle and advancing the due date, so route it
+      // through the same path MARK_DONE uses (with its deep snapshot —
+      // completeHabitCycle mutates completions[] in place).
+      const habitDone = a.status === 'done' && t.status !== 'done' && t.recur && typeof completeHabitCycle === 'function';
+      snap = { type: 'updated', id: t.id, before: habitDone ? JSON.parse(JSON.stringify(t)) : { ...t } };
       const allow = ['name','priority','status','dueDate','startDate','hiddenUntil','effort','energyLevel','category','description','url','estimateMin','starred','type','valuesAlignment','valuesNote','tags'];
-      allow.forEach(f => { if(a[f] !== undefined) t[f] = a[f]; });
+      allow.forEach(f => { if(a[f] !== undefined && !(habitDone && f === 'status')) t[f] = a[f]; });
+      if(habitDone){ completeHabitCycle(t); break; }
       if(t.status === 'done' && !t.completedAt) t.completedAt = stampCompletion();
       if(t.status !== 'done') t.completedAt = null;
       break;
@@ -465,10 +472,11 @@ function executeIntelOp(op){
         if(typeof window !== 'undefined' && typeof window._updateActiveTaskTickSchedule === 'function') window._updateActiveTaskTickSchedule();
       }
       for(const rid of removedIds){ if(typeof _taskIndexRemove === 'function') _taskIndexRemove(rid); }
+      const lmOf = {};
+      tasks.forEach(x => { if(removedIds.includes(x.id)) lmOf[x.id] = (typeof _tombstoneTs === 'function') ? _tombstoneTs(x) : Date.now(); });
       tasks = tasks.filter(x => x.id !== t.id && !desc.includes(x.id));
       if(typeof syncTaskDels === 'object' && syncTaskDels){
-        const ts = Date.now();
-        for(const rid of removedIds) syncTaskDels[rid] = ts;
+        for(const rid of removedIds) syncTaskDels[rid] = lmOf[rid] || Date.now();
       }
       if(typeof embedStore !== 'undefined' && embedStore && embedStore.purge){
         try{ embedStore.purge(removedIds).catch(() => {}); }catch(_){}
@@ -509,12 +517,14 @@ function executeIntelOp(op){
       // descendant's child.
       if(a.newParentId != null && a.newParentId === t.id) return null;
       if(a.newParentId && getTaskDescendantIds(t.id).includes(a.newParentId)) return null;
+      if(a.newParentId != null && !findTask(a.newParentId)) return null;
       snap = { type: 'updated', id: t.id, before: { ...t } };
       t.parentId = a.newParentId || null;
       break;
     }
     case 'CHANGE_LIST':{
       const t = findTask(a.id); if(!t) return null;
+      if(typeof lists !== 'undefined' && Array.isArray(lists) && !lists.some(l => l && l.id === a.listId)) return null;
       snap = { type: 'updated', id: t.id, before: { ...t } };
       t.listId = a.listId;
       break;
@@ -544,6 +554,7 @@ function executeIntelOp(op){
     }
     case 'REMOVE_CHECK':{
       const t = findTask(a.id); if(!t) return null;
+      if(!(t.checklist || []).some(c => c && c.id === a.checkId)) return null;
       snap = { type: 'updated', id: t.id, before: { checklist: [...(t.checklist || [])] } };
       t.checklist = (t.checklist || []).filter(c => c.id !== a.checkId);
       break;
@@ -564,6 +575,7 @@ function executeIntelOp(op){
     }
     case 'ADD_BLOCKER':{
       const t = findTask(a.id); if(!t || a.blockerId === a.id) return null;
+      if(!findTask(a.blockerId)) return null;
       snap = { type: 'updated', id: t.id, before: { blockedBy: [...(t.blockedBy || [])] } };
       if(!t.blockedBy) t.blockedBy = [];
       if(!t.blockedBy.includes(a.blockerId)) t.blockedBy.push(a.blockerId);
@@ -1360,7 +1372,13 @@ async function acceptProposedOps(ops, meta){
       showActionToast(
         'Reviewing first 50 of ' + ops.length + ' proposed changes',
         'Show next ' + Math.min(50, remaining),
-        () => { acceptProposedOps(overflow, meta); },
+        () => {
+          if(Array.isArray(_pendingOps) && _pendingOps.length){
+            if(typeof showExportToast === 'function') showExportToast('Finish reviewing the current batch first — the rest stays queued.');
+            return;
+          }
+          acceptProposedOps(overflow, meta);
+        },
         8000
       );
     } else if(typeof showExportToast === 'function'){
@@ -2200,6 +2218,10 @@ function acceptMdBreakdown(){
     added.push(child.id);
   }
   if(parent.collapsed) parent.collapsed = false;
+  if(typeof _pushUndo === 'function'){
+    _pushUndo('Breakdown: ' + added.length + ' subtask' + (added.length === 1 ? '' : 's'), added.map(id => ({ type: 'created', id })));
+    if(typeof _renderUndoBtn === 'function') _renderUndoBtn();
+  }
 
   body.innerHTML = `<span class="intel-muted">Added ${added.length} subtask${added.length === 1 ? '' : 's'}.</span>`;
   window._mdBreakdownSuggestion = null;
@@ -2254,12 +2276,13 @@ function intelMergeDuplicatePair(idA, idB){
   const first = na.length <= nb.length ? ta : tb;
   const second = first === ta ? tb : ta;
   const secondLbl = _intelFmtTaskTitle(second) || ('#' + second.id);
-  _pendingOps = [
+  const ops = [
     { name: 'ADD_NOTE', args: { id: first.id, text: `Merged duplicate: ${secondLbl}` } },
     { name: 'DELETE_TASK', args: { id: second.id } },
   ];
-  _renderPendingOps();
-  _setIntelStatus('idle', 'Review merge (delete duplicate)');
+  acceptProposedOps(ops, { source: 'dedupe', destructiveLevel: 'hard' })
+    .then(() => _setIntelStatus('idle', 'Review merge (delete duplicate)'))
+    .catch(() => {});
 }
 
 async function intelHarmonizeFields(){
@@ -3124,6 +3147,16 @@ async function genAutoRehydrateIfCached(){
   if(!cfg || !cfg.enabled) return;
   if(!isGenDownloaded(cfg.modelId)) return;
   if(isGenReady() && typeof getGenModel === 'function' && getGenModel() === cfg.modelId) return;
+  // downloadedIds only says the weights landed once. Safari and
+  // storage-pressure evictions empty Cache Storage without touching
+  // localStorage, and a "restore" would then re-fetch hundreds of MB on every
+  // page load. Skip when the transformers cache is gone; the explicit
+  // Download button still works.
+  if(typeof caches !== 'undefined' && caches && typeof caches.has === 'function'){
+    try{
+      if(!(await caches.has('transformers-cache'))) return;
+    }catch(_){ /* insecure context or storage access denied — keep legacy behaviour */ }
+  }
 
   // Safety net: force-hide the ribbon after 90s even if genLoad hangs
   // (e.g. stalled fetch, browser cache corruption, WebGPU driver timeout).

@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+A pass over the whole codebase for bugs the suites did not cover. No data-model change and no cache rotation; every fix is behind an existing test or a new one.
+
+### Sync and storage
+
+- Cross-tab merges doubled today's session history on every exchange (`[work, short]` became `[work, short, work, short]`), and because the doubled array never matched the other tab's copy the two tabs wrote it back to each other until the 400-entry cap. `_mergeSessionHistTail` now uses the same prefix rule the P2P merge got in v79.
+- A delete tombstone was stamped with `Date.now()`, which can sit behind the task's own `lastModified` (the monotonic bump, or a peer clock up to five minutes fast). The merge then kept the task and threw the tombstone away, so the deleted task came back. Tombstones from the Tasks tab, the add-undo and AI deletes are now stamped past the task's own clock.
+- When both devices dialled each other at once, the losing dial's 20 s timeout stayed armed, so a synced device flipped to "No response" and offered a Reconnect that dropped the live link.
+
+### Service worker and shell
+
+- `activate` deleted every Cache Storage bucket on the origin, including `transformers-cache`, so each release threw away the downloaded model weights (118 MB to 1.8 GB) and the "restore from cache" ribbon re-downloaded them. Only `odtaulai-v*` buckets are retired now, and the auto-rehydrate probes the bucket before starting.
+- The CI syntax check listed JS files by hand and had fallen ten modules behind; it globs now. The inline-handler guard missed unquoted attribute values.
+
+### Calendar feeds and quick-add parsing
+
+- `UNTIL` with a UTC clock was compared at local-date granularity, so a zone east of the cutoff got one phantom occurrence. The feed URL is now validated even when a CORS proxy wraps it (only the proxy host was checked before). The agenda feed dot sanitises its colour like the other sites.
+- A time range in quick-add ("Meeting 9am-10am") ended with the reminder at the END time and the title "Meeting -"; the sync parser's time is kept and the trailing dash stripped.
+
+### Timer, reminders, modals
+
+- Starting the timer from the command palette while a phase sat in "finished" re-ran phase completion (double count, second notification); while paused it reset the interval chimes. `startTimer` now advances or resumes as the dock button does.
+- Completing a parent (or the last subtask) left the running timer attached to a task the cascade had just completed.
+- After returning from the background, the catch-up ran before the page learned which alarms the service worker had already shown; the burst summary bypassed that dedupe entirely. Both wait for the fired list now, and alarm deadlines no longer jitter by up to a second on every rebuild.
+- Escape inside the attachment lightbox closed the whole task sheet. A plain click on the minimized dock puck expanded it off-screen on desktop; `pointercancel` left a drag in progress.
+
+### Proposed-op pipeline
+
+- `validateOps` accepted impossible dates (`2026-02-31`, `T25:99`), an empty `checkId`, any string as `category` (bypassing the hidden-category gate) and any scheme in `url`. The in-batch synthetic id for `CREATE_TASK` now comes from the real counter. Ask re-validates a previewed batch against live state when Apply is tapped, and `MOVE_TASK` / `CHANGE_LIST` / `ADD_BLOCKER` / `REMOVE_CHECK` refuse a target that no longer exists instead of writing a dangling id.
+- `UPDATE_TASK {status:"done"}` on a recurring task permanently completed the habit; it now logs a cycle like `MARK_DONE`. Breakdown subtasks are on the undo stack; the duplicate-merge proposal goes through `acceptProposedOps` so its badge and destructive level are its own; "Show next 50" no longer replaces an unreviewed batch.
+- Generation runs are serialised in the worker (two overlapping runs on one ONNX session threw). `ARCHITECTURE.md` now describes the opt-in auto mode and where the weights actually live.
+- The Ask answer-only path returned without clearing its 120 s abort watchdog. Harmless in the browser (an abort on a finished controller), but every Node test that reached it held the process for two minutes: the suite now finishes in about seven seconds instead of three.
+
 ## v81 (2026-09-27)
 
 A follow-up to v80's sync work, from a review of what its pairing still trusted. Three fixes: the first pairing and every manual re-pair no longer take the other device's word for it, the app refuses to run inside another site's frame, and the CI workflow runs with a read-only token. Nothing here changes the data model.

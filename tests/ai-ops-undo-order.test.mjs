@@ -42,7 +42,7 @@ test('aiUndo walks the flattened snapshots backwards', () => {
 
 test('DELETE_TASK mirrors removeTask bookkeeping', () => {
   const body = caseBody('DELETE_TASK');
-  assert.match(body, /syncTaskDels\[rid\] = ts/);
+  assert.match(body, /syncTaskDels\[rid\] = lmOf\[rid\] \|\| Date\.now\(\)/, 'tombstones stamped past each task\'s own clock');
   assert.match(body, /embedStore\.purge\(removedIds\)/);
   assert.match(body, /activeTaskId = null/);
 });

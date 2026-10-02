@@ -105,9 +105,15 @@ function initTimerDock(){
         dock._dragJustMoved = true;
         setTimeout(() => { dock._dragJustMoved = false; }, 0);
       }
+      else if(typeof _timerDockApplyPos === 'function'){
+        // Not a drag: drop the provisional coordinates pointerdown wrote so
+        // the dock keeps its saved/corner position when it expands.
+        _timerDockApplyPos(dock);
+      }
       drag = null;
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
     };
     const startDrag = (e, handle) => {
       if(e.button !== 0) return;
@@ -123,6 +129,7 @@ function initTimerDock(){
       try{ handle.setPointerCapture(e.pointerId); }catch(_){}
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp);
     };
     // The grip drags the expanded dock; the restore puck (shown when the dock
     // is collapsed to a circle) is also draggable so the minimized timer can be

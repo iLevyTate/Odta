@@ -74,7 +74,10 @@ function _applyChronoResult(base, r0){
   if(hasTime){
     const dayIso = (base.props.dueDate && !hasDate) ? base.props.dueDate : (chronoIso || base.props.dueDate);
     const dt = _localDateTimeFromParts(dayIso, start.getHours(), start.getMinutes());
-    if(dt) base.props.remindAt = dt;
+    // The sync parser may already have taken a time from this title (the
+    // start of "9am-10am"). Without a date in chrono's match, the remaining
+    // clock is the range's end, not a correction — keep the earlier one.
+    if(dt && !(base.props.remindAt && !hasDate)) base.props.remindAt = dt;
     if(dayIso){
       if(!base.props.dueDate) base.props.dueDate = dayIso;
       else if(hasDate && chronoIso) base.props.dueDate = chronoIso;
@@ -88,7 +91,7 @@ function _applyChronoResult(base, r0){
     let before = base.name.slice(0, r0.index).trim();
     const after = base.name.slice(r0.index + r0.text.length).trim();
     if(!after) before = before.replace(_ORPHAN_CONNECTOR, '').trim();
-    const name = (before + (before && after ? ' ' : '') + after).replace(/\s+/g, ' ').trim();
+    const name = (before + (before && after ? ' ' : '') + after).replace(/\s+/g, ' ').replace(/[\s\-–—:,]+$/, '').trim();
     // Never trade a named task for an empty row — if the date phrase was the
     // whole title, keep the original text.
     if(name) base.name = name;

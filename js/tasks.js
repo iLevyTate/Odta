@@ -450,11 +450,12 @@ async function addTask(){
     showActionToast('Task added', 'Undo', () => {
       const idx = tasks.findIndex(x => x.id === _undoId);
       if(idx >= 0){
+        const _gone = tasks[idx];
         tasks.splice(idx, 1);
         if(typeof _taskIndexRemove === 'function') _taskIndexRemove(_undoId);
         // Tombstone it: the add may already have been broadcast to another
         // tab / paired device, which would otherwise send it straight back.
-        if(typeof syncTaskDels === 'object' && syncTaskDels) syncTaskDels[_undoId] = Date.now();
+        if(typeof syncTaskDels === 'object' && syncTaskDels) syncTaskDels[_undoId] = (typeof _tombstoneTs === 'function') ? _tombstoneTs(_gone) : Date.now();
         renderTaskList();
         saveState('user');
         if(typeof announce === 'function') announce('Task removed');
@@ -1552,6 +1553,18 @@ function toggleTask(id, ev){
 // How long removeTask keeps a deleted task's attachment blobs around: the
 // 5 s Undo toast plus the 60 s Cmd+Z ring (ui.js _UNDO_TTL_MS), with slack.
 const ATTACH_PURGE_DELAY_MS = 65_000;
+/** Tombstone stamp that beats the task's own lastModified/completedAt clock. */
+function _tombstoneTs(t){
+  const lm = t ? (Number(t.lastModified) || Number(t.completedAt) || 0) : 0;
+  return Math.max(Date.now(), Number.isFinite(lm) ? lm + 1 : 0);
+}
+/** A status cascade can complete the task the timer is linked to. */
+function _detachTimerFromCascade(cascade){
+  if(typeof activeTaskId === 'undefined' || activeTaskId == null) return;
+  if(!Array.isArray(cascade) || !cascade.some(c => c && c.id === activeTaskId)) return;
+  const at = findTask(activeTaskId);
+  if(at && at.status === 'done' && typeof toggleTask === 'function') toggleTask(activeTaskId);
+}
 async function removeTask(id, ev){
   _stopEvt(ev);
   const task=findTask(id);if(!task)return;
@@ -1587,10 +1600,11 @@ async function removeTask(id, ev){
       for(const rid of toRemove) deleteAttachmentsForTask(rid).catch(()=>{});
     }
   };
+  const _lmOf={};
+  tasks.forEach(t=>{ if(toRemove.includes(t.id)) _lmOf[t.id]=(typeof _tombstoneTs==='function')?_tombstoneTs(t):Date.now(); });
   tasks=tasks.filter(t=>!toRemove.includes(t.id));
   if(typeof syncTaskDels==='object'&&syncTaskDels){
-    const ts = Date.now();
-    for(const rid of toRemove) syncTaskDels[rid]=ts;
+    for(const rid of toRemove) syncTaskDels[rid]=_lmOf[rid]||Date.now();
   }
   if(typeof embedStore !== 'undefined' && embedStore && embedStore.purge){
     embedStore.purge(toRemove).catch(()=>{});
@@ -1920,6 +1934,15 @@ function checkReminders(){
     }
   };
 
+  // Anything the service worker / a TimestampTrigger already announced while
+  // the page was away is consumed here, so neither the per-task branch nor
+  // the summary re-announces it.
+  if(typeof window!=='undefined' && window.OdtaAlarms){
+    for(let i = due.length - 1; i >= 0; i--){
+      const aid = 'task:' + due[i].t.id;
+      if(window.OdtaAlarms.wasFired(aid)){ window.OdtaAlarms.consume(aid); due.splice(i, 1); }
+    }
+  }
   if(due.length > REMINDER_BURST_MAX){
     const names = due.slice(0, 4).map(x => x.t.name).join(', ') + (due.length > 4 ? '…' : '');
     send(due.length + ' task reminders', names, {
@@ -2181,6 +2204,7 @@ function cycleStatus(id, ev){
       // Mark all open children done too, then bubble up: if this completes
       // the last sibling, the parent auto-completes.
       cascade = cascade.concat(_cascadeOnDone(id), _maybeAutoCompleteParent(id));
+      _detachTimerFromCascade(cascade);
     } else {
       t.completedAt=null;
     }
@@ -2244,6 +2268,7 @@ function toggleTaskDoneQuick(id, ev){
       if(activeTaskId===id){toggleTask(id)}
       // Cascade down to subtasks and bubble up if siblings are all done.
       cascade = cascade.concat(_cascadeOnDone(id), _maybeAutoCompleteParent(id));
+      _detachTimerFromCascade(cascade);
     }
     _pinTaskVisibleBriefly(id, 4000);
     cascade.forEach(c => _pinTaskVisibleBriefly(c.id, 4000));

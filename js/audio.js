@@ -579,16 +579,25 @@ document.addEventListener('visibilitychange',()=>{
     if(_keepaliveNode) _acquireWakeLock();
     // Catch up on any reminders that were missed while backgrounded
     // (setInterval is throttled to 1min+ in hidden tabs on most browsers)
-    if(typeof checkReminders==='function'){
-      try{checkReminders()}catch(e){}
-    }
     // Re-check timer state — if a phase completed while backgrounded,
     // the tick() function may not have fired; reconcile now. Passing the
     // stall lets timer.js discard stale scheduled audio, play any chime
     // that should already have sounded, and reschedule what remains.
-    if(typeof _reconcileTimerAfterWake==='function'){
-      try{_reconcileTimerAfterWake({audioStalledSec:stalledSec})}catch(e){}
-    }
+    // Both catch-ups wait for the fired-alarm list first (the service worker
+    // may have announced the phase / reminders while the page was frozen);
+    // otherwise they re-announce what was already shown.
+    const catchUp=()=>{
+      if(typeof checkReminders==='function'){
+        try{checkReminders()}catch(e){}
+      }
+      if(typeof _reconcileTimerAfterWake==='function'){
+        try{_reconcileTimerAfterWake({audioStalledSec:stalledSec})}catch(e){}
+      }
+    };
+    if(typeof window!=='undefined'&&window.OdtaAlarms&&typeof window.OdtaAlarms.refreshFired==='function'){
+      let p=null;try{p=window.OdtaAlarms.refreshFired()}catch(e){}
+      if(p&&typeof p.then==='function')p.then(catchUp,catchUp);else catchUp();
+    }else catchUp();
     _audioClockRef=null;
   }
 });

@@ -1029,7 +1029,19 @@ function _mergeIntervalsById(a, b){
 
 function _mergeSessionHistTail(a, b, maxLen){
   const cap = typeof maxLen === 'number' && maxLen > 0 ? maxLen : 400;
-  const out = [...(a || []), ...(b || [])];
+  // sessionHistory entries carry no id ({type:'work'}), so concatenating two
+  // copies of the same history doubled it on every cross-tab merge — and the
+  // doubled array never matched the remote, so each tab wrote back and the
+  // other doubled it again until the cap. Same prefix rule as the P2P merge
+  // (_syncMergeSessionHist): when one list is a prefix of the other, the
+  // longer one already contains everything.
+  const la = Array.isArray(a) ? a : [], lb = Array.isArray(b) ? b : [];
+  const short = la.length <= lb.length ? la : lb, long = la.length <= lb.length ? lb : la;
+  let prefix = true;
+  for(let i = 0; i < short.length; i++){
+    if(JSON.stringify(short[i]) !== JSON.stringify(long[i])){ prefix = false; break; }
+  }
+  const out = prefix ? long.slice() : [...la, ...lb];
   return out.length > cap ? out.slice(-cap) : out;
 }
 

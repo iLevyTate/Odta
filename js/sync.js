@@ -1305,6 +1305,8 @@ async function syncInit() {
       if(_myPeerId() < String(conn.peer)){ try{ conn.close(); }catch(e){} return; }
       const mine = _conn; _conn = null;
       try{ mine.close(); }catch(e){}
+      // The dial we just abandoned still had its timeout armed.
+      if(_connectTimeoutId){ clearTimeout(_connectTimeoutId); _connectTimeoutId = null; }
     }
     // Held pending until the peer proves a stored key (auto-accept, no
     // banner) or the active pairing code (Accept banner). Nothing else gets

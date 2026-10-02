@@ -341,7 +341,10 @@ function _askCtx(){
   const listsById = new Map();
   if(typeof tasks !== 'undefined' && Array.isArray(tasks)) tasks.forEach(t => tasksById.set(t.id, t));
   if(typeof lists !== 'undefined' && Array.isArray(lists)) lists.forEach(l => listsById.set(l.id, l));
-  return { tasksById, listsById };
+  // The validator simulates in-batch CREATE_TASK ids; give it the real
+  // counter so a follow-up op can reference the task it just created.
+  const nextId = (typeof taskIdCtr === 'number' && Number.isFinite(taskIdCtr)) ? taskIdCtr + 1 : undefined;
+  return { tasksById, listsById, nextId };
 }
 
 // ---- Instant intents: answered from the data, no model ---------------------
@@ -981,9 +984,15 @@ async function cognitaskRun(query, opts){
     const first = await _runAskProsePass(q, contextLines, priorMsgs, cfg, opts);
     if(first.chatAnswer){
       if(typeof pushAskHistory === 'function') pushAskHistory(q);
+      // The watchdog is cleared in the write-path finally below; these
+      // early returns skip it and left the 120 s cap timer armed (an abort
+      // on a finished controller in the browser, a two-minute stall for
+      // every Node test that reaches this path).
+      watch.clear();
       return { ok: true, ops: [], rejected: [], destructiveLevel: 'none', rawText: first.proseText, truncated: false, readRounds: 0, chatAnswer: first.chatAnswer, externalContent: externalReads };
     }
     if(mergedSignal.aborted){
+      watch.clear();
       return { ok: false, ops: [], rejected: [], destructiveLevel: 'none', rawText: first.proseText || '', truncated: false, readRounds: 0, reason: timeoutCtl.signal.aborted ? 'TIMEOUT' : 'ABORTED' };
     }
     allRaw = first.proseText || '';

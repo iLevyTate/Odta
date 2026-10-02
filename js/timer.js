@@ -135,7 +135,7 @@ function _syncRingState(){
 // beyond persistence, that marks this tab dirty (window._stateDirty) so a
 // cross-tab storage event merges (LWW) instead of wholesale _applyState(),
 // which would silently reset the running timer from the other tab's snapshot.
-function startTimer(){if(totalDuration<=0)return;running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
+function startTimer(){if(totalDuration<=0)return;if(finished){advancePhase();return}if(!running&&remaining<totalDuration&&remaining>0){resumeTimer();return}running=true;finished=false;startedAt=Date.now();pausedRemaining=remaining;fireCounts={};if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
 function pauseTimer(){running=false;clearInterval(tickId);tickId=null;const el=Math.max(0,Math.floor((Date.now()-startedAt)/1000));pausedRemaining=Math.max(0,pausedRemaining-el);remaining=pausedRemaining;if(activeTaskId&&taskStartedAt){const t=findTask(activeTaskId);if(t){t.totalSec+=Math.floor((Date.now()-taskStartedAt)/1000);taskStartedAt=null}}cancelScheduledAudio();maybeStopKeepalive();renderCtrls();_syncRingState();window._preserveTaskScroll=true;renderTaskList();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
 function resumeTimer(){running=true;startedAt=Date.now();if(cfg.linkTask&&phase==='work'&&activeTaskId)taskStartedAt=Date.now();clearInterval(tickId);tickId=setInterval(tick,250);schedulePhaseAudio();startKeepalive();renderCtrls();_syncRingState();saveState('user');if(typeof _updateActiveTaskTickSchedule==='function')_updateActiveTaskTickSchedule();if(typeof window!=='undefined'&&window.OdtaAlarms)window.OdtaAlarms.schedule();}
 function tick(){
@@ -830,7 +830,10 @@ function _pomodoroAlarms(){
   if(left <= 0) return [];
   return [{
     id: 'pomo',
-    at: Date.now() + left * 1000,
+    // Derived from the run's fixed start, not from a floored "left": a
+    // recomputed deadline that jitters by up to a second defeats the
+    // rebuild short-circuit and drops the fired/trigger carry-over.
+    at: startedAt + pausedRemaining * 1000,
     title: getPL(phase) + ' Complete',
     body: phase === 'work' ? 'Great work! Time for a break.' : 'Break over — back to focus.',
     tag: 'pomo-phase',
@@ -847,7 +850,7 @@ function _quickTimerAlarms(){
     if(left <= 0) return null;
     return {
       id: 'qt:' + qt.id,
-      at: now + left * 1000,
+      at: qt.startedAt + qt.pausedRem * 1000,
       title: 'Timer done',
       body: qt.label || '',
       tag: 'quick-' + qt.id,

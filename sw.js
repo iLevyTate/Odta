@@ -130,7 +130,11 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+      // Only retire our own shell buckets. Cache Storage is per-origin and
+      // Transformers.js keeps the downloaded model weights in
+      // "transformers-cache" (env.useBrowserCache); wiping everything on
+      // activate made every release re-download hundreds of MB of weights.
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME && /^odtaulai-v/.test(k)).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
       // An update that activates while the app was away is a wake like any
       // other: anything overdue goes out now rather than waiting for the user
