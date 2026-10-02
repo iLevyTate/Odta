@@ -402,6 +402,14 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
   let interval = parseInt(params.INTERVAL || '1', 10);
   if(!Number.isFinite(interval) || interval < 1) interval = 1;
   const until = params.UNTIL ? parseICSDate(params.UNTIL, false) : null;
+  // UNTIL is an instant when it carries a clock (RFC 5545 requires UTC
+  // then). Comparing only the local date let a zone east of UTC emit one
+  // phantom occurrence on UNTIL's local day after the cutoff instant.
+  const pastUntil = (iso) => {
+    if(!until) return false;
+    if(iso > until.iso) return true;
+    return !!(until.time && event.time && iso === until.iso && String(event.time) > String(until.time));
+  };
   const countSpecified = params.COUNT !== undefined && String(params.COUNT).length > 0;
   const countParsed = countSpecified ? parseInt(params.COUNT, 10) : null;
   if(countSpecified && (!Number.isFinite(countParsed) || countParsed <= 0)){
@@ -570,7 +578,7 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
                     String(occ.getMonth()+1).padStart(2,'0') + '-' +
                     String(occ.getDate()).padStart(2,'0');
         if(stopAfterISO && iso > stopAfterISO){ pastStop = true; break; }
-        if(until && iso > until.iso) continue;
+        if(pastUntil(iso)) continue;
         if(exSet.has(iso)) continue;
         occSeen++;
         if(occ >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
@@ -592,7 +600,7 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
         const iso = occ.getFullYear() + '-' +
                     String(occ.getMonth()+1).padStart(2,'0') + '-' +
                     String(occ.getDate()).padStart(2,'0');
-        if(until && iso > until.iso){ stop = true; break; }
+        if(pastUntil(iso)){ stop = true; break; }
         if(!(event.exdateList && event.exdateList.includes && event.exdateList.includes(iso))){
           occSeen++;
           if(occ >= past) results.push(_occ(iso)); // pre-window positions consume COUNT but don't emit
@@ -606,7 +614,7 @@ function expandEventToDateRange(event, windowDays = 180, stopAfterISO = null){
       const iso = current.getFullYear() + '-' +
                   String(current.getMonth()+1).padStart(2,'0') + '-' +
                   String(current.getDate()).padStart(2,'0');
-      if(until && iso > until.iso) break;
+      if(pastUntil(iso)) break;
       if(stopAfterISO && iso > stopAfterISO) break;
       if(!exSet.has(iso)){
         occSeen++;
@@ -830,6 +838,10 @@ async function fetchICSContent(feed){
   }
   if(!feed.url) throw new Error('No URL or pasted content for feed');
 
+  // Check the feed URL itself first: with a proxy configured only the proxy
+  // host was validated, so file:// or a link-local address rode through as
+  // the url= parameter.
+  if(!_calFetchUrlOk(feed.url)) throw new Error('Calendar URL must be http(s)');
   let fetchUrl = feed.url;
   const proxy = feed.proxy || localStorage.getItem(CALFEEDS_PROXY) || '';
   if(proxy){

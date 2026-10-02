@@ -695,11 +695,30 @@ async function _cmdkConfirmDestructiveApply(ops, destructiveLevel){
 async function _cmdkApplyTurnOps(turn){
   if(!turn || !Array.isArray(turn.ops) || !turn.ops.length) return null;
   if(typeof applyOpsBatch !== 'function') return null;
-  const confirmed = await _cmdkConfirmDestructiveApply(turn.ops, turn.destructiveLevel || 'none');
+  // Ops were validated when proposed; a task or list they name may have been
+  // deleted before the user tapped Apply. Re-validate against live state so
+  // nothing lands on a missing id.
+  let liveOps = turn.ops;
+  if(typeof validateOps === 'function' && typeof _askCtx === 'function'){
+    try{
+      const rv = validateOps(turn.ops, _askCtx());
+      if(rv && Array.isArray(rv.valid)){
+        // validateOps returns fresh {name,args} objects; carry over the
+        // preview metadata the summary/preview cards read.
+        liveOps = rv.valid.map(v => {
+          const src = turn.ops.find(o => o && o.name === v.name && o.args && o.args.id === v.args.id);
+          if(src && src._previewCategory) v._previewCategory = src._previewCategory;
+          return v;
+        });
+        if(!liveOps.length) return { cancelled: true, stale: true };
+      }
+    }catch(_){ /* fall back to the proposal-time validation */ }
+  }
+  const confirmed = await _cmdkConfirmDestructiveApply(liveOps, turn.destructiveLevel || 'none');
   if(!confirmed) return { cancelled: true };
   const selOps = typeof _allSelectedOpsFromList === 'function'
-    ? _allSelectedOpsFromList(turn.ops)
-    : turn.ops.slice();
+    ? _allSelectedOpsFromList(liveOps)
+    : liveOps.slice();
   return applyOpsBatch(selOps, { source: 'ask', destructiveLevel: turn.destructiveLevel || 'none' }, {
     confirmedDestructive: true,
     clearPending: false,
@@ -5169,7 +5188,7 @@ function renderTodayCalEvents(){
     row.className = 'tce-row';
     const dot = document.createElement('span');
     dot.className = 'tce-dot';
-    dot.style.background = ev.feedColor || 'var(--accent)';
+    dot.style.background = (typeof sanitizeListColor === 'function' ? sanitizeListColor(ev.feedColor) : ev.feedColor) || 'var(--accent)';
     const tm = document.createElement('span');
     tm.className = 'tce-time';
     if(sv === 'week' && ev.dateISO && ev.dateISO !== todayK){

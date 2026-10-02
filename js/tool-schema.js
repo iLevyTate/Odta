@@ -82,6 +82,21 @@ const _ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const _ISO_DT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
 function _pad2(n){ return String(n).padStart(2, '0'); }
+
+// The ISO regexes only check shape: "2026-02-31" and "2026-13-01" matched
+// and were stored, then string-compared as "overdue" in Ask while every
+// Date consumer saw Invalid Date (and a bad remindAt never fired). Require
+// the components to round-trip through a real calendar.
+function _isRealISODate(s){
+  const y = parseInt(s.slice(0, 4), 10), m = parseInt(s.slice(5, 7), 10), d = parseInt(s.slice(8, 10), 10);
+  if(!(y >= 1970 && m >= 1 && m <= 12 && d >= 1)) return false;
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+function _isRealClock(s){
+  const h = parseInt(s.slice(0, 2), 10), mi = parseInt(s.slice(3, 5), 10);
+  return h >= 0 && h <= 23 && mi >= 0 && mi <= 59;
+}
 function _localISODate(d){ return d.getFullYear() + '-' + _pad2(d.getMonth() + 1) + '-' + _pad2(d.getDate()); }
 
 const _WEEKDAY_IDX = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
@@ -137,8 +152,7 @@ function _coerceDate(v){
   if(!v) return null;
   if(typeof v !== 'string') return null;
   const s = v.trim();
-  if(_ISO_DATE_RE.test(s)) return s.slice(0, 10);
-  if(_ISO_DT_RE.test(s)) return s.slice(0, 10);
+  if(_ISO_DATE_RE.test(s) || _ISO_DT_RE.test(s)) return _isRealISODate(s) ? s.slice(0, 10) : null;
   return _naturalDateISO(s);
 }
 
@@ -165,8 +179,8 @@ function _coerceDateTime(v){
   if(!v) return null;
   if(typeof v !== 'string') return null;
   const s = v.trim();
-  if(_ISO_DT_RE.test(s)) return s.slice(0, 16);
-  if(_ISO_DATE_RE.test(s)) return s + 'T09:00';
+  if(_ISO_DT_RE.test(s)) return (_isRealISODate(s) && _isRealClock(s.slice(11, 16))) ? s.slice(0, 16) : null;
+  if(_ISO_DATE_RE.test(s)) return _isRealISODate(s) ? s + 'T09:00' : null;
   // Relative date with an optional clock: "<tomorrow>T09:00", "tomorrow at
   // 9am", "next monday 17:30", "friday". Date-only resolves to 09:00 like
   // the ISO-date branch above.
@@ -209,8 +223,9 @@ function _coerceArg(key, raw, ctx){
     return _coerceInt(raw);
   }
   if(key === 'checkId'){
-    if(typeof raw === 'number') return raw;
-    const s = String(raw);
+    if(typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+    const s = String(raw == null ? '' : raw).trim();
+    if(!s) return null;
     const n = Number(s);
     return Number.isFinite(n) ? n : s;
   }
@@ -225,6 +240,19 @@ function _coerceArg(key, raw, ctx){
   }
   if(key === 'estimateMin'){ const n = _coerceInt(raw); return (n != null && n >= 0) ? n : null; }
   if(key === 'tag'){ const s = String(raw).replace(/^#/, '').trim(); return s || null; }
+  if(key === 'category'){
+    const s = String(raw).trim().slice(0, 80);
+    if(!s) return null;
+    // Same gate CLASSIFY_TASK and the embedding proposers use: must be a
+    // known, non-hidden category. Only enforced when the classification
+    // module is loaded (node tests load this file standalone).
+    if(typeof isAssignableCategory === 'function') return isAssignableCategory(s) ? s : null;
+    return s;
+  }
+  if(key === 'url'){
+    const s = String(raw).replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 2000);
+    return /^https?:\/\//i.test(s) ? s : null;
+  }
   // plain text fields — clamp + strip control chars (preserve CR like other branches)
   return String(raw).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 2000);
 }
@@ -284,7 +312,7 @@ function validateOps(raw, ctx){
   let writeCount = 0;
   let quietRewrite = false;
   const simTasksById = new Map();
-  let simNextId = 1;
+  let simNextId = (Number.isFinite(ctx.nextId) && ctx.nextId > 0) ? Math.trunc(ctx.nextId) : 1;
   if(ctx.tasksById && typeof ctx.tasksById.forEach === 'function'){
     ctx.tasksById.forEach((t, id) => {
       const nid = typeof id === 'number' ? id : parseInt(String(id), 10);
@@ -374,6 +402,17 @@ function validateOps(raw, ctx){
       // parentId === id and the Tasks tab was unrenderable until reload.
       out.rejected.push({ op: rawOp, reason: 'MOVE_WOULD_CYCLE' });
       continue;
+    }
+    if(args.checkId != null && (name === 'TOGGLE_CHECK' || name === 'REMOVE_CHECK')){
+      const host = ctx.tasksById && typeof ctx.tasksById.get === 'function' ? ctx.tasksById.get(args.id) : null;
+      const items = host && Array.isArray(host.checklist) ? host.checklist : null;
+      // A task created earlier in this batch has no checklist yet; a real
+      // task must own the item or the op would "apply" as a no-op and still
+      // push an undo entry.
+      if(items && !items.some(c => c && (c.id === args.checkId || String(c.id) === String(args.checkId)))){
+        out.rejected.push({ op: rawOp, reason: 'UNKNOWN_CHECK_ID:' + args.checkId });
+        continue;
+      }
     }
     if(args.listId != null && !_listExists(args.listId, ctx)){
       out.rejected.push({ op: rawOp, reason: 'UNKNOWN_LIST_ID:' + args.listId });

@@ -354,5 +354,21 @@ export function createGenEngine(cfg){
     stoppers.clear();
   }
 
-  return { load, generate, abort, abortAll, dispose, getDevice: () => device };
+  // ORT throws (or returns garbage) when two runs overlap on one session, and
+  // nothing upstream serialises generation: a helper call that timed out on
+  // the main thread keeps decoding here while the next call posts a fresh
+  // `generate`. Chain runs so a late one waits instead of colliding; an
+  // aborted request still returns promptly because `generate` checks its
+  // signal before touching the pipeline.
+  let _chain = Promise.resolve();
+  function generateSerialized(opts){
+    const run = _chain.then(() => {
+      if(opts && opts.signal && opts.signal.aborted) throw new Error('GEN_ABORTED');
+      return generate(opts);
+    });
+    _chain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  return { load, generate: generateSerialized, abort, abortAll, dispose, getDevice: () => device };
 }

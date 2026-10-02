@@ -21,7 +21,7 @@ const html = readFileSync(join(root, 'index.html'), 'utf8');
 // Match to the closing quote of the SAME type — [^"']* would fail to span an
 // embedded quote of the other type, letting e.g. onclick="fn('x')" evade the
 // guard entirely.
-const ON_ATTR_RE = /\s(on[a-z]+)\s*=\s*("[^"]*"|'[^']*')/gi;
+const ON_ATTR_RE = /\s(on[a-z]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
 const matches = [...html.matchAll(ON_ATTR_RE)];
 
 if(matches.length === 0){

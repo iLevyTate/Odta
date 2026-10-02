@@ -74,9 +74,9 @@ Calendar view supports `cfg.calMode`: `month` (grid + agenda), `week` (seven ful
 | Pipeline | File | Model | Purpose | When it loads |
 |---|---|---|---|---|
 | Embedding | [`js/intel.js`](js/intel.js) | `Xenova/bge-small-en-v1.5` (384‑dim, ~33 MB quantized) on both WebGPU and WASM | Semantic search, smart‑add, harmonize, auto‑organize, duplicates, category centroids, list routing, due‑date kNN, values alignment | Automatically on first idle (`requestIdleCallback`) after page load |
-| Generative Ask | [`js/gen.js`](js/gen.js), [`js/ask.js`](js/ask.js) | SmolLM2 / Qwen2.5 ONNX via Transformers.js (basic 135M: 118 MB q4f16 on WebGPU, 180 MB q4 on WASM; 360M: 275–390 MB; Qwen 0.5B / 1.5B: 485 MB–1.8 GB) | Cmd+K Ask chat → JSON ops; parse wand; breakdown; optional LLM rationales on batch features | User opt-in: Settings → Generative AI. The chat downloads the basic model on the first question (progress in the bubble) or Settings → Download; auto-rehydrates from HTTP cache on reload |
+| Generative Ask | [`js/gen.js`](js/gen.js), [`js/ask.js`](js/ask.js) | SmolLM2 / Qwen2.5 ONNX via Transformers.js (basic 135M: 118 MB q4f16 on WebGPU, 180 MB q4 on WASM; 360M: 275–390 MB; Qwen 0.5B / 1.5B: 485 MB–1.8 GB) | Cmd+K Ask chat → JSON ops; parse wand; breakdown; optional LLM rationales on batch features | User opt-in: Settings → Generative AI. The chat downloads the basic model on the first question (progress in the bubble) or Settings → Download; auto-rehydrates on reload from the Transformers.js Cache Storage bucket (`transformers-cache`), after probing that the bucket still exists |
 
-Uses **WebGPU when available, WASM fallback everywhere else** — same model, different backend. Weights are cached by the browser's HTTP cache (the service worker explicitly does **not** precache the CDN model URL, to avoid exhausting the PWA cache quota on mobile).
+Uses **WebGPU when available, WASM fallback everywhere else** — same model, different backend. Weights are cached by Transformers.js in a Cache Storage bucket named `transformers-cache` (`env.useBrowserCache`). The service worker explicitly does **not** precache the CDN model URL, and on activate it retires only its own `odtaulai-v*` buckets, so a release never evicts the downloaded weights.
 
 ### Proposed‑op pipeline
 
@@ -102,6 +102,6 @@ undo stack (10 deep, 60s extended ring)
 
 Safety invariants:
 
-- **No auto‑apply, ever** — ops land in the preview UI with per‑field checkboxes and the 10‑deep undo stack.
+- **No auto‑apply without opt‑in** — ops land in the preview UI with per‑field checkboxes and the 10‑deep undo stack. Ask's optional auto mode (Settings → Generative AI) applies a validated batch of up to four plain edits; any delete, cross‑list move, bulk batch, quiet rewrite, or batch planned after reading calendar‑feed text still goes to review. Ops are re‑validated against live state at apply time.
 - **Destructive ACK** — any `DELETE_TASK`, or a batch of ≥5 mass `CHANGE_LIST` (cross-list moves), triggers an additional confirmation before apply.
 - **No outbound calls** beyond the one‑time embedding model weight fetch from the Hugging Face CDN.
