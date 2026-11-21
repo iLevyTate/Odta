@@ -67,7 +67,7 @@ function loadApplyOpsBatch(tasks, hooks = {}){
   const body = aiSrc.slice(start, end);
   const mod = new Function(...Object.keys(ctx), `
     let op;
-    ${body.replace('function _formatOpSummaryLabel', 'function _formatOpSummaryLabel').replace('function summarizeOpsLabels', 'function summarizeOpsLabels')}
+    ${body}
     return { applyOpsBatch, _allSelectedOpsFromList };
   `);
   // Include _allSelectedOpsFromList in slice - it's before _enrichClassifyOps
