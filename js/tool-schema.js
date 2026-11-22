@@ -534,7 +534,7 @@ function _repairJson(s){
   // Single-quoted keys/strings → double-quoted, but only when the text has no
   // double quotes at all (otherwise the apostrophe in "mom's" would be mangled).
   if(t.indexOf('"') < 0 && t.indexOf("'") >= 0){
-    t = t.replace(/'((?:[^'\\]|\\.)*)'/g, (_, inner) => '"' + inner.replace(/"/g, '\\"') + '"');
+    t = t.replace(/'((?:[^'\\]|\\.)*)'/g, (_, inner) => JSON.stringify(inner));
   }
   // Python literals — only outside string values.
   t = _outsideStrings(t, seg => seg.replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null'));

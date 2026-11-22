@@ -133,3 +133,12 @@ test('QUERY_TASKS schema accepts structured filters and coerces them', () => {
   assert.equal(r.valid.length, 1);
   assert.deepEqual(r.valid[0].args, { overdue: true, dueBefore: '2026-01-05', status: 'open', includeDone: true, limit: 5 });
 });
+
+test('single-quoted values retain backslashes without breaking JSON strings', () => {
+  const { parseOpsJson } = loadSchema();
+  const value = String.fromCharCode(92) + 'folder';
+  const input = "[{'name':'CREATE_TASK','args':{'text':'" + value + "'}}]";
+  const ops = parseOpsJson(input);
+  assert.equal(ops[0].args.text, value);
+  assert.equal(ops.length, 1);
+});
